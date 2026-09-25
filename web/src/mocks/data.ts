@@ -925,9 +925,14 @@ function ownerByUsername(username: string): MockUser {
   return user;
 }
 
-/** Capability URL (CONTRACT §14.3): images are fetched with `?sig=`, not a header. */
+/**
+ * Capability URL (CONTRACT §14.3): images are fetched with `?sig=`, not a header.
+ *
+ * 假签名的**形状**与真实后端一致：`<token>.<exp>`（M5 起真后端也下发 `sig=`）。
+ * 早期版本写的是 `sig=dev`，形状对不上，容易掩盖「前端其实在拼 URL」这类回归。
+ */
 export function imageUrl(imageId: number, variant: "orig" | "thumb" = "orig"): string {
-  return `/api/v1/images/${imageId}?variant=${variant}&sig=dev`;
+  return `/api/v1/images/${imageId}?variant=${variant}&sig=mock-${imageId}-${variant}.4102444800`;
 }
 
 /** Cover image id = tool id + 1000 (the mock image endpoint serves a generated SVG). */
@@ -2054,6 +2059,18 @@ export const MOCK_SETTINGS: MockSettingRecord[] = [
     options: null,
     min: null,
     max: null,
+    updated_at: "2025-03-01T10:00:00Z",
+    updated_by_id: 1,
+  },
+  {
+    key: "images.signature_ttl_hours",
+    value: 168,
+    value_type: "int",
+    is_public: false,
+    description: "图片签名 URL 有效期（小时），默认 7 天。",
+    options: null,
+    min: 1,
+    max: 8760,
     updated_at: "2025-03-01T10:00:00Z",
     updated_by_id: 1,
   },

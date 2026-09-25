@@ -163,6 +163,86 @@ revoke 后同一 Token: 仍可用!     ← 缺陷
   （该 unit 已判定为与 `selftool-maintenance.*` 重复而删除）。改为引用
   `selftool-maintenance.timer`
 
+### J-7. `GET /api/v1/admin/groups` 的删除影响面补 `slug`（M5 漏做）
+
+**背景**：这条本应在 M5 做（`contracts/CONTRACT.md` §19.5），但**监控方是在 M5 agent 开工后才
+补写进任务书的，因此 M5 从未看到它 —— 责任在监控方，不在实现方。**
+
+**现状**：`app/services/group_service.py` 的 `GroupInUseError.details.tools` 仍是
+`[{"id": tid, "name": name}]`，没有 `slug`。
+
+**要**：增加 `slug`（附加字段，非破坏性）。`docs/04` §6.14 要求「影响面工具可点击跳转」，
+前端已写成「有 `slug` 才渲染 `Link`，否则纯文本」，后端补上即自动生效。
+
+**测试**：`GROUP_IN_USE` 的 `details.tools[].slug` 非空，且该 slug 能用于 `GET /tools/{slug}`。
+
+### J-8. 补齐无字段定义的端点 + `openapi.json` 陈旧（M5 漏做 + 真实缺陷）
+
+**两个问题叠加**：
+
+**问题 1（J2 未交付）**：这条本应在 M5 做（§19.7），同样是**监控方补写太晚**，
+M5 从未看到。实测仍有以下端点的响应是 `additionalProperties: true`（无字段定义）：
+
+```
+GET    /api/v1/admin/groups
+GET    /api/v1/admin/groups/{group_id}/members
+DELETE /api/v1/admin/groups/{group_id}
+DELETE /api/v1/admin/groups/{group_id}/members/{user_id}
+GET    /api/v1/admin/tags
+GET    /api/v1/admin/tokens
+DELETE /api/v1/admin/tokens/{token_id}
+DELETE /api/v1/admin/categories/{category_id}
+POST   /api/v1/admin/users/{user_id}/revoke-sessions
+POST   /api/v1/admin/tools/{tool_id}/versions
+```
+
+**要**：为它们补显式的 Pydantic 响应模型。
+
+**问题 2（`backend/openapi.json` 陈旧 —— 这是新发现的真实缺陷）**：
+
+磁盘上的 `backend/openapi.json`（mtime 14:14、md5 `210fc35f…`）**缺**
+`AdminOverviewResponse.storage_warning`，也**缺** `POST /admin/tools/{id}/versions` 的 201 schema；
+而运行时从 `:8000/openapi.json` 取到的**两者都有**。
+
+`openapi.json` 是 §15.6 宣布的**形状权威**，也是前端 `check:api-types` 的输入。
+它陈旧意味着：
+
+- 前端只能对着**实时 spec** 改代码，而 `npm run check:api-types` 却永远红
+- 「openapi 是权威」这句话对它自己不自洽
+
+**要**：
+
+1. 补齐上面的响应模型后，**重新执行 `export-openapi`** 并确认磁盘文件与运行时一致
+2. **加一个守卫测试**：`test_openapi_artifact_is_current` ——
+   在内存里重新生成 spec，与已提交的 `backend/openapi.json` 比对；
+   不一致即失败，并提示「请运行 `export-openapi` 并提交产物」。
+   **这从结构上杜绝了这类陈旧**，而不是靠人记得导出
+3. 在 `RELEASE-NOTES.md` 或构建流程中说明：**改动任何路由/响应模型后必须重导出 openapi.json**
+
+**注意**：`openapi.json` 是**生成产物但必须入库**（它是形状权威、且前端要消费）。
+守卫测试是保证它不陈旧的手段。
+
+### J-9. `current_version.can_download` 与顶层 `can_download` 不一致
+
+**监控方实测确认**（viewer 访问 `file` 类型工具详情）：
+
+```
+顶层 can_download            = False     ← 正确
+current_version.can_download = True      ← 错误
+```
+
+而票据接口正确拒绝（`NOT_FOUND`，`details.reason = no_download_permission`）。
+
+**后果**：前端读的是 `current_version.can_download`，据此把下载按钮渲染为**可用**，
+点下去才 404 —— **广告了「可下载」，实际不能**。这与 §17.9 修掉的种子问题同一性质。
+
+**要**：`current_version.can_download` **必须由同一套授权判定派生**，
+不能硬编码 `true`。它应当与顶层 `can_download` 恒等（除非将来版本级授权有独立语义，
+那就需要显式设计并改文档）。
+
+**测试**：对 `viewer` / `user` / `owner` / `superadmin` 四种身份，
+断言 `current_version.can_download == 顶层 can_download`。
+
 ---
 
 ## M6 验收清单（监控方会逐条核验）
@@ -184,6 +264,11 @@ revoke 后同一 Token: 仍可用!     ← 缺陷
 | 13 | `pending` 删唯一版本 | 工具回落 `draft` |
 | 14 | 全量回归 | ≥ 448 用例全绿，覆盖率 ≥ 90%，ruff 全过 |
 | 15 | `docs/06`/`07`/`08` | 若 §20.3 的裁定影响到手册内容（尤其 §13.8 的吊销表述），同步修订 |
+| 16 | `GROUP_IN_USE` 的 `details.tools[].slug` | 非空且可用于 `GET /tools/{slug}` |
+| 17 | 上述 10 个端点的 openapi 响应 | 均有显式 `properties`，不再有 `additionalProperties: true` |
+| 18 | `backend/openapi.json` 与运行时一致 | 无差异；守卫测试 `test_openapi_artifact_is_current` 存在且通过 |
+| 19 | viewer 看 `file` 详情 | `current_version.can_download == 顶层 can_download == False` |
+| 20 | 四种身份的 `can_download` 一致性 | 每个身份都满足 `current_version.can_download == 顶层` |
 
 ---
 

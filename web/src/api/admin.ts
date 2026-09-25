@@ -53,8 +53,10 @@ import type {
   BatchApproveRequest,
   BatchApproveResponse,
   OfflineRequest,
+  OfflineResponse,
   Paginated,
   RejectRequest,
+  RelistResponse,
   RejectResponse,
   SettingListResponse,
   SettingUpdateRequest,
@@ -131,17 +133,25 @@ export function rejectTool(toolId: number, payload: RejectRequest): Promise<Reje
   });
 }
 
-/** POST /admin/approvals/{tool_id}/offline — reason required (FR-APPR-10). */
-export function offlineTool(toolId: number, payload: OfflineRequest): Promise<ApproveResponse> {
-  return request<ApproveResponse>(`/admin/approvals/${toolId}/offline`, {
+/**
+ * POST /admin/approvals/{tool_id}/offline — reason required (FR-APPR-10).
+ *
+ * 响应是 `OfflineResponse`（没有 `version_seq`），**不是** `ApproveResponse`
+ * —— 下架不产生新版本，用错类型会让 `version_seq` 在运行时是 undefined。
+ */
+export function offlineTool(toolId: number, payload: OfflineRequest): Promise<OfflineResponse> {
+  return request<OfflineResponse>(`/admin/approvals/${toolId}/offline`, {
     method: "POST",
     body: payload,
   });
 }
 
-/** POST /admin/approvals/{tool_id}/relist — reason optional (FR-APPR-11). */
-export function relistTool(toolId: number, payload: { reason?: string | null } = {}) {
-  return request<ApproveResponse>(`/admin/approvals/${toolId}/relist`, {
+/** POST /admin/approvals/{tool_id}/relist — reason optional (FR-APPR-11)；响应是 RelistResponse。 */
+export function relistTool(
+  toolId: number,
+  payload: { reason?: string | null } = {},
+): Promise<RelistResponse> {
+  return request<RelistResponse>(`/admin/approvals/${toolId}/relist`, {
     method: "POST",
     body: payload,
   });

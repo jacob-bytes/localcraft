@@ -5,8 +5,16 @@
 本轮**依赖两个前置**，缺一不可：
 
 1. **你的 M4 已交付**（flake 修复 + 连续 10 次真实 E2E 全绿 + 后端 M5 落地后的联调重跑）
-2. **后端 M6 已交付**（`GET /api/v1/directory`、`can_download` 生效、`revoke-sessions` 吊销 Token、
-   `orphan_file_count`、删待审版本后状态回落）
+2. **后端 M6 已交付**，具体需要这 9 项（见 `contracts/CONTRACT.md` §21.5）：
+   - J-1 `GET /api/v1/directory`（接口面 92 → **93**）
+   - J-2 ACL `can_download` 生效
+   - J-3 `revoke-sessions` 一并吊销 API Token
+   - J-4 `orphan_file_count` 接线
+   - J-5 删除待审版本后状态回落
+   - J-6 注释/docstring 同步
+   - **J-7 `GROUP_IN_USE` 的 `details.tools[]` 补 `slug`**
+   - **J-8 10 个端点补 `response_model` + 重新导出 `openapi.json` + 加守卫**
+   - **J-9 `current_version.can_download` 与顶层一致**
 
 **如果后端 M6 还没交付，不要开始本轮** —— 本轮的 3 个功能点全依赖它。
 可以先做第 0 节的准备工作。
@@ -42,6 +50,18 @@
 
 **0.2 `check:api-types` 的覆盖复查**（M4 已要求，此处确认）
 
+**关于当前 `npm run verify` 是红的（重要）**：它红在两个输入不满足 ——
+`backend/openapi.json` **陈旧**（缺 `storage_warning` 与 `/versions` 的 201 schema），
+以及 10 个端点没有字段定义。**这两项都是后端 M6 的 J-8 要修的**（详见 `contracts/CONTRACT.md`
+§22.1、§22.3）。**在你动手本轮之前，先确认 J-8 已交付。**
+
+**绝对不要把那些端点加进 `OPERATIONS_WITHOUT_SHAPE` 白名单来「让它变绿」。**
+你在 M4 报告里主动提出「不建议加白名单」，**监控方采纳了这个判断**（§22.4）：
+白名单会把「缺少字段定义」从**失败**变成**静默通过**，正是 §19.4 要消除的漂移源。
+**宁可红着，也不要一个看不见的盲区。**
+
+
+
 后端 M6 新增 `GET /directory` 后，确认守卫覆盖到它；并确认对「无字段定义的响应」
 是**报错而非跳过**。
 
@@ -64,6 +84,13 @@
   二选一，选更合适的并在报告里说明
 
 ### 2. ACL 编辑器：暴露 `can_download` 开关
+
+> **注意与 M4 报的 F4 的关系**：你在 M4 发现「viewer 的 `current_version.can_download` 为 `true`
+> 但票据接口正确拒绝」。监控方实测确认并定位为**后端缺陷**（顶层 `can_download=False` 正确，
+> 只有嵌套的 `current_version.can_download` 硬编码为 `true`），已列为 M6 的 **J-9**。
+> 修好后该字段就准确了 —— **前端不需要改读取逻辑**，它本来就读对了字段，
+> 是后端给了错的值。J-9 落地后请把 M4 里那条 gap 注解改为正式断言。
+
 
 **背景**：`tool_acl.can_download` 此前是**无效字段**（前后端都存、文档描述为生效、
 但无任何读取点）。后端 M6 已实现它。
@@ -120,6 +147,10 @@
 | 11 | `npm run verify` | 全过，dist 无 msw |
 | 12 | 首屏 gzip | < 500 KB |
 | 13 | mock 与真实后端 | 三处新增能力均对齐 |
+| 14 | **`npm run verify` 转绿** | J-8 落地后，`check:api-types` 不再有失败项 |
+| 15 | **未使用白名单** | `OPERATIONS_WITHOUT_SHAPE` 为空或不存在（§22.4） |
+| 16 | 影响面工具可点击 | J-7 补 `slug` 后渲染 `Link`，点击能跳详情 |
+| 17 | `current_version.can_download` | J-9 落地后，viewer 得到 `false`，M4 的 gap 注解改为正式断言 |
 
 ---
 

@@ -1,12 +1,14 @@
-import { lazy, Suspense } from "react";
+import { Suspense } from "react";
 import { createBrowserRouter, Outlet } from "react-router-dom";
 
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import { RequireRole } from "@/components/auth/RequireRole";
 import { FullScreenLoader } from "@/components/common/PageSkeleton";
+import { RouteErrorBoundary } from "@/components/common/RouteErrorBoundary";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { AppShell } from "@/components/layout/AppShell";
 import { AuthProvider } from "@/hooks/useAuth";
+import { lazyWithRetry } from "@/lib/lazyWithRetry";
 
 /**
  * Route table (docs/04 §4).
@@ -17,32 +19,56 @@ import { AuthProvider } from "@/hooks/useAuth";
  * half-built screen.
  *
  * Every page is code-split with `React.lazy` (docs/04 §9); the shells provide
- * Suspense boundaries.
+ * Suspense boundaries. M4 wraps every route-level `import()` in `lazyWithRetry`
+ * (CONTRACT §19.9) so a failed chunk fetch reloads the page once instead of
+ * showing the error boundary — the chunk-file names change on every deploy, and
+ * a stale tab must be able to recover on its own.
  */
-const LoginPage = lazy(() => import("@/pages/LoginPage"));
-const ChangePasswordPage = lazy(() => import("@/pages/ChangePasswordPage"));
-const PortalPage = lazy(() => import("@/pages/PortalPage"));
-const ToolDetailPage = lazy(() => import("@/pages/ToolDetailPage"));
-const NotFoundPage = lazy(() => import("@/pages/NotFoundPage"));
+const LoginPage = lazyWithRetry(() => import("@/pages/LoginPage"), "LoginPage");
+const ChangePasswordPage = lazyWithRetry(
+  () => import("@/pages/ChangePasswordPage"),
+  "ChangePasswordPage",
+);
+const PortalPage = lazyWithRetry(() => import("@/pages/PortalPage"), "PortalPage");
+const ToolDetailPage = lazyWithRetry(() => import("@/pages/ToolDetailPage"), "ToolDetailPage");
+const NotFoundPage = lazyWithRetry(() => import("@/pages/NotFoundPage"), "NotFoundPage");
 
-const ProfilePage = lazy(() => import("@/pages/me/ProfilePage"));
-const MyToolsPage = lazy(() => import("@/pages/me/MyToolsPage"));
-const ToolEditorPage = lazy(() => import("@/pages/me/ToolEditorPage"));
-const VersionsPage = lazy(() => import("@/pages/me/VersionsPage"));
+const ProfilePage = lazyWithRetry(() => import("@/pages/me/ProfilePage"), "ProfilePage");
+const MyToolsPage = lazyWithRetry(() => import("@/pages/me/MyToolsPage"), "MyToolsPage");
+const ToolEditorPage = lazyWithRetry(() => import("@/pages/me/ToolEditorPage"), "ToolEditorPage");
+const VersionsPage = lazyWithRetry(() => import("@/pages/me/VersionsPage"), "VersionsPage");
 
-const AdminIndexPage = lazy(() => import("@/pages/admin/AdminIndexPage"));
-const ApprovalsPage = lazy(() => import("@/pages/admin/ApprovalsPage"));
-const ApprovalHistoryPage = lazy(() => import("@/pages/admin/ApprovalHistoryPage"));
-const AdminToolsPage = lazy(() => import("@/pages/admin/AdminToolsPage"));
-const CategoriesPage = lazy(() => import("@/pages/admin/CategoriesPage"));
-const TagsPage = lazy(() => import("@/pages/admin/TagsPage"));
-const UsersPage = lazy(() => import("@/pages/admin/UsersPage"));
-const GroupsPage = lazy(() => import("@/pages/admin/GroupsPage"));
-const WhitelistPage = lazy(() => import("@/pages/admin/WhitelistPage"));
-const TokensPage = lazy(() => import("@/pages/admin/TokensPage"));
-const SettingsPage = lazy(() => import("@/pages/admin/SettingsPage"));
-const ImportExportPage = lazy(() => import("@/pages/admin/ImportExportPage"));
-const RecycleBinPage = lazy(() => import("@/pages/admin/RecycleBinPage"));
+const AdminIndexPage = lazyWithRetry(
+  () => import("@/pages/admin/AdminIndexPage"),
+  "AdminIndexPage",
+);
+const ApprovalsPage = lazyWithRetry(() => import("@/pages/admin/ApprovalsPage"), "ApprovalsPage");
+const ApprovalHistoryPage = lazyWithRetry(
+  () => import("@/pages/admin/ApprovalHistoryPage"),
+  "ApprovalHistoryPage",
+);
+const AdminToolsPage = lazyWithRetry(
+  () => import("@/pages/admin/AdminToolsPage"),
+  "AdminToolsPage",
+);
+const CategoriesPage = lazyWithRetry(
+  () => import("@/pages/admin/CategoriesPage"),
+  "CategoriesPage",
+);
+const TagsPage = lazyWithRetry(() => import("@/pages/admin/TagsPage"), "TagsPage");
+const UsersPage = lazyWithRetry(() => import("@/pages/admin/UsersPage"), "UsersPage");
+const GroupsPage = lazyWithRetry(() => import("@/pages/admin/GroupsPage"), "GroupsPage");
+const WhitelistPage = lazyWithRetry(() => import("@/pages/admin/WhitelistPage"), "WhitelistPage");
+const TokensPage = lazyWithRetry(() => import("@/pages/admin/TokensPage"), "TokensPage");
+const SettingsPage = lazyWithRetry(() => import("@/pages/admin/SettingsPage"), "SettingsPage");
+const ImportExportPage = lazyWithRetry(
+  () => import("@/pages/admin/ImportExportPage"),
+  "ImportExportPage",
+);
+const RecycleBinPage = lazyWithRetry(
+  () => import("@/pages/admin/RecycleBinPage"),
+  "RecycleBinPage",
+);
 
 /** Roles allowed to create/edit their own tools (docs/01 §3.2 — viewer excluded). */
 const AUTHOR_ROLES = ["user", "approver", "superadmin"] as const;
@@ -63,6 +89,8 @@ function AuthBoundary() {
 export const router = createBrowserRouter([
   {
     element: <AuthBoundary />,
+    // 兜底：AuthProvider 自身出错时也有可读的界面，而不是开发态的默认错误页
+    errorElement: <RouteErrorBoundary />,
     children: [
       {
         path: "/login",
@@ -78,104 +106,114 @@ export const router = createBrowserRouter([
             <AppShell />
           </RequireAuth>
         ),
+        errorElement: <RouteErrorBoundary />,
         children: [
-          { index: true, element: <PortalPage /> },
-          { path: "tools/:slug", element: <ToolDetailPage /> },
-          { path: "change-password", element: <ChangePasswordPage /> },
-
           {
-            path: "me",
-            element: (
-              <RequireRole roles={[...AUTHOR_ROLES]}>
-                <Outlet />
-              </RequireRole>
-            ),
+            /*
+             * 无路径的「错误边界层」：页面级失败（含懒加载 chunk 拉取失败）由它接管，
+             * 顶栏与侧栏保持挂载 —— 用户还能直接切到别处，而不是整屏被替换掉。
+             */
+            errorElement: <RouteErrorBoundary />,
             children: [
-              { index: true, element: <ProfilePage /> },
-              { path: "tools", element: <MyToolsPage /> },
-              { path: "tools/new", element: <ToolEditorPage mode="create" /> },
-              { path: "tools/:id/edit", element: <ToolEditorPage mode="edit" /> },
-              { path: "tools/:id/versions", element: <VersionsPage /> },
+              { index: true, element: <PortalPage /> },
+              { path: "tools/:slug", element: <ToolDetailPage /> },
+              { path: "change-password", element: <ChangePasswordPage /> },
+
+              {
+                path: "me",
+                element: (
+                  <RequireRole roles={[...AUTHOR_ROLES]}>
+                    <Outlet />
+                  </RequireRole>
+                ),
+                children: [
+                  { index: true, element: <ProfilePage /> },
+                  { path: "tools", element: <MyToolsPage /> },
+                  { path: "tools/new", element: <ToolEditorPage mode="create" /> },
+                  { path: "tools/:id/edit", element: <ToolEditorPage mode="edit" /> },
+                  { path: "tools/:id/versions", element: <VersionsPage /> },
+                ],
+              },
+
+              {
+                path: "admin",
+                element: (
+                  <RequireRole roles={[...REVIEWER_ROLES]}>
+                    <AdminLayout />
+                  </RequireRole>
+                ),
+                children: [
+                  { index: true, element: <AdminIndexPage /> },
+                  { path: "approvals", element: <ApprovalsPage /> },
+                  { path: "approvals/history", element: <ApprovalHistoryPage /> },
+                  // approver 也能用的两项（docs/04 §5.2 的菜单分组）
+                  { path: "tools", element: <AdminToolsPage /> },
+                  { path: "categories", element: <CategoriesPage /> },
+                  { path: "tags", element: <TagsPage /> },
+                  // 以下全部是超管专属（服务端同样有 users:write / groups:write /
+                  // settings:write / admin:all 的 Scope 守卫）
+                  {
+                    path: "users",
+                    element: (
+                      <RequireRole roles={[...ADMIN_ROLES]}>
+                        <UsersPage />
+                      </RequireRole>
+                    ),
+                  },
+                  {
+                    path: "groups",
+                    element: (
+                      <RequireRole roles={[...ADMIN_ROLES]}>
+                        <GroupsPage />
+                      </RequireRole>
+                    ),
+                  },
+                  {
+                    path: "whitelist",
+                    element: (
+                      <RequireRole roles={[...ADMIN_ROLES]}>
+                        <WhitelistPage />
+                      </RequireRole>
+                    ),
+                  },
+                  {
+                    path: "tokens",
+                    element: (
+                      <RequireRole roles={[...ADMIN_ROLES]}>
+                        <TokensPage />
+                      </RequireRole>
+                    ),
+                  },
+                  {
+                    path: "settings",
+                    element: (
+                      <RequireRole roles={[...ADMIN_ROLES]}>
+                        <SettingsPage />
+                      </RequireRole>
+                    ),
+                  },
+                  {
+                    path: "import-export",
+                    element: (
+                      <RequireRole roles={[...ADMIN_ROLES]}>
+                        <ImportExportPage />
+                      </RequireRole>
+                    ),
+                  },
+                  {
+                    path: "recycle-bin",
+                    element: (
+                      <RequireRole roles={[...ADMIN_ROLES]}>
+                        <RecycleBinPage />
+                      </RequireRole>
+                    ),
+                  },
+                ],
+              },
+
+              { path: "*", element: <NotFoundPage /> },
             ],
           },
-
-          {
-            path: "admin",
-            element: (
-              <RequireRole roles={[...REVIEWER_ROLES]}>
-                <AdminLayout />
-              </RequireRole>
-            ),
-            children: [
-              { index: true, element: <AdminIndexPage /> },
-              { path: "approvals", element: <ApprovalsPage /> },
-              { path: "approvals/history", element: <ApprovalHistoryPage /> },
-              // approver 也能用的两项（docs/04 §5.2 的菜单分组）
-              { path: "tools", element: <AdminToolsPage /> },
-              { path: "categories", element: <CategoriesPage /> },
-              { path: "tags", element: <TagsPage /> },
-              // 以下全部是超管专属（服务端同样有 users:write / groups:write /
-              // settings:write / admin:all 的 Scope 守卫）
-              {
-                path: "users",
-                element: (
-                  <RequireRole roles={[...ADMIN_ROLES]}>
-                    <UsersPage />
-                  </RequireRole>
-                ),
-              },
-              {
-                path: "groups",
-                element: (
-                  <RequireRole roles={[...ADMIN_ROLES]}>
-                    <GroupsPage />
-                  </RequireRole>
-                ),
-              },
-              {
-                path: "whitelist",
-                element: (
-                  <RequireRole roles={[...ADMIN_ROLES]}>
-                    <WhitelistPage />
-                  </RequireRole>
-                ),
-              },
-              {
-                path: "tokens",
-                element: (
-                  <RequireRole roles={[...ADMIN_ROLES]}>
-                    <TokensPage />
-                  </RequireRole>
-                ),
-              },
-              {
-                path: "settings",
-                element: (
-                  <RequireRole roles={[...ADMIN_ROLES]}>
-                    <SettingsPage />
-                  </RequireRole>
-                ),
-              },
-              {
-                path: "import-export",
-                element: (
-                  <RequireRole roles={[...ADMIN_ROLES]}>
-                    <ImportExportPage />
-                  </RequireRole>
-                ),
-              },
-              {
-                path: "recycle-bin",
-                element: (
-                  <RequireRole roles={[...ADMIN_ROLES]}>
-                    <RecycleBinPage />
-                  </RequireRole>
-                ),
-              },
-            ],
-          },
-
-          { path: "*", element: <NotFoundPage /> },
         ],
       },
     ],

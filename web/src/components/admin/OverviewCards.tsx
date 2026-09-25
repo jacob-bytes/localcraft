@@ -1,3 +1,4 @@
+import { AlertTriangle } from "lucide-react";
 import * as React from "react";
 import { Link } from "react-router-dom";
 
@@ -8,6 +9,7 @@ import {
   toolStatusVariant,
 } from "@/components/admin/AdminToolTable";
 import { StorageUsageBar } from "@/components/common/StorageUsageBar";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -41,6 +43,14 @@ export function OverviewCards({ overview }: OverviewCardsProps) {
   const usedPercent = Number.isFinite(overview.used_percent)
     ? Math.max(0, Math.min(100, overview.used_percent))
     : 0;
+
+  /**
+   * **告警口径只在后端**（M4 易错点 3）：`storage_warning` 由
+   * `settings_service.storage_warning()` 用 `quota.warn_threshold_pct` 判定，
+   * 前端不再自己拿 `used_percent` 与阈值比较 —— 否则两处口径迟早漂移。
+   * `storage_warning_threshold_pct` 只用于文案里说明阈值是多少。
+   */
+  const storageWarning = overview.storage_warning;
 
   /** 按固定顺序展示，未知状态排在最后并原样显示（服务端字段是 `string`）。 */
   const statusCounts = React.useMemo(() => {
@@ -122,19 +132,21 @@ export function OverviewCards({ overview }: OverviewCardsProps) {
       <Card data-testid="overview-storage-card" className="gap-3">
         <CardHeader className="gap-1">
           <CardDescription>存储</CardDescription>
-          <CardTitle
-            className={cn(
-              BIG_NUMBER_CLASS,
-              usedPercent > 90
-                ? "text-destructive"
-                : usedPercent >= 70 && "text-amber-600 dark:text-amber-400",
-            )}
-          >
+          <CardTitle className={cn(BIG_NUMBER_CLASS, storageWarning && "text-destructive")}>
             {overview.quota_bytes > 0 ? formatPercent(usedPercent) : "不限"}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
           <StorageUsageBar usedBytes={overview.used_bytes} quotaBytes={overview.quota_bytes} />
+          {storageWarning ? (
+            <Alert data-testid="overview-storage-warning" variant="warning">
+              <AlertTriangle aria-hidden="true" className="size-4" />
+              <AlertTitle>存储水位告警</AlertTitle>
+              <AlertDescription>
+                已用容量达到或超过 {overview.storage_warning_threshold_pct}% 阈值，请清理回收站或扩容。
+              </AlertDescription>
+            </Alert>
+          ) : null}
           <p className="text-xs text-muted-foreground">
             近 7 日下载 {formatCount(overview.downloads_last_7_days)} · 累计下载{" "}
             {formatCount(overview.download_count)} · 浏览 {formatCount(overview.view_count)}

@@ -182,7 +182,16 @@ const SIMULATED_LATENCY_MS = 150;
 
 /** One-time download ticket lifetime (docs/03 §1.10 / §3.15: 60 s). */
 const TICKET_TTL_MS = 60 * 1000;
-const IMAGE_SIGNATURE = "dev";
+/**
+ * 假签名的形状与真实后端一致：`<token>.<exp>`（CONTRACT §14.3 / M5 的 A1）。
+ * 只校验形状与有效期 —— 前端**不该**自己签 URL，这里也不模拟 HMAC。
+ */
+function isValidMockImageSignature(sig: string | null): boolean {
+  if (!sig) return false;
+  const [token, exp] = sig.split(".");
+  if (!token || !exp || !/^\d+$/.test(exp)) return false;
+  return Number(exp) * 1000 > Date.now();
+}
 
 /* -------------------------------------------------------------------------- */
 /* Auth state (M1, unchanged apart from the 200 + {status:"ok"} bodies)        */
@@ -1642,7 +1651,24 @@ function overviewNumbers(): AdminOverviewResponse {
     used_bytes: usedBytes,
     quota_bytes: quotaBytes,
     used_percent: quotaBytes ? Math.round((usedBytes / quotaBytes) * 10_000) / 100 : 0,
+    // 与后端 `settings_service.storage_warning()` 同一口径：quota<=0 表示不限配额。
+    storage_warning_threshold_pct: storageWarningThresholdPct(),
+    storage_warning: storageWarning(usedBytes, quotaBytes, storageWarningThresholdPct()),
   };
+}
+
+/** 设置项 `quota.warn_threshold_pct`（缺省 85，与后端 STORAGE_WARNING_DEFAULT_PCT 一致）。 */
+function storageWarningThresholdPct(): number {
+  return settingInt("quota.warn_threshold_pct", 85);
+}
+
+/**
+ * `used * 100 >= quota * threshold`（后端 `settings_service.storage_warning`）。
+ * 前端**不再**自己比较阈值：概览页直接用响应里的 `storage_warning`。
+ */
+function storageWarning(usedBytes: number, quotaBytes: number, thresholdPct: number): boolean {
+  if (quotaBytes <= 0) return false;
+  return usedBytes * 100 >= quotaBytes * thresholdPct;
 }
 
 function activeTokenCount(): number {
@@ -2247,7 +2273,7 @@ export const handlers = [
     const signed = sig !== null && sig.length > 0;
     const bearer = authenticate(request) !== null;
     if (!signed && !bearer) return notFound("图片不存在");
-    if (signed && sig !== IMAGE_SIGNATURE && !bearer) return notFound("图片不存在");
+    if (signed && !isValidMockImageSignature(sig) && !bearer) return notFound("图片不存在");
 
     const id = Number.parseInt(String(params.id), 10);
     const record = findImageOwner(id);
@@ -4576,19 +4602,84 @@ export const handlers = [
   }),
 
   /**
-   * 后端该端点是**说明性端点**：直接 404 并指向 `/me/tools/{id}/versions`
-   * （`app/api/v1/admin/tools.py`）。前端不消费它，这里保持同样的 404。
+   * `POST /admin/tools/{id}/versions` —— 管理侧代上传（M5 起真实可用，201）。
+   *
+   * 与 `/me/tools/{id}/versions` 的唯一区别是**不校验 owner**（`admin:all` 授权），
+   * 其余校验与落盘复用同一份逻辑；响应形状 `VersionUploadResponse`。
    */
-  http.post(`${API}/admin/tools/:toolId/versions`, async ({ request }) => {
-    await delay(60);
+  http.post(`${API}/admin/tools/:toolId/versions`, async ({ request, params }) => {
+    await delay(180);
     const actor = requireSuperadmin(request);
     if (actor instanceof Response) return actor;
-    return errorResponse(
-      404,
-      "NOT_FOUND",
-      "请使用 /api/v1/me/tools/{id}/versions（管理侧代上传复用同一服务）",
-      { hint: "admin 代上传在 M4 收敛为同一路径" },
-    );
+    const record = toolRecords.find((item) => item.seed.id === Number(params.toolId));
+    if (!record || record.deleted_at) return notFound("工具不存在");
+
+    const form = await request.formData();
+    const versionString = String(form.get("version") ?? "").trim();
+    const changelog = String(form.get("changelog_md") ?? "");
+    const autoSubmit = String(form.get("auto_submit") ?? "false") === "true";
+    const file = form.get("file");
+    const fileObj = typeof File !== "undefined" && file instanceof File ? file : null;
+
+    if (!versionString) {
+      return validationError([{ field: "version", message: "版本号必填" }]);
+    }
+    if (!/^\d+\.\d+\.\d+/.test(versionString)) {
+      return validationError([{ field: "version", message: "版本号需符合 x.y.z 格式" }]);
+    }
+    if (record.versions.some((item) => item.version === versionString)) {
+      return errorResponse(409, "VERSION_EXISTS", `版本号 ${versionString} 已存在`, {
+        field: "version",
+        value: versionString,
+      });
+    }
+    if (record.seed.tool_type === "file" || record.seed.tool_type === "skill") {
+      if (!fileObj) return validationError([{ field: "file", message: "该类型必须上传文件" }]);
+    }
+
+    const ext = fileObj ? extOf(fileObj.name) : null;
+    const version = createVersion(record, actor, {
+      version: versionString,
+      changelog_md: changelog || "（管理员代上传，未填写变更说明）",
+      fileName: fileObj?.name ?? null,
+      fileSize: fileObj?.size ?? null,
+      fileSha256: fileObj ? fakeSha256(`${record.seed.slug}|${versionString}|${fileObj.size}`) : null,
+      fileExt: ext,
+      mimeType: mimeOf(ext ?? ""),
+    });
+    record.version_seq += 1;
+    record.seed.updated_at = nowIso();
+    if (autoSubmit) {
+      submitForReview(record, actor, { newVersion: version });
+    } else if (record.status === "approved" || record.status === "pending_update") {
+      record.status = "pending_update";
+      record.submission_type = "new_version";
+      record.submitted_at = nowIso();
+    }
+
+    const skill: SkillVersionInfo | null =
+      record.seed.tool_type === "skill"
+        ? {
+            manifest: { ...MOCK_SKILL_MANIFEST, name: record.seed.slug, version: version.version },
+            file_tree_summary: skillTreeSummary(buildSkillFileTree(record.seed.name)),
+            file_tree_truncated: false,
+            parse_error: null,
+          }
+        : null;
+    const response: VersionUploadResponse = {
+      id: version.id,
+      tool_id: record.seed.id,
+      version: version.version,
+      status: version.status,
+      file_name: version.file_name,
+      file_size: version.file_size,
+      file_sha256: version.file_sha256,
+      prompt_content: version.prompt_content,
+      skill,
+      tool_status: record.status,
+      created_at: version.created_at,
+    };
+    return HttpResponse.json(response, { status: 201 });
   }),
 
   /* ---- M3: import / export ---- */

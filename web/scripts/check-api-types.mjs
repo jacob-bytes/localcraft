@@ -20,7 +20,10 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const openapiPath = resolve(webRoot, "..", "backend", "openapi.json");
+// 允许指向另一份 openapi（用于「J2 落地后会通过吗」的预演，不改 backend/）
+const openapiPath = process.env.OPENAPI_PATH
+  ? resolve(process.env.OPENAPI_PATH)
+  : resolve(webRoot, "..", "backend", "openapi.json");
 const typesPath = join(webRoot, "src", "api", "types.ts");
 
 if (!existsSync(openapiPath)) {
@@ -248,6 +251,8 @@ const PAIRS = [
   "UploadedFilePlaceholder→__skip__",
   "ApprovalQueueItem→ApprovalQueueItem",
   "ApproveResponse→ApproveResponse",
+  "OfflineResponse→OfflineResponse",
+  "RelistResponse→RelistResponse",
   "RejectResponse→RejectResponse",
   "ApprovalRecordOut→ApprovalRecord",
   "WhitelistEntryOut→WhitelistEntry",
@@ -268,7 +273,10 @@ const PAIRS = [
   "AdminUserUpdateRequest→AdminUserUpdateRequest",
   "AdminRoleReplaceRequest→AdminRoleReplaceRequest",
   "ResetPasswordResponse→ResetPasswordResponse",
+  "RevokeSessionsResponse→RevokeSessionsResponse",
   "GroupOut→GroupOut",
+  "GroupListResponse→GroupListResponse",
+  "GroupMemberListResponse→GroupMemberListResponse",
   "GroupMemberOut→GroupMemberOut",
   "GroupMemberAddResponse→GroupMemberAddResponse",
   "GroupCreateRequest→GroupCreateRequest",
@@ -278,11 +286,13 @@ const PAIRS = [
   "AdminCategoryUpdateRequest→AdminCategoryUpdateRequest",
   "CategoryOrderRequest→CategoryOrderRequest",
   "AdminTagOut→AdminTagOut",
+  "AdminTagListResponse→AdminTagListResponse",
   "TagRenameRequest→TagRenameRequest",
   "TagMergeRequest→TagMergeRequest",
   "TagMergeResponse→TagMergeResponse",
   "TagCleanupResponse→TagCleanupResponse",
   "ApiTokenOut→ApiTokenOut",
+  "ApiTokenListResponse→ApiTokenListResponse",
   "ApiTokenCreateResponse→ApiTokenCreateResponse",
   "ApiTokenCreateRequest→ApiTokenCreateRequest",
   "StatusCount→StatusCount",
@@ -302,6 +312,140 @@ const PAIRS = [
   "ToolImportItem→ToolImportItem",
   "ToolImportRequest→ToolImportRequest",
 ];
+
+/* -------------------------------------------------------------------------- */
+/* 响应覆盖检查（M4 交付项 4）                                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * **允许「没有命名形状」的响应** —— 只有这几类：健康检查、导出文件流、
+ * 以及 `{"status":"ok"}` 这种动作回执。其余任何 `additionalProperties` /
+ * 空 schema 都**报错**。
+ *
+ * 为什么必须报错而不是跳过：`§15.6` 宣布 openapi 是形状权威，可一旦某个响应是
+ * `additionalProperties: true`，它就没有任何字段可比 —— 若守卫在这里静默跳过，
+ * 这些端点会长期处在盲区里（M3 的 6 个端点就是这么漏掉的）。
+ */
+const OPERATIONS_WITHOUT_SHAPE = new Map([
+  ["GET /readyz", "健康检查回执"],
+  ["GET /api/v1/admin/export/users", "CSV 文件流，schema 为空"],
+  ["GET /api/v1/admin/export/tools", "JSON 文件流，schema 为空"],
+  ["POST /api/v1/auth/logout", "动作回执 {status}"],
+  ["POST /api/v1/auth/change-password", "动作回执 {status}"],
+  ["DELETE /api/v1/me/tools/{tool_id}", "动作回执 {status}"],
+  ["DELETE /api/v1/me/tools/{tool_id}/images/{image_id}", "动作回执 {status}"],
+  ["DELETE /api/v1/me/tools/{tool_id}/versions/{version}", "动作回执 {status}"],
+  ["DELETE /api/v1/admin/categories/{category_id}", "动作回执 {status}"],
+  ["DELETE /api/v1/admin/groups/{group_id}", "动作回执 {status} + cleaned_acl_entries"],
+  ["DELETE /api/v1/admin/groups/{group_id}/members/{user_id}", "动作回执 {status}"],
+  ["DELETE /api/v1/admin/tokens/{token_id}", "动作回执 {status}"],
+  ["DELETE /api/v1/admin/approval-whitelist/{user_id}", "动作回执 {status}"],
+]);
+
+/** 响应里引用的模型若不在 PAIRS 里，至少要能用这些理由说清楚为什么不比。 */
+const UNCHECKED_RESPONSE_MODELS = new Map([
+  ["HealthResponse", "健康检查回执，字段固定且不参与前端渲染"],
+  ["HTTPValidationError", "错误信封，前端由 ApiError 统一解析"],
+  ["ValidationError", "错误信封detail项，同上"],
+]);
+
+const typesNames = new Set([
+  ...rawInterfaces.map((item) => item.name),
+  ...typeAliases.keys(),
+]);
+
+const pairedOpenapiNames = new Set(PAIRS.map((pair) => pair.split("→")[0]));
+const pairedTsNames = new Set(
+  PAIRS.map((pair) => ALIASES[pair.split("→")[1]] ?? pair.split("→")[1]),
+);
+
+/** `Page_ApprovalQueueItem_` 这类自动生成的分页信封 → 真正的条目模型。 */
+function normalizeModelName(name) {
+  const page = /^Page_(.+)_$/.exec(name);
+  return page ? page[1] : name;
+}
+
+function modelCovered(name) {
+  const model = normalizeModelName(name);
+  if (pairedOpenapiNames.has(model) || pairedOpenapiNames.has(name)) return true;
+  if (typesNames.has(model) || typesNames.has(name)) return true;
+  const aliased = ALIASES[model];
+  if (aliased && (typesNames.has(aliased) || pairedTsNames.has(aliased))) return true;
+  return UNCHECKED_RESPONSE_MODELS.has(model);
+}
+
+/** 递归收集任意深度里的 `$ref` 模型名。 */
+function collectRefs(node, out) {
+  if (!node || typeof node !== "object") return;
+  if (Array.isArray(node)) {
+    for (const item of node) collectRefs(item, out);
+    return;
+  }
+  if (typeof node.$ref === "string") out.add(node.$ref.split("/").pop());
+  for (const value of Object.values(node)) collectRefs(value, out);
+}
+
+/**
+ * 顶层响应 schema → { models, shapeless }。
+ * `shapeless` = 拿不到任何命名形状（`additionalProperties` / 空 schema / 无 properties）。
+ */
+function topLevelResponseModels(schema) {
+  if (!schema) return { models: new Set(), shapeless: true };
+  if (typeof schema.$ref === "string") {
+    return { models: new Set([schema.$ref.split("/").pop()]), shapeless: false };
+  }
+  if (schema.type === "array") return topLevelResponseModels(schema.items);
+  if (schema.properties && Object.keys(schema.properties).length > 0) {
+    const models = new Set();
+    collectRefs(schema.properties, models);
+    return { models, shapeless: false };
+  }
+  if (schema.additionalProperties) {
+    return { models: new Set(), shapeless: true };
+  }
+  return { models: new Set(), shapeless: true };
+}
+
+const responseFailures = [];
+let operationsChecked = 0;
+
+for (const [path, operations] of Object.entries(openapi.paths ?? {})) {
+  for (const [method, operation] of Object.entries(operations)) {
+    if (!["get", "post", "put", "patch", "delete"].includes(method)) continue;
+    for (const [code, response] of Object.entries(operation.responses ?? {})) {
+      if (!code.startsWith("2")) continue;
+      const schema = response.content?.["application/json"]?.schema;
+      if (schema === undefined) continue; // 无 JSON 体（204/文件流已单独处理）
+
+      const key = `${method.toUpperCase()} ${path}`;
+      const { models, shapeless } = topLevelResponseModels(schema);
+      operationsChecked += 1;
+
+      if (shapeless) {
+        if (!OPERATIONS_WITHOUT_SHAPE.has(key)) {
+          responseFailures.push(
+            `${key} 的 ${code} 响应在 openapi.json 里**没有字段定义**（additionalProperties / 空 schema）` +
+              ` —— 形状权威必须能给出字段：补 response_model，或加入 OPERATIONS_WITHOUT_SHAPE 并写明理由`,
+          );
+        }
+        continue;
+      }
+
+      if (models.size === 0) {
+        responseFailures.push(`${key} 的 ${code} 响应有 properties 但没有任何 $ref 模型可比`);
+        continue;
+      }
+      for (const model of models) {
+        if (!modelCovered(model)) {
+          responseFailures.push(
+            `${key} 的 ${code} 响应引用了未纳入比对的模型 ${model}` +
+              ` —— 加进 PAIRS，或加入 UNCHECKED_RESPONSE_MODELS 说明理由`,
+          );
+        }
+      }
+    }
+  }
+}
 
 /* -------------------------------------------------------------------------- */
 /* 执行比对                                                                     */
@@ -371,13 +515,23 @@ if (process.env.VERBOSE_API_TYPES === "1") {
   for (const note of notes) console.log(`  · ${note}`);
 }
 
-if (failures.length > 0) {
+if (failures.length > 0 || responseFailures.length > 0) {
   console.error("check-api-types: 失败（openapi.json 是形状权威，见 CONTRACT §15.6）\n");
-  for (const item of failures) console.error(`  ✗ ${item}`);
-  console.error(`\n比对 ${checked} 个模型，${failures.length} 处不一致。`);
+  // 两类失败**一起报**，否则前一类会掩盖后一类（M4 时踩过一次）
+  if (failures.length > 0) {
+    console.error(`【模型字段比对】${failures.length} 处：`);
+    for (const item of failures) console.error(`  ✗ ${item}`);
+    console.error(`  （已比对 ${checked} 个模型）`);
+  }
+  if (responseFailures.length > 0) {
+    console.error(`\n【响应覆盖检查】${responseFailures.length} 处：`);
+    for (const item of responseFailures) console.error(`  ✗ ${item}`);
+    console.error(`  （已覆盖 ${operationsChecked} 个 2xx JSON 响应）`);
+  }
   process.exit(1);
 }
 
 console.log(
-  `check-api-types: 通过（比对 ${checked} 个模型；字段名、类型类别、可空性与 openapi.json 一致）`,
+  `check-api-types: 通过（比对 ${checked} 个模型；覆盖 ${operationsChecked} 个 2xx 响应；` +
+    `字段名、类型类别、可空性与 openapi.json 一致）`,
 );

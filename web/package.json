@@ -16,7 +16,8 @@
     "e2e:real": "playwright test --config playwright.real.config.ts",
     "evidence": "node scripts/collect-evidence.mjs",
     "backend:isolated": "bash scripts/start-isolated-backend.sh",
-    "check:api-types": "node scripts/check-api-types.mjs"
+    "check:api-types": "node scripts/check-api-types.mjs",
+    "check:lazy-retry": "node scripts/check-lazy-retry.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

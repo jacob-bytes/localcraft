@@ -67,6 +67,12 @@ const GROUP_SPECS: readonly GroupSpec[] = [
     prefixes: ["security."],
   },
   {
+    id: "images",
+    title: "图片",
+    hint: "封面/截图的签名 URL 有效期（M5 起后端下发 sig= 能力 URL）。",
+    prefixes: ["images."],
+  },
+  {
     id: "portal",
     title: "门户",
     hint: "站点名称、首页公告、匿名浏览与默认排序。",

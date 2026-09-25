@@ -773,6 +773,26 @@ export interface OfflineRequest {
   reason: string;
 }
 
+/**
+ * `POST /admin/approvals/{id}/offline` 的响应（openapi `OfflineResponse`）。
+ *
+ * **注意不要用 `ApproveResponse` 接这个响应**：下架/上架不产生新版本，服务端只回
+ * `tool_id` / `status` / `approval_record_id`，没有 `version_seq` 等字段。
+ * （M4 由 `check:api-types` 的响应覆盖检查发现：守卫此前只看顶层 `$ref` 名。）
+ */
+export interface OfflineResponse {
+  tool_id: number;
+  status: string;
+  approval_record_id?: number | null;
+}
+
+/** `POST /admin/approvals/{id}/relist` 的响应（openapi `RelistResponse`）。 */
+export interface RelistResponse {
+  tool_id: number;
+  status: string;
+  approval_record_id?: number | null;
+}
+
 export interface RelistRequest {
   reason?: string | null;
 }
@@ -1193,6 +1213,10 @@ export interface AdminOverviewResponse {
   used_bytes: number;
   quota_bytes: number;
   used_percent: number;
+  /** 是否应就存储水位告警（**判断口径只在后端** —— `settings_service.storage_warning()`）。 */
+  storage_warning: boolean;
+  /** 告警阈值（百分比），来自设置项 `quota.warn_threshold_pct`，仅用于文案。 */
+  storage_warning_threshold_pct: number;
 }
 
 export interface ToolRankItem {
@@ -1315,22 +1339,6 @@ export interface PurgeToolResponse {
 
 /** 回收站条目与全站工具同形（`AdminToolListResponse`），`deleted_at` 非 null。 */
 export type RecycleBinItem = AdminToolItem;
-
-/**
- * 管理侧代上传版本：**后端该端点只返回 404 并指向 `/me/tools/{id}/versions`**
- * （`app/api/v1/admin/tools.py` 的说明性端点）。前端不接它，仅保留类型完整性。
- */
-export interface AdminVersionUploadResponse {
-  id: number;
-  tool_id: number;
-  version: string;
-  status: VersionStatus;
-  file_name: string | null;
-  file_size: number | null;
-  file_sha256: string | null;
-  tool_status: string;
-  created_at: string | null;
-}
 
 /* -------------------------------------------------------------------------- */
 /* 批量导入导出（docs/04 §6.20）                                                */

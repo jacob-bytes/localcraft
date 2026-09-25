@@ -1,9 +1,13 @@
 import { createHash } from "node:crypto";
+import { readdirSync } from "node:fs";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
+
+import { reportChunkDiagnostics, trackChunkRequests } from "./diagnostics";
 
 /**
  * 真实后端 E2E（M2 裁定 6 / CONTRACT §14.1）。
@@ -130,9 +134,69 @@ function uniqueName(prefix: string): string {
   return `${prefix} ${Date.now().toString(36)}`;
 }
 
+/**
+ * 导航后的首个断言（CONTRACT §19.9 / M4 交付项 1.4）。
+ *
+ * **不假设首次 chunk 拉取必然成功**：`lazyWithRetry` 失败时会整页自动重载一次，
+ * 页面随后会自己恢复。所以这里给 30s 的时间窗（够一次重载 + 重新渲染），
+ * 并在失败信息里写明「已允许一次 chunk 重试」，避免下一次复现又被误判成
+ * 「断言太严」或「页面真的坏了」。
+ */
+const CHUNK_RETRY_NOTE = "（已允许一次 chunk 自动重试；超时 30s，详见失败时的 [诊断] 输出）";
+
+async function expectAfterNavigation(locator: Locator, label: string): Promise<void> {
+  await expect(locator, `${label} 未出现${CHUNK_RETRY_NOTE}`).toBeVisible({ timeout: 30_000 });
+}
+
+/** 门户首屏（工具卡片）就绪 —— 大多数用例的公共起点。 */
+async function expectPortalReady(page: Page): Promise<void> {
+  await expectAfterNavigation(page.getByTestId("tool-card").first(), "门户工具卡片");
+}
+
+/* -------------------------------------------------------------------------- */
+/* 懒加载韧性：dist 里的真实 chunk 名 + 「只失败一次」的拦截器（M4 交付项 1）   */
+/* -------------------------------------------------------------------------- */
+
+/** 构建产物里的 chunk 文件名（带哈希），例如 `ToolDetailPage-CgGYlRAi.js`。 */
+function findBuiltChunk(pageName: string): string | null {
+  const assetsDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "dist", "assets");
+  const match = readdirSync(assetsDir).find((file) =>
+    new RegExp(`^${pageName}-[A-Za-z0-9_-]+\\.js$`).test(file),
+  );
+  return match ?? null;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** 头一个工具 slug —— 韧性用例只需要一个能进详情页的真实 slug。 */
+async function firstToolSlug(
+  page: Page,
+  auth: { current: () => string | null },
+): Promise<string> {
+  const list = (await api(page, `${API}/tools?page=1&page_size=1`, auth.current()))
+    .body as unknown as { items: Array<{ slug: string }> };
+  const slug = list.items[0]?.slug;
+  expect(slug, "种子里应有至少一个工具").toBeTruthy();
+  return slug!;
+}
+
 test.describe.configure({ mode: "serial" });
 
 test.describe("真实后端联调（mock 之外的路径）", () => {
+  // 静态资源请求的现场取证（只在失败时打印，见 diagnostics.ts）
+  test.beforeEach(async ({ page }) => {
+    trackChunkRequests(page);
+  });
+
+  test.afterEach(async ({ page, request }, testInfo) => {
+    if (testInfo.status === testInfo.expectedStatus) return;
+    await reportChunkDiagnostics(page, request, testInfo).catch((error: unknown) => {
+      console.log(`[诊断] 采集失败：${String(error)}`);
+    });
+  });
+
   test("A. 会话恢复：refresh cookie 的真实 Path + F5 不闪登录页", async ({ page, context }) => {
     const auth = captureAuthHeader(page);
 
@@ -147,7 +211,7 @@ test.describe("真实后端联调（mock 之外的路径）", () => {
     // CONTRACT §17.12：断言必须等**数据就绪**，不能依赖 top-nav 这种 render 阶段
     // 就出现的元素 —— React Query 的 /tools 请求在 render 之后才发出，冷启动后端
     // 首次请求较慢时先前的断言会跑在请求之前（间歇性失败）。
-    await expect(page.getByTestId("tool-card").first()).toBeVisible();
+    await expectPortalReady(page);
     expect(auth.current(), "应能抓到 Authorization 头").toBeTruthy();
 
     // 真实 cookie：Path 必须是 /api/v1/auth（mock 用的是 /，只有真实后端能验）
@@ -176,7 +240,7 @@ test.describe("真实后端联调（mock 之外的路径）", () => {
   test("B. facets 的真实 null 序列化 + 真实 SQL 分页/筛选/排序", async ({ page }) => {
     const auth = captureAuthHeader(page);
     await signIn(page, ADMIN.username, ADMIN.password);
-    await page.waitForSelector('[data-testid="tool-card"]');
+    await expectPortalReady(page);
 
     const page1 = await api(page, `${API}/tools?page=1&page_size=12`, auth.current());
     const body1 = page1.body as unknown as {
@@ -227,7 +291,7 @@ test.describe("真实后端联调（mock 之外的路径）", () => {
 
   test("C. 登出成功的真实响应形状：200 + {\"status\":\"ok\"}（不是 204）", async ({ page }) => {
     await signIn(page, ADMIN.username, ADMIN.password);
-    await expect(page.getByTestId("tool-card").first()).toBeVisible();
+    await expectPortalReady(page);
 
     const logoutResponse = page.waitForResponse(
       (response) =>
@@ -252,7 +316,7 @@ test.describe("真实后端联调（mock 之外的路径）", () => {
   }) => {
     const auth = captureAuthHeader(page);
     await signIn(page, ADMIN.username, ADMIN.password);
-    await page.waitForSelector('[data-testid="tool-card"]');
+    await expectPortalReady(page);
 
     const result = await api(page, `${API}/auth/change-password`, auth.current(), {
       method: "POST",
@@ -275,7 +339,7 @@ test.describe("真实后端联调（mock 之外的路径）", () => {
   }) => {
     const auth = captureAuthHeader(page);
     await signIn(page, ADMIN.username, ADMIN.password);
-    await expect(page.getByTestId("tool-card").first()).toBeVisible();
+    await expectPortalReady(page);
 
     // 用 API 找 skill 工具（种子里一定有），再走 UI 打开详情
     const list = (await api(page, `${API}/tools?page=1&page_size=50&type=skill`, auth.current()))
@@ -284,7 +348,7 @@ test.describe("真实后端联调（mock 之外的路径）", () => {
     const skillTool = list.items[0]!;
 
     await page.goto(`/tools/${skillTool.slug}`);
-    await expect(page.getByTestId("tool-detail")).toBeVisible();
+    await expectAfterNavigation(page.getByTestId("tool-detail"), "工具详情页");
     await expect(
       page.getByTestId("tool-detail").getByRole("heading", { level: 1 }).first(),
     ).toContainText(skillTool.name);
@@ -318,7 +382,7 @@ test.describe("真实后端联调（mock 之外的路径）", () => {
   test("E. 真实上传 → 提交 → 批准 → 下载 → SHA256 一致（验收 #3/#11）", async ({ page }) => {
     const auth = captureAuthHeader(page);
     await signIn(page, ADMIN.username, ADMIN.password);
-    await page.waitForSelector('[data-testid="tool-card"]');
+    await expectPortalReady(page);
 
     // 真实字节：SHA256 由脚本本地算一份，稍后与后端/下载结果逐字比对
     const dir = await mkdtemp(join(tmpdir(), "selftool-e2e-"));
@@ -374,7 +438,7 @@ test.describe("真实后端联调（mock 之外的路径）", () => {
 
       // 详情页展示的 SHA256 与真实文件一致
       await page.goto(`/tools/${tool.slug}`);
-      await expect(page.getByTestId("tool-detail")).toBeVisible();
+      await expectAfterNavigation(page.getByTestId("tool-detail"), "工具详情页");
       const shownSha = (await page.getByTestId("sha256-value").first().innerText()).trim();
       expect(shownSha).toBe(expectedSha);
 
@@ -399,11 +463,14 @@ test.describe("真实后端联调（mock 之外的路径）", () => {
   }) => {
     const auth = captureAuthHeader(page);
     await signIn(page, ADMIN.username, ADMIN.password);
-    await page.waitForSelector('[data-testid="tool-card"]');
+    await expectPortalReady(page);
 
     // 不存在的 slug → 404 页面
     await page.goto("/tools/definitely-not-a-real-slug-9f8e7d");
-    await expect(page.getByText("页面不存在或你没有访问权限")).toBeVisible();
+    await expectAfterNavigation(
+      page.getByText("页面不存在或你没有访问权限"),
+      "404 页文案",
+    );
 
     // 无权访问：admin 建一个 private 工具，换一个普通用户访问必须是 404（不是 403）
     const name = uniqueName("E2E 私有工具");
@@ -449,7 +516,10 @@ test.describe("真实后端联调（mock 之外的路径）", () => {
       const denied = await api(otherPage, `${API}/tools/${tool.slug}`, otherAuth.current());
       expect(denied.status, "无权访问必须返回 404").toBe(404);
       await otherPage.goto(`/tools/${tool.slug}`);
-      await expect(otherPage.getByText("页面不存在或你没有访问权限")).toBeVisible();
+      await expectAfterNavigation(
+        otherPage.getByText("页面不存在或你没有访问权限"),
+        "无权访问的 404 页文案",
+      );
       await other!.close();
     } finally {
       if (toolId !== null) {
@@ -461,7 +531,7 @@ test.describe("真实后端联调（mock 之外的路径）", () => {
   test("G. 图片能力 URL：签名或占位降级（CONTRACT §14.3）", async ({ page }) => {
     const auth = captureAuthHeader(page);
     await signIn(page, ADMIN.username, ADMIN.password);
-    await page.waitForSelector('[data-testid="tool-card"]');
+    await expectPortalReady(page);
 
     const list = (await api(page, `${API}/tools?page=1&page_size=50`, auth.current()))
       .body as unknown as { items: Array<{ cover_url: string | null }> };
@@ -515,7 +585,7 @@ test.describe("真实后端联调（mock 之外的路径）", () => {
   test("I. 真实设置写入：非法值整体回滚、合法项不受影响（验收 #15）", async ({ page }) => {
     const auth = captureAuthHeader(page);
     await signIn(page, ADMIN.username, ADMIN.password);
-    await expect(page.getByTestId("tool-card").first()).toBeVisible();
+    await expectPortalReady(page);
 
     const before = await api(page, `${API}/admin/settings`, auth.current());
     expect(before.status).toBe(200);
@@ -558,7 +628,7 @@ test.describe("真实后端联调（mock 之外的路径）", () => {
   test("J. 真实导出 CSV：BOM + 中文不乱码（验收 #20）", async ({ page }) => {
     const auth = captureAuthHeader(page);
     await signIn(page, ADMIN.username, ADMIN.password);
-    await expect(page.getByTestId("tool-card").first()).toBeVisible();
+    await expectPortalReady(page);
 
     const probe = await page.evaluate(async ([url, token]) => {
       const response = await fetch(url as string, {
@@ -587,7 +657,7 @@ test.describe("真实后端联调（mock 之外的路径）", () => {
   test("K. 真实 Token 生命周期：明文只出现一次 + 吊销后失效（§16.4）", async ({ page }) => {
     const auth = captureAuthHeader(page);
     await signIn(page, ADMIN.username, ADMIN.password);
-    await expect(page.getByTestId("tool-card").first()).toBeVisible();
+    await expectPortalReady(page);
 
     /**
      * 登录后的会话 JWT 必须**当场存下来**：`captureAuthHeader` 记录的是「最后一个」
@@ -648,6 +718,8 @@ test.describe("真实后端联调（mock 之外的路径）", () => {
   test("H. 生产拓扑：后端托管 dist、无 mock worker（验收 #30）", async ({ page }) => {
     const response = await page.goto("/");
     expect(response?.headers()["content-type"] ?? "").toContain("text/html");
+    // 未登录 → 落登录页；这一步同时验证入口 chunk 与登录页 chunk 可加载
+    await expectAfterNavigation(page.getByTestId("login-page"), "登录页");
 
     // SPA fallback 会为未知路径返回 index.html（200 + text/html），所以不能断言 404：
     // 真正的判据是「没有这个文件」——它的 content-type 必须是 HTML 而不是 JS。
@@ -673,5 +745,183 @@ test.describe("真实后端联调（mock 之外的路径）", () => {
     expect(asset.src).toMatch(/\/assets\/index-.*\.js$/);
     expect(asset.status).toBe(200);
     expect(asset.contentType).toMatch(/javascript/);
+  });
+
+  test("N. M5 种子：26 个工具 + viewer 账号 + 真实文件下载 SHA256 一致（验收 #12）", async ({
+    page,
+  }) => {
+    const auth = captureAuthHeader(page);
+    await signIn(page, ADMIN.username, ADMIN.password);
+    await expectPortalReady(page);
+
+    // 种子规模（CONTRACT §20.1 A2）
+    const list = (await api(page, `${API}/tools?page=1&page_size=100`, auth.current()))
+      .body as unknown as { total: number; items: Array<{ slug: string; tool_type: string }> };
+    expect(list.total, "M5 种子应为 26 个门户可见工具").toBe(26);
+    expect(
+      list.items.some((item) => item.tool_type === "file"),
+      "种子里应有 file 类型工具",
+    ).toBe(true);
+
+    // 种子文件必须是**真实文件**：sha256 存在、可下载、下载内容哈希逐字一致
+    // （M2 时种子只有 file_size 没有文件，§17.9 的中间态；M5 已修）
+    const fileTool = list.items.find((item) => item.tool_type === "file")!;
+    const detail = (await api(page, `${API}/tools/${fileTool.slug}`, auth.current()))
+      .body as unknown as {
+      current_version: { id: number; file_sha256: string | null; can_download: boolean } | null;
+    };
+    const version = detail.current_version;
+    expect(version?.file_sha256, "种子版本必须有真实文件的 sha256（§20.1 A3/A4）").toBeTruthy();
+    expect(version?.can_download).toBe(true);
+
+    const ticket = (
+      await api(page, `${API}/tools/${fileTool.slug}/download-ticket`, auth.current(), {
+        method: "POST",
+        body: { version_id: version!.id },
+      })
+    ).body as unknown as { url: string };
+    const digest = await page.evaluate(async (url) => {
+      const response = await fetch(url);
+      const buffer = await response.arrayBuffer();
+      const hash = await crypto.subtle.digest("SHA-256", buffer);
+      return {
+        status: response.status,
+        size: buffer.byteLength,
+        sha256: Array.from(new Uint8Array(hash))
+          .map((byte) => byte.toString(16).padStart(2, "0"))
+          .join(""),
+      };
+    }, ticket.url);
+    expect(digest.status).toBe(200);
+    expect(digest.size, "种子文件不应为空").toBeGreaterThan(0);
+    expect(digest.sha256, "下载内容的 SHA256 必须与接口下发的逐字一致").toBe(
+      version!.file_sha256,
+    );
+
+    // viewer 账号（M5 种子新增，§17.8）：能看详情，但下载被拒（docs/01 §3.2 / §15.7）
+    const viewerContext = await page.context().browser()?.newContext({ locale: "zh-CN" });
+    expect(viewerContext, "应能开第二个浏览器上下文").toBeTruthy();
+    const viewerPage = await viewerContext!.newPage();
+    const viewerAuth = captureAuthHeader(viewerPage);
+    await signIn(viewerPage, "viewer", "Viewer@12345");
+    await expectAfterNavigation(viewerPage.getByTestId("tool-card").first(), "viewer 门户");
+
+    const viewerDetail = await api(viewerPage, `${API}/tools/${fileTool.slug}`, viewerAuth.current());
+    expect(viewerDetail.status, "viewer 可以查看工具详情").toBe(200);
+    const viewerTicket = await api(
+      viewerPage,
+      `${API}/tools/${fileTool.slug}/download-ticket`,
+      viewerAuth.current(),
+      { method: "POST", body: { version_id: version!.id } },
+    );
+    expect(viewerTicket.status, "viewer 不允许下载").toBe(404);
+
+    // 残留缺口：详情里的 `can_download` 对 viewer 仍是 true，与下载授权不一致
+    const viewerFlag = (
+      viewerDetail.body as unknown as { current_version?: { can_download?: boolean } }
+    ).current_version?.can_download;
+    test.info().annotations.push({
+      type: viewerFlag === false ? "ok" : "gap",
+      description: `viewer 的 current_version.can_download=${viewerFlag}（FR-ACL-05 期望 false；实际下载已被 404 no_download_permission 拦住）`,
+    });
+    await viewerContext!.close();
+  });
+
+  test("L. 懒加载 chunk 一次性失败 → 自动重载并恢复（M4 交付项 1.1/1.3/1.4）", async ({ page }) => {
+    /*
+     * 这两个韧性用例**只能**在真实产物上跑：mock 模式（dev + MSW）下页面被 Service
+     * Worker 接管，而 Playwright 的 `page.route` 拦不到 SW 控制的请求（模块脚本请求
+     * 根本不进路由层）。生产构建没有 SW，才能精确地「只让第一次请求失败」。
+     * 不依赖后端的离线自检见 `scripts/check-lazy-retry.mjs`。
+     */
+    const auth = captureAuthHeader(page);
+    await signIn(page, ADMIN.username, ADMIN.password);
+    await expectPortalReady(page);
+    const slug = await firstToolSlug(page, auth);
+
+    const chunkFile = findBuiltChunk("ToolDetailPage");
+    expect(chunkFile, "dist/assets 里应有 ToolDetailPage 的 chunk").toBeTruthy();
+
+    // 只让**第一次**请求失败：精确模拟瞬时抖动的成因（网络中断/请求被打断）
+    let aborted = 0;
+    let allowed = 0;
+    await page.route(new RegExp(`/${escapeRegExp(chunkFile!)}$`), async (route) => {
+      if (aborted === 0) {
+        aborted += 1;
+        await route.abort("failed");
+        return;
+      }
+      allowed += 1;
+      await route.continue();
+    });
+
+    await page.goto(`/tools/${slug}`);
+
+    // 断言经得起一次重载：第一次 chunk 失败后 lazyWithRetry 会整页重载，
+    // 重载后这一次请求被放行，页面必须自己恢复出详情页。
+    await expectAfterNavigation(
+      page.getByTestId("tool-detail"),
+      "工具详情页（chunk 首次失败后自动重载恢复）",
+    );
+
+    expect(aborted, "应拦下并失败掉第一次 chunk 请求").toBe(1);
+    expect(allowed, "重载后应重新请求该 chunk 并成功").toBeGreaterThan(0);
+
+    // 易错点 1：加载成功后必须清除标记，否则用户在这次会话里永久失去自动恢复能力
+    const leftover = await page.evaluate(() =>
+      Object.keys(window.sessionStorage).filter((key) => key.startsWith("selftool:chunk-retry:")),
+    );
+    expect(leftover, "成功加载后应清除 chunk 重试标记").toEqual([]);
+  });
+
+  test("M. chunk 持续失败 → 展示可手动重试的边界，且不无限重载（M4 交付项 1.2）", async ({
+    page,
+  }) => {
+    const auth = captureAuthHeader(page);
+    await signIn(page, ADMIN.username, ADMIN.password);
+    await expectPortalReady(page);
+    const slug = await firstToolSlug(page, auth);
+
+    const chunkFile = findBuiltChunk("ToolDetailPage");
+    expect(chunkFile, "dist/assets 里应有 ToolDetailPage 的 chunk").toBeTruthy();
+
+    let attempts = 0;
+    // 只数真正的文档加载：framenavigated 会把 SPA 的 pushState 也算成导航，
+    // 用它判断「重载了几次」会虚高。
+    let documentLoads = 0;
+    page.on("request", (request) => {
+      if (request.resourceType() === "document") documentLoads += 1;
+    });
+    await page.route(new RegExp(`/${escapeRegExp(chunkFile!)}$`), async (route) => {
+      attempts += 1;
+      await route.abort("failed");
+    });
+
+    await page.goto(`/tools/${slug}`);
+
+    // 第一次失败 → 自动重载；重载后仍失败 → 交给错误边界（不再自动重载）
+    await expect(page.getByTestId("chunk-error-boundary")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText(/已自动重试过一次仍未成功/)).toBeVisible();
+    await expect(page.getByRole("button", { name: /重试/ })).toBeVisible();
+
+    const attemptsAtBoundary = attempts;
+    const loadsAtBoundary = documentLoads;
+    await page.waitForTimeout(3_000);
+    expect(attempts, "标记生效后不应再重试，否则就是无限重载").toBe(attemptsAtBoundary);
+    expect(
+      attemptsAtBoundary,
+      "只应尝试两次（首次 + 一次自动重载）",
+    ).toBeLessThanOrEqual(2);
+    expect(
+      loadsAtBoundary,
+      `只应自动重载一次（观测：文档加载 ${loadsAtBoundary} 次）`,
+    ).toBe(2);
+    expect(documentLoads, "边界稳定后不应继续加载文档").toBe(loadsAtBoundary);
+
+    // 防循环标记确实是生效的那个机制
+    const flags = await page.evaluate(() =>
+      Object.keys(window.sessionStorage).filter((key) => key.startsWith("selftool:chunk-retry:")),
+    );
+    expect(flags.length, "应留下重试标记以阻止第二次自动重载").toBeGreaterThan(0);
   });
 });

@@ -24,12 +24,15 @@ const baseURL = process.env.REAL_BASE ?? "http://127.0.0.1:8000";
 export default defineConfig({
   testDir: "./e2e-real",
   timeout: 90_000,
-  expect: { timeout: 15_000 },
   fullyParallel: false,
   workers: 1,
   retries: 0,
   reporter: [["list"]],
   outputDir: "e2e-real/artifacts/test-output",
+  // M4（CONTRACT §19.9）：路由级懒加载失败时 `lazyWithRetry` 会整页重载一次，
+  // 断言必须容得下这次重载 + 重新渲染，所以 expect 窗口从 15s 提到 30s。
+  // 这不是放宽断言 —— 「重载后仍未渲染出目标元素」依然会失败。
+  expect: { timeout: 30_000 },
   use: {
     baseURL,
     trace: "off",

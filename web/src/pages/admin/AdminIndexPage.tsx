@@ -201,7 +201,11 @@ export default function AdminIndexPage() {
               ) : (
                 <ul className="space-y-3 rounded-xl border bg-card p-4">
                   {storageItems.map((item) => (
-                    <StorageRow key={item.owner_id} item={item} />
+                    <StorageRow
+                      key={item.owner_id}
+                      item={item}
+                      warningThresholdPct={overviewQuery.data?.storage_warning_threshold_pct}
+                    />
                   ))}
                 </ul>
               )}
@@ -214,15 +218,29 @@ export default function AdminIndexPage() {
 }
 
 /** 单行：用户 + 已用容量 + 占比条 + 工具数/版本数。 */
-function StorageRow({ item }: { item: StorageOwnerItem }) {
+function StorageRow({
+  item,
+  warningThresholdPct,
+}: {
+  item: StorageOwnerItem;
+  /**
+   * 后端下发的告警阈值（`storage_warning_threshold_pct`）—— 前端不再自带 70/90。
+   * 拿不到（概览还没回来 / 无权看概览）时不猜，只用满额标红。
+   */
+  warningThresholdPct?: number;
+}) {
   const percent = Number.isFinite(item.used_percent)
     ? Math.max(0, Math.min(100, item.used_percent))
     : 0;
   const percentLabel = `${percent >= 10 ? percent.toFixed(0) : percent.toFixed(1)}%`;
 
-  // 阈值与 StorageUsageBar 保持一致（docs/04 §7.5）。
+  // 纯展示：达到后端阈值标黄，满额标红。真正的告警判定在 overview.storage_warning。
   const indicator =
-    percent > 90 ? "bg-destructive" : percent >= 70 ? "bg-warning" : "bg-primary";
+    percent >= 100
+      ? "bg-destructive"
+      : warningThresholdPct !== undefined && percent >= warningThresholdPct
+        ? "bg-warning"
+        : "bg-primary";
 
   return (
     <li className="space-y-1.5">
