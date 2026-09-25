@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # ============================================================
-# scripts/uninstall.sh — selftool 卸载脚本
+# scripts/uninstall.sh — localcraft 卸载脚本
 #
 # 设计立场（很重要）：**默认卸载"程序"，不卸载"数据"。**
-#   - 停止并禁用 selftool.service 与已启用的 selftool-*.timer
+#   - 停止并禁用 localcraft.service 与已启用的 localcraft-*.timer
 #   - 移除 /etc/systemd/system/ 下本项目安装的 unit 与 drop-in
-#   - 移除 /opt/selftool（代码 + venv + 脚本 + releases）
-#   - **保留** /var/lib/selftool（数据库与 files/）与 /etc/selftool/selftool.env（含 SECRET_KEY）
-#   - **保留** /var/log/selftool（卸载后的日志是排障证据，不该顺手删掉）
+#   - 移除 /opt/localcraft（代码 + venv + 脚本 + releases）
+#   - **保留** /var/lib/localcraft（数据库与 files/）与 /etc/localcraft/localcraft.env（含 SECRET_KEY）
+#   - **保留** /var/log/localcraft（卸载后的日志是排障证据，不该顺手删掉）
 #   只有显式传 --purge 才删除数据目录、配置目录与日志目录，并删除系统用户。
 #
 # 为什么默认保留数据：误删一次卸载就可能造成不可逆的数据丢失，而"重装再删"
@@ -17,49 +17,49 @@
 #   scripts/uninstall.sh                  # 交互确认，保留数据与配置
 #   scripts/uninstall.sh --yes            # 跳过交互（供自动化）
 #   scripts/uninstall.sh --purge --yes    # 连数据/配置/日志一起删（不可恢复）
-#   scripts/uninstall.sh --keep-code      # 只摘服务与 unit，保留 /opt/selftool
+#   scripts/uninstall.sh --keep-code      # 只摘服务与 unit，保留 /opt/localcraft
 #   scripts/uninstall.sh --dry-run        # 只打印将执行的步骤，不动系统
 #
 # 演练/无 systemd 环境（与 install.sh 同一套变量）:
-#   SELTOOL_SKIP_SYSTEMD=1 \
-#   SELTOOL_PREFIX=$PWD/sandbox/opt \
-#   SELTOOL_DATA_DIR=$PWD/sandbox/var \
-#   SELTOOL_ETC_DIR=$PWD/sandbox/etc \
-#   SELTOOL_LOG_DIR=$PWD/sandbox/log \
+#   LOCALCRAFT_SKIP_SYSTEMD=1 \
+#   LOCALCRAFT_PREFIX=$PWD/sandbox/opt \
+#   LOCALCRAFT_DATA_DIR=$PWD/sandbox/var \
+#   LOCALCRAFT_ETC_DIR=$PWD/sandbox/etc \
+#   LOCALCRAFT_LOG_DIR=$PWD/sandbox/log \
 #   ./uninstall.sh --yes
 #   此时不调用 systemctl、不动 /etc/systemd 与 /usr/lib/tmpfiles.d；
-#   但仍会结束演练模式用 nohup 拉起的那条 uvicorn（靠 $DATA_DIR/selftool.pid）。
+#   但仍会结束演练模式用 nohup 拉起的那条 uvicorn（靠 $DATA_DIR/localcraft.pid）。
 #
 # 依据: docs/05《部署与运维方案》§5（安装步骤的逆过程）、§12.6（权限）、§14.3（路径速查）
 # ============================================================
 set -uo pipefail
 
 # ---------- 路径（可用环境变量覆盖，与 install.sh 同名同默认值）----------
-PREFIX="${SELTOOL_PREFIX:-/opt/selftool}"
-DATA_DIR="${SELTOOL_DATA_DIR:-/var/lib/selftool}"
-ETC_DIR="${SELTOOL_ETC_DIR:-/etc/selftool}"
-LOG_DIR="${SELTOOL_LOG_DIR:-/var/log/selftool}"
+PREFIX="${LOCALCRAFT_PREFIX:-/opt/localcraft}"
+DATA_DIR="${LOCALCRAFT_DATA_DIR:-/var/lib/localcraft}"
+ETC_DIR="${LOCALCRAFT_ETC_DIR:-/etc/localcraft}"
+LOG_DIR="${LOCALCRAFT_LOG_DIR:-/var/log/localcraft}"
 
-ENV_FILE="$ETC_DIR/selftool.env"
-PID_FILE="$DATA_DIR/selftool.pid"
-SKIP_SYSTEMD="${SELTOOL_SKIP_SYSTEMD:-0}"
-UNIT_DIR="${SELTOOL_SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
-TMPFILES_FILE="${SELTOOL_TMPFILES_FILE:-/usr/lib/tmpfiles.d/selftool.conf}"
+ENV_FILE="$ETC_DIR/localcraft.env"
+PID_FILE="$DATA_DIR/localcraft.pid"
+SKIP_SYSTEMD="${LOCALCRAFT_SKIP_SYSTEMD:-0}"
+UNIT_DIR="${LOCALCRAFT_SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
+TMPFILES_FILE="${LOCALCRAFT_TMPFILES_FILE:-/usr/lib/tmpfiles.d/localcraft.conf}"
 
 # 本项目安装的全部 unit。slice 也要 disable（它没有 [Install] 段，
 # disable 只是幂等空操作，写进来是为了"清单完整、便于核对"）。
 UNITS=(
-    selftool.service
-    selftool-backup.service
-    selftool-backup.timer
-    selftool-maintenance.service
-    selftool-maintenance.timer
-    selftool.slice
+    localcraft.service
+    localcraft-backup.service
+    localcraft-backup.timer
+    localcraft-maintenance.service
+    localcraft-maintenance.timer
+    localcraft.slice
 )
 # 需要 disable 的定时器（service 是 oneshot，由 timer 拉起，不需要单独 enable）
 TIMERS=(
-    selftool-backup.timer
-    selftool-maintenance.timer
+    localcraft-backup.timer
+    localcraft-maintenance.timer
 )
 
 PURGE=0
@@ -104,18 +104,18 @@ guard_path() {  # guard_path <变量名> <值>
 }
 
 if [ "$PURGE" -eq 1 ]; then
-    guard_path SELTOOL_DATA_DIR "$DATA_DIR"
-    guard_path SELTOOL_ETC_DIR "$ETC_DIR"
-    guard_path SELTOOL_LOG_DIR "$LOG_DIR"
+    guard_path LOCALCRAFT_DATA_DIR "$DATA_DIR"
+    guard_path LOCALCRAFT_ETC_DIR "$ETC_DIR"
+    guard_path LOCALCRAFT_LOG_DIR "$LOG_DIR"
 fi
 
 if [ "$SKIP_SYSTEMD" = "1" ]; then
-    warn "SELTOOL_SKIP_SYSTEMD=1 —— 演练模式：不调用 systemctl，不动 /etc/systemd 与 ${TMPFILES_FILE}"
+    warn "LOCALCRAFT_SKIP_SYSTEMD=1 —— 演练模式：不调用 systemctl，不动 /etc/systemd 与 ${TMPFILES_FILE}"
     if [ "$PURGE" -eq 1 ]; then
         die "演练模式不支持 --purge（数据目录是沙箱路径，删除没有意义且容易误伤）"
     fi
 elif [ "$DRY_RUN" -eq 0 ]; then
-    [ "$(id -u)" -eq 0 ] || die "请以 root 执行（或设 SELTOOL_SKIP_SYSTEMD=1 仅做演练）"
+    [ "$(id -u)" -eq 0 ] || die "请以 root 执行（或设 LOCALCRAFT_SKIP_SYSTEMD=1 仅做演练）"
 fi
 
 # ------------------------------------------------------------
@@ -133,7 +133,7 @@ printf '  \033[1;32m保留\033[0m：%s（数据）、%s（配置）、%s（日�
 printf '  \033[1;31m删除\033[0m：systemd unit%s、%s\n' \
     "$([ "$KEEP_CODE" -eq 1 ] && echo "（不动 ${PREFIX}）" || echo " 与 ${PREFIX}")" "$TMPFILES_FILE"
 if [ "$PURGE" -eq 1 ]; then
-    printf '\n  \033[1;31m⚠ --purge 已启用：数据目录、配置目录、日志目录与 selftool 用户都会删除，不可恢复！\033[0m\n'
+    printf '\n  \033[1;31m⚠ --purge 已启用：数据目录、配置目录、日志目录与 localcraft 用户都会删除，不可恢复！\033[0m\n'
 fi
 if [ "$DRY_RUN" -eq 1 ]; then
     printf '\n  （--dry-run：下面只打印，不会真的执行）\n'
@@ -168,7 +168,7 @@ if [ "$SKIP_SYSTEMD" != "1" ]; then
         run systemctl stop "$t" 2>/dev/null || true
     done
 else
-    log "2/7 跳过 systemctl（SELTOOL_SKIP_SYSTEMD=1）"
+    log "2/7 跳过 systemctl（LOCALCRAFT_SKIP_SYSTEMD=1）"
 fi
 
 # 演练模式：结束 install.sh 用 nohup 拉起的那条 uvicorn
@@ -196,10 +196,10 @@ if [ "$SKIP_SYSTEMD" != "1" ]; then
         [ -e "$UNIT_DIR/$u" ] && run rm -f "$UNIT_DIR/$u"
     done
     # drop-in 目录：只删本项目的 limits.conf，目录非空就不强删（可能有人放了别的片段）
-    if [ -d "$UNIT_DIR/selftool.service.d" ]; then
-        [ -e "$UNIT_DIR/selftool.service.d/limits.conf" ] && \
-            run rm -f "$UNIT_DIR/selftool.service.d/limits.conf"
-        run rmdir "$UNIT_DIR/selftool.service.d" 2>/dev/null || true
+    if [ -d "$UNIT_DIR/localcraft.service.d" ]; then
+        [ -e "$UNIT_DIR/localcraft.service.d/limits.conf" ] && \
+            run rm -f "$UNIT_DIR/localcraft.service.d/limits.conf"
+        run rmdir "$UNIT_DIR/localcraft.service.d" 2>/dev/null || true
     fi
     run systemctl daemon-reload
     for u in "${UNITS[@]}"; do
@@ -207,7 +207,7 @@ if [ "$SKIP_SYSTEMD" != "1" ]; then
         run systemctl reset-failed "$u" 2>/dev/null || true
     done
 else
-    log "3/7 跳过 unit 移除（SELTOOL_SKIP_SYSTEMD=1）"
+    log "3/7 跳过 unit 移除（LOCALCRAFT_SKIP_SYSTEMD=1）"
 fi
 
 # ------------------------------------------------------------
@@ -221,7 +221,7 @@ if [ "$SKIP_SYSTEMD" != "1" ]; then
         log "    未安装 ${TMPFILES_FILE}，跳过"
     fi
 else
-    log "4/7 跳过 tmpfiles 移除（SELTOOL_SKIP_SYSTEMD=1）"
+    log "4/7 跳过 tmpfiles 移除（LOCALCRAFT_SKIP_SYSTEMD=1）"
 fi
 
 # ------------------------------------------------------------
@@ -230,7 +230,7 @@ fi
 if [ "$KEEP_CODE" -eq 1 ]; then
     log "5/7 --keep-code：保留 ${PREFIX}"
 else
-    guard_path SELTOOL_PREFIX "$PREFIX"
+    guard_path LOCALCRAFT_PREFIX "$PREFIX"
     log "5/7 移除程序目录 ${PREFIX}（代码 + venv + scripts + releases）"
     run rm -rf "$PREFIX"
 fi
@@ -241,8 +241,8 @@ fi
 if [ "$PURGE" -eq 1 ]; then
     log "6/7 --purge：删除数据、配置与日志"
     run rm -rf "$DATA_DIR" "$ETC_DIR" "$LOG_DIR"
-    if id selftool >/dev/null 2>&1; then
-        run userdel selftool 2>/dev/null || warn "userdel selftool 失败（可能有进程仍在运行），请手工确认"
+    if id localcraft >/dev/null 2>&1; then
+        run userdel localcraft 2>/dev/null || warn "userdel localcraft 失败（可能有进程仍在运行），请手工确认"
     fi
 else
     log "6/7 保留数据与配置（未指定 --purge）"
@@ -256,7 +256,7 @@ echo
 echo "============================================================"
 echo "删除的内容"
 printf '  - systemd 单元: %s\n' "${UNITS[*]}"
-printf '                   （及 %s/selftool.service.d/limits.conf）\n' "$UNIT_DIR"
+printf '                   （及 %s/localcraft.service.d/limits.conf）\n' "$UNIT_DIR"
 printf '  - tmpfiles 规则: %s\n' "$TMPFILES_FILE"
 if [ "$KEEP_CODE" -eq 1 ]; then
     printf '  - 程序目录:     （--keep-code，未删除）%s\n' "$PREFIX"
@@ -266,23 +266,23 @@ fi
 echo
 echo "保留的内容"
 if [ "$PURGE" -eq 1 ]; then
-    echo "  - （--purge 已启用：数据、配置、日志与 selftool 用户均已删除，无保留项）"
+    echo "  - （--purge 已启用：数据、配置、日志与 localcraft 用户均已删除，无保留项）"
 else
-    printf '  - 数据目录:   %s   （数据库 selftool.db、files/、backups/）\n' "$DATA_DIR"
-    printf '  - 配置文件:   %s   （含 SECRET_KEY，权限应为 0640 root:selftool）\n' "$ENV_FILE"
+    printf '  - 数据目录:   %s   （数据库 localcraft.db、files/、backups/）\n' "$DATA_DIR"
+    printf '  - 配置文件:   %s   （含 SECRET_KEY，权限应为 0640 root:localcraft）\n' "$ENV_FILE"
     printf '  - 日志目录:   %s\n' "$LOG_DIR"
 fi
 echo
 echo "如何恢复"
 echo "  1) 重新安装（发布包仍在时）："
-echo "       tar -C /opt/selftool/releases -xzf selftool-<version>-offline-<date>.tar.gz"
-echo "       cd /opt/selftool/releases/selftool-<version> && ./install.sh"
+echo "       tar -C /opt/localcraft/releases -xzf localcraft-<version>-offline-<date>.tar.gz"
+echo "       cd /opt/localcraft/releases/localcraft-<version> && ./install.sh"
 printf '     安装脚本检测到 %s 已存在会保留原配置（不覆盖 SECRET_KEY）；\n' "$ENV_FILE"
 echo "     数据库已存在时 alembic upgrade head 是幂等空操作，数据原样可用。"
 echo "  2) 数据目录被误删时，用备份恢复："
-echo "       /opt/selftool/scripts/verify-backup.sh          # 先确认备份可用"
-echo "       /opt/selftool/scripts/restore.sh --latest --yes # 再恢复"
-echo "     备份若已随数据目录一起删除，请从远端同步（SELTOOL_BACKUP_REMOTE）或离线拷贝取回。"
+echo "       /opt/localcraft/scripts/verify-backup.sh          # 先确认备份可用"
+echo "       /opt/localcraft/scripts/restore.sh --latest --yes # 再恢复"
+echo "     备份若已随数据目录一起删除，请从远端同步（LOCALCRAFT_BACKUP_REMOTE）或离线拷贝取回。"
 if [ "$PURGE" -eq 1 ]; then
     echo "  3) --purge 之后 SECRET_KEY 已销毁：所有会话与 API Token 失效，用户需重新登录。"
 fi

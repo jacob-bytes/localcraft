@@ -83,7 +83,7 @@ export async function reportChunkDiagnostics(
       let retries: string[] = [];
       try {
         retries = Object.keys(window.sessionStorage).filter((key) =>
-          key.startsWith("selftool:chunk-retry:"),
+          key.startsWith("localcraft:chunk-retry:"),
         );
       } catch {
         retries = ["<sessionStorage 不可用>"];

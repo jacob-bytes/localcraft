@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# selftool 交付前置检查清单（监控方维护，可重复执行）
+# localcraft 交付前置检查清单（监控方维护，可重复执行）
 #
 #   bash contracts/acceptance/pre-delivery-checks.sh
 #
@@ -19,7 +19,7 @@ BE="${ROOT}/backend"
 FE="${ROOT}/web"
 PY="${BE}/.venv/bin/python"
 PORT="${PORT:-8071}"
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/selftool-pdc-XXXXXX")"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/localcraft-pdc-XXXXXX")"
 
 PASS=0; FAIL=0; BLOCK=0
 declare -a FAILED_ITEMS=() BLOCKED_ITEMS=()
@@ -164,9 +164,9 @@ for f in scripts/install.sh scripts/uninstall.sh scripts/backup.sh scripts/resto
          scripts/run-maintenance.sh scripts/disk-alert.sh scripts/security-check.sh \
          scripts/make-release.sh scripts/precheck.sh scripts/wait-healthy.sh \
          scripts/verify-wheelhouse.sh scripts/build-wheelhouse.sh \
-         deploy/selftool.service deploy/selftool.slice deploy/selftool.tmpfiles \
-         deploy/selftool-limits.conf deploy/selftool-maintenance.timer \
-         deploy/selftool-backup.timer deploy/nginx-selftool-tls.conf; do
+         deploy/localcraft.service deploy/localcraft.slice deploy/localcraft.tmpfiles \
+         deploy/localcraft-limits.conf deploy/localcraft-maintenance.timer \
+         deploy/localcraft-backup.timer deploy/nginx-localcraft-tls.conf; do
   [[ -f "${ROOT}/${f}" ]] || MISSING="${MISSING}${f} "
 done
 chk D1 "运维交付件齐全（22 项）" "$([[ -z "$MISSING" ]] && echo 0 || echo 1)" "${MISSING:-全部存在}"

@@ -213,7 +213,7 @@ function UserImportCard() {
             className="mt-3 text-xs text-primary underline underline-offset-4"
             onClick={() =>
               downloadText(
-                "selftool-users-template.csv",
+                "localcraft-users-template.csv",
                 `\uFEFF${USERS_TEMPLATE_HEADER}\n${USERS_TEMPLATE_EXAMPLE}\n`,
                 "text/csv;charset=utf-8",
               )
@@ -766,7 +766,7 @@ function GeneratedPasswordsPanel({
           data-testid="import-download-passwords"
           onClick={() =>
             downloadText(
-              `selftool-passwords-${dateStamp()}.csv`,
+              `localcraft-passwords-${dateStamp()}.csv`,
               csv,
               "text/csv;charset=utf-8",
             )

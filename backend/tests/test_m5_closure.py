@@ -135,9 +135,9 @@ async def test_seeded_cover_files_exist_on_disk(seeded: Seeded) -> None:
 
 
 def test_ttl_cache_respects_disabled_switch(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`SELTOOL_DISABLE_FACET_CACHE` 是 A/B 对比与排障用的开关，必须真的生效。"""
+    """`LOCALCRAFT_DISABLE_FACET_CACHE` 是 A/B 对比与排障用的开关，必须真的生效。"""
     assert tools_repo._cache_enabled() is True
-    monkeypatch.setenv("SELTOOL_DISABLE_FACET_CACHE", "1")
+    monkeypatch.setenv("LOCALCRAFT_DISABLE_FACET_CACHE", "1")
     assert tools_repo._cache_enabled() is False
 
 

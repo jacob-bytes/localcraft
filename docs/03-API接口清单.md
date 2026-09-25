@@ -1,6 +1,6 @@
 # API 接口清单
 
-**项目**：selftool — 内网工具 / Skill 共享平台
+**项目**：localcraft — 内网工具 / Skill 共享平台
 **基础路径**：`/api/v1`
 **风格**：REST + JSON
 **框架**：FastAPI（自动生成 OpenAPI 3.1 文档）
@@ -1073,7 +1073,7 @@ lisi,李四,lisi@example.com,user,active
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE="https://selftool.internal/api/v1"
+BASE="https://localcraft.internal/api/v1"
 TOKEN="st_9xK2mNpQ7vR4tY8uI1oP3aS6dF0gH5jL2zX4cV7bN9mQ1wE3rT"
 AUTH=(-H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json")
 
@@ -1115,7 +1115,7 @@ jq 'length' tools-export.json
 import hashlib
 import requests
 
-BASE = "https://selftool.internal/api/v1"
+BASE = "https://localcraft.internal/api/v1"
 s = requests.Session()
 s.headers["Authorization"] = "Bearer st_9xK2mNpQ7vR4tY8uI1oP3aS6dF0gH5jL2zX4cV7bN9mQ1wE3rT"
 
@@ -1157,7 +1157,7 @@ print("approved ->", res["status"], res["current_version"]["version"])
 
 ```bash
 #!/usr/bin/env bash
-PENDING=$(curl -sS -H "Authorization: Bearer ${SELFTOOL_TOKEN}" \
+PENDING=$(curl -sS -H "Authorization: Bearer ${LOCALCRAFT_TOKEN}" \
   "${BASE}/admin/approvals?status=pending&page_size=1" | jq -r '.total')
 if [ "$PENDING" -gt 20 ]; then
   echo "WARN: 待审积压 ${PENDING} 条" >&2
@@ -1288,7 +1288,7 @@ async def spa(full_path: str):
 
 ```python
 app = FastAPI(
-    title="selftool API",
+    title="localcraft API",
     version="1.0.0",
     docs_url="/docs" if settings.api_docs_enabled else None,
     redoc_url=None,

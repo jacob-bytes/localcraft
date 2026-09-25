@@ -8,7 +8,7 @@
 #   run-maintenance.sh --dry-run       # 只统计不落库
 #   run-maintenance.sh --json          # 输出 JSON（供监控采集）
 #
-# 由 selftool-maintenance.service（oneshot）+ selftool-maintenance.timer 调用，
+# 由 localcraft-maintenance.service（oneshot）+ localcraft-maintenance.timer 调用，
 # 也可手工执行。实际逻辑在应用侧：`python -m app.cli maintenance`
 # （docs/02 §5 那张表的 9 项，全部幂等 + 分批）。
 #
@@ -17,9 +17,9 @@
 set -uo pipefail
 
 # 路径与生产落位一致（docs/05 §4.2）；可用环境变量覆盖以便演练
-PREFIX="${SELTOOL_PREFIX:-/opt/selftool}"
-DATA_DIR="${SELTOOL_DATA_DIR:-/var/lib/selftool}"
-ENV_FILE="${SELTOOL_ENV_FILE:-/etc/selftool/selftool.env}"
+PREFIX="${LOCALCRAFT_PREFIX:-/opt/localcraft}"
+DATA_DIR="${LOCALCRAFT_DATA_DIR:-/var/lib/localcraft}"
+ENV_FILE="${LOCALCRAFT_ENV_FILE:-/etc/localcraft/localcraft.env}"
 APP_DIR="$PREFIX/app/current"
 VENV="$PREFIX/venv"
 
@@ -41,9 +41,9 @@ done
 log()  { printf '[maintenance] %s\n' "$*"; }
 die()  { printf '[maintenance][error] %s\n' "$*" >&2; exit 1; }
 
-[ -x "$VENV/bin/python" ] || die "找不到 venv：$VENV/bin/python（用 SELTOOL_PREFIX 覆盖）"
+[ -x "$VENV/bin/python" ] || die "找不到 venv：$VENV/bin/python（用 LOCALCRAFT_PREFIX 覆盖）"
 [ -d "$APP_DIR" ]         || die "找不到应用目录：$APP_DIR"
-[ -f "$ENV_FILE" ]        || die "找不到环境变量文件：${ENV_FILE}（用 SELTOOL_ENV_FILE 覆盖）"
+[ -f "$ENV_FILE" ]        || die "找不到环境变量文件：${ENV_FILE}（用 LOCALCRAFT_ENV_FILE 覆盖）"
 
 log "任务=${TASK} dry_run=${DRY_RUN:-false} 应用=${APP_DIR}"
 

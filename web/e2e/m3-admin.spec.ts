@@ -485,7 +485,7 @@ test.describe("M3 · 导入导出（#17 #18 #19 #20）", () => {
       "bad user!,非法用户名,bad@example.com,user,",
       "e2e_unknown_role,未知角色,x@example.com,root,",
     ].join("\n");
-    const dir = await mkdtemp(join(tmpdir(), "selftool-m3-"));
+    const dir = await mkdtemp(join(tmpdir(), "localcraft-m3-"));
     const filePath = join(dir, "users.csv");
     await writeFile(filePath, csv, "utf8");
 
@@ -532,7 +532,7 @@ test.describe("M3 · 导入导出（#17 #18 #19 #20）", () => {
     const exportPromise = page.waitForEvent("download");
     await page.getByRole("button", { name: /导出 CSV/ }).first().click();
     const exported = await exportPromise;
-    expect(exported.suggestedFilename()).toMatch(/selftool-users-\d{8}\.csv/);
+    expect(exported.suggestedFilename()).toMatch(/localcraft-users-\d{8}\.csv/);
     const bytes = await readFile((await exported.path())!);
     expect([bytes[0], bytes[1], bytes[2]]).toEqual([0xef, 0xbb, 0xbf]);
     expect(errors).toEqual([]);

@@ -49,7 +49,7 @@
 **绝对不可修改**：`docs/`、`contracts/`、`README.md`、`web/`。前端 agent 正在并行开发 M2，
 动 `web/` 会直接冲突。
 
-不执行任何 git 命令。工作目录：`/Users/jlthzy/Documents/selftool`
+不执行任何 git 命令。工作目录：`/Users/jlthzy/Documents/localcraft`
 
 **注意**：`docs/01` §4.3 第 1 步与 FR-APPR-06 自相矛盾（前者只给 owner 与 superadmin 可见待审工具，
 后者要求审批人能预览）。监控方会在本轮结束前修订 `docs/01`。**你按裁定 ③ 的最终形态实现**：

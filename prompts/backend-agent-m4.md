@@ -47,7 +47,7 @@
 **本里程碑新增授权**：`docs/06-*`、`docs/07-*`、`docs/08-*` 三个手册文件归你写。
 `docs/01`~`docs/05`、`contracts/`、`README.md`、`web/` **仍然只读**。
 
-不执行任何 git 命令。工作目录：`/Users/jlthzy/Documents/selftool`
+不执行任何 git 命令。工作目录：`/Users/jlthzy/Documents/localcraft`
 
 ---
 

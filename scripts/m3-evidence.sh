@@ -17,7 +17,7 @@ set -uo pipefail
 
 PORT="${1:-8123}"
 BACKEND_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../backend" && pwd)"
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/selftool-m3-evidence-XXXXXX")"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/localcraft-m3-evidence-XXXXXX")"
 BASE="http://127.0.0.1:${PORT}"
 PY="${BACKEND_DIR}/.venv/bin/python"
 DB="${WORK}/evidence.db"

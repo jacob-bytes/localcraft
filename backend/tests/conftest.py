@@ -18,14 +18,14 @@ import pytest
 # ---------------------------------------------------------------------------
 # 1) 先把环境变量定死，再导入 app
 # ---------------------------------------------------------------------------
-TMP_ROOT = Path(tempfile.mkdtemp(prefix="selftool-tests-"))
+TMP_ROOT = Path(tempfile.mkdtemp(prefix="localcraft-tests-"))
 TEST_DB = TMP_ROOT / "test.db"
 
 # 默认用一次性 SQLite 文件库；但若外部（如 M4 的 PG 迁移演练）已经指定了
-# SELTOOL_TEST_DATABASE_URL，就用它 —— 这样同一套测试可以在 PostgreSQL 上跑，
+# LOCALCRAFT_TEST_DATABASE_URL，就用它 —— 这样同一套测试可以在 PostgreSQL 上跑，
 # 用来暴露 SQLite 专属语法。用独立变量名是为了避免误把生产的 DATABASE_URL 带进来。
-if os.environ.get("SELTOOL_TEST_DATABASE_URL"):
-    os.environ["DATABASE_URL"] = os.environ["SELTOOL_TEST_DATABASE_URL"]
+if os.environ.get("LOCALCRAFT_TEST_DATABASE_URL"):
+    os.environ["DATABASE_URL"] = os.environ["LOCALCRAFT_TEST_DATABASE_URL"]
 else:
     os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{TEST_DB}"
 os.environ["DATA_DIR"] = str(TMP_ROOT / "data")

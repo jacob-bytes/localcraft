@@ -38,7 +38,7 @@
 不执行任何 git 命令 —— **包括 `git status`**（它会刷新并可能写入索引）。
 需要确认改动范围时用 `find web -newer <ref> -type f` 之类的文件系统手段。
 
-工作目录：`/Users/jlthzy/Documents/selftool`
+工作目录：`/Users/jlthzy/Documents/localcraft`
 
 ---
 
@@ -72,7 +72,7 @@ http://127.0.0.1:8000/assets/ToolDetailPage-CgGYlRAi.js
 **1.1 加 `lazyWithRetry`**
 
 路由级动态 `import()` 包一层：失败时**重载页面一次**，用 `sessionStorage` 打标防重载循环
-（例如 `selftool:chunk-retry:<chunkName>`，成功导航后清除标记）。
+（例如 `localcraft:chunk-retry:<chunkName>`，成功导航后清除标记）。
 
 这是该类失败的标准缓解手段，覆盖部署替换 chunk、瞬时网络抖动、请求被中断等所有成因。
 **并且这是对用户的真实收益** —— 目前用户撞上会看到错误边界白屏，而不是自动恢复。

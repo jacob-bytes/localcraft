@@ -13,7 +13,7 @@ import { defineConfig, loadEnv, type Plugin } from "vite";
  */
 function stripMockWorker(outDir: string): Plugin {
   return {
-    name: "selftool:strip-mock-service-worker",
+    name: "localcraft:strip-mock-service-worker",
     apply: "build",
     enforce: "post",
     closeBundle() {

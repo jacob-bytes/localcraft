@@ -14,7 +14,7 @@ import * as React from "react";
 export type ThemeMode = "light" | "dark" | "system";
 export type ResolvedTheme = "light" | "dark";
 
-export const THEME_STORAGE_KEY = "selftool-theme";
+export const THEME_STORAGE_KEY = "localcraft-theme";
 
 interface ThemeContextValue {
   mode: ThemeMode;

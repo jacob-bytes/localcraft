@@ -20,11 +20,11 @@ TOOL_COUNT="${2:-200}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BACKEND="$ROOT/backend"
-SANDBOX="${SELTOOL_DRILL_SANDBOX:-$BACKEND/dist/drill}"
+SANDBOX="${LOCALCRAFT_DRILL_SANDBOX:-$BACKEND/dist/drill}"
 RELEASE_DIR="$(find "$SANDBOX/releases" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | head -1)"
 VPY="$SANDBOX/opt/venv/bin/python"
 VDATA="$SANDBOX/var"
-VENVF="$SANDBOX/etc/selftool.env"
+VENVF="$SANDBOX/etc/localcraft.env"
 BASE="http://127.0.0.1:${PORT}"
 OUT="$SANDBOX/perf"
 AB="$(command -v ab || echo /usr/sbin/ab)"
@@ -43,16 +43,16 @@ start_service() {
     set +a
     ( cd "$SANDBOX/opt/app/current" || exit 1
       nohup "$VPY" -m uvicorn app.main:app --host 127.0.0.1 --port "$PORT" --workers 1 \
-          >> "$SANDBOX/log/selftool-stdout.log" 2>&1 &
-      echo $! > "$VDATA/selftool.pid" )
+          >> "$SANDBOX/log/localcraft-stdout.log" 2>&1 &
+      echo $! > "$VDATA/localcraft.pid" )
     "$RELEASE_DIR/scripts/wait-healthy.sh" --url "${BASE}/readyz" --timeout 60 >/dev/null \
         || die "服务起不来"
 }
 stop_service() {
-    if [ -f "$VDATA/selftool.pid" ] && kill -0 "$(cat "$VDATA/selftool.pid")" 2>/dev/null; then
-        kill "$(cat "$VDATA/selftool.pid")" 2>/dev/null || true
+    if [ -f "$VDATA/localcraft.pid" ] && kill -0 "$(cat "$VDATA/localcraft.pid")" 2>/dev/null; then
+        kill "$(cat "$VDATA/localcraft.pid")" 2>/dev/null || true
         for _ in $(seq 1 30); do
-            kill -0 "$(cat "$VDATA/selftool.pid")" 2>/dev/null || break
+            kill -0 "$(cat "$VDATA/localcraft.pid")" 2>/dev/null || break
             sleep 1
         done
     fi
@@ -75,10 +75,10 @@ AUTH="Authorization: Bearer ${TOKEN}"
 # ---------------------------------------------------------------------------
 log "准备数据集（目标 ${TOOL_COUNT} 个已发布工具）"
 # ---------------------------------------------------------------------------
-CUR="$(sqlite3 "$VDATA/selftool.db" 'SELECT COUNT(*) FROM tools;')"
+CUR="$(sqlite3 "$VDATA/localcraft.db" 'SELECT COUNT(*) FROM tools;')"
 if [ "$CUR" -lt "$TOOL_COUNT" ]; then
     step "用 SQL 直接灌到 ${TOOL_COUNT} 个（避免走 200 次 HTTP 上传，只为压测造数据）"
-    "$VPY" - "$VDATA/selftool.db" "$TOOL_COUNT" <<'PYEOF'
+    "$VPY" - "$VDATA/localcraft.db" "$TOOL_COUNT" <<'PYEOF'
 import sqlite3, sys
 db, target = sys.argv[1], int(sys.argv[2])
 con = sqlite3.connect(db)
@@ -104,11 +104,11 @@ else
     ok "已有 ${CUR} 个工具，跳过灌数据"
 fi
 
-TOTAL="$(sqlite3 "$VDATA/selftool.db" "SELECT COUNT(*) FROM tools WHERE status='approved';")"
+TOTAL="$(sqlite3 "$VDATA/localcraft.db" "SELECT COUNT(*) FROM tools WHERE status='approved';")"
 SLUG="$(curl -s "${BASE}/api/v1/tools?page_size=1" -H "$AUTH" | jq -r '.items[0].slug')"
 [ -n "$SLUG" ] && [ "$SLUG" != "null" ] || die "拿不到一个可用的 slug"
 # 下载压测要挑**有版本文件**的工具（直连 SQL 灌的压测工具没有版本）
-DL_SLUG="$(sqlite3 "$VDATA/selftool.db" "SELECT t.slug FROM tools t JOIN tool_versions v ON v.tool_id=t.id WHERE v.storage_path IS NOT NULL AND t.status='approved' LIMIT 1;")"
+DL_SLUG="$(sqlite3 "$VDATA/localcraft.db" "SELECT t.slug FROM tools t JOIN tool_versions v ON v.tool_id=t.id WHERE v.storage_path IS NOT NULL AND t.status='approved' LIMIT 1;")"
 [ -n "$DL_SLUG" ] || die "找不到任何带版本文件的已发布工具（先跑 m4-drill-maintenance.sh 播种）"
 ok "已发布工具 ${TOTAL} 个；详情压测样本 slug=${SLUG}"
 
@@ -119,7 +119,7 @@ LIST_URL="${BASE}/api/v1/tools?page_size=24"
 "$AB" -q -k -c 100 -n 1000 -H "Authorization: Bearer ${TOKEN}" "$LIST_URL" > "$OUT/ab-list.txt" 2>&1
 grep -E "Concurrency Level|Complete requests|Failed requests|Requests per second|Time per request|50%|95%|99%|100%" "$OUT/ab-list.txt" | sed 's/^/  /'
 if grep -q "Connection refused" "$OUT/ab-list.txt"; then
-    die "ab 中途连接被拒 —— 服务在压测中挂了。看 $SANDBOX/log/selftool-stdout.log"
+    die "ab 中途连接被拒 —— 服务在压测中挂了。看 $SANDBOX/log/localcraft-stdout.log"
 fi
 LIST_P95="$(awk '/^ *95%/ {print $2}' "$OUT/ab-list.txt")"
 printf '\n  → 列表接口 P95 = %s ms\n' "$LIST_P95"
@@ -153,7 +153,7 @@ done
 # ---------------------------------------------------------------------------
 log "验收 18c：20 并发下载（确认无 database is locked）"
 # ---------------------------------------------------------------------------
-MARK="$(wc -l < "$SANDBOX/log/selftool-stdout.log")"
+MARK="$(wc -l < "$SANDBOX/log/localcraft-stdout.log")"
 "$VPY" - "$BASE" "$TOKEN" "$DL_SLUG" <<'PYEOF' | sed 's/^/  /'
 import asyncio, statistics, sys, time
 import httpx
@@ -186,7 +186,7 @@ async def main() -> None:
 
 asyncio.run(main())
 PYEOF
-LOCKED="$(tail -n "+$((MARK + 1))" "$SANDBOX/log/selftool-stdout.log" | grep -ci 'database is locked' || true)"
+LOCKED="$(tail -n "+$((MARK + 1))" "$SANDBOX/log/localcraft-stdout.log" | grep -ci 'database is locked' || true)"
 printf '\n  下载期间日志中 "database is locked" 次数 = %s\n' "$LOCKED"
 
 # ---------------------------------------------------------------------------
@@ -228,7 +228,7 @@ async def main() -> None:
 
 asyncio.run(main())
 PYEOF
-W_LOCKED="$(tail -n "+$((MARK + 1))" "$SANDBOX/log/selftool-stdout.log" | grep -ci 'database is locked' || true)"
+W_LOCKED="$(tail -n "+$((MARK + 1))" "$SANDBOX/log/localcraft-stdout.log" | grep -ci 'database is locked' || true)"
 printf '\n  写入加压期间 "database is locked" 次数 = %s\n' "$W_LOCKED"
 
 log "结论"

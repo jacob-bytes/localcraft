@@ -53,8 +53,8 @@ import { useMeta } from "@/hooks/useMeta";
 import { TOOL_TYPE_META } from "@/lib/toolMeta";
 import { cn } from "@/lib/utils";
 
-const VIEW_STORAGE_KEY = "selftool-portal-view";
-const ANNOUNCEMENT_STORAGE_KEY = "selftool-announcement-dismissed";
+const VIEW_STORAGE_KEY = "localcraft-portal-view";
+const ANNOUNCEMENT_STORAGE_KEY = "localcraft-announcement-dismissed";
 
 type PortalView = "grid" | "list";
 

@@ -81,7 +81,7 @@ async def test_user_list_filters_cover_q_status_and_role(client, seeded) -> None
     assert "newbie" not in names
 
     # q 命中 email 也要能搜到（ILIKE 覆盖 username / display_name / email 三列）
-    by_email = await client.get("/api/v1/admin/users", params={"q": "selftool"}, headers=headers)
+    by_email = await client.get("/api/v1/admin/users", params={"q": "localcraft"}, headers=headers)
     assert by_email.status_code == 200, by_email.text
 
 

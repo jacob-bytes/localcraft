@@ -96,7 +96,7 @@ async def get_meta(session: AsyncSession) -> MetaResponse:
         allow_anonymous_view=bool(public.get("portal.allow_anonymous_view", False)),
         default_sort=str(public.get("portal.default_sort", "hot")),
         page_size=int(public.get("portal.page_size", 24)),
-        app_version=env_settings.selftool_version,
+        app_version=env_settings.localcraft_version,
         api_version="v1",
         features=MetaFeatures(
             webapp_health_check=policy,

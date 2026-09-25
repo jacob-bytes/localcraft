@@ -29,7 +29,7 @@
 
 **绝对不可修改**：`backend/`、`docs/`、`contracts/`、`deploy/`、`scripts/`、`README.md`、`prompts/`
 
-不执行任何 git 命令，含 `git status`。工作目录：`/Users/jlthzy/Documents/selftool`
+不执行任何 git 命令，含 `git status`。工作目录：`/Users/jlthzy/Documents/localcraft`
 
 ---
 

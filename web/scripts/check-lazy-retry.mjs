@@ -32,7 +32,7 @@ const assetsDir = join(distDir, "assets");
 const indexHtml = join(distDir, "index.html");
 const PORT = Number(process.env.PORT ?? 4199);
 const BASE = `http://127.0.0.1:${PORT}`;
-const CHUNK_RETRY_PREFIX = "selftool:chunk-retry:";
+const CHUNK_RETRY_PREFIX = "localcraft:chunk-retry:";
 
 const results = [];
 function check(label, ok, detail = "") {

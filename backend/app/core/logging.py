@@ -2,7 +2,7 @@
 
 要求（任务书 §4）：每行带 `request_id`、`user_id`、`method`、`path`、
 `status`、`duration_ms`。systemd 下由 journald 收集；
-`SyslogIdentifier=selftool` 便于 `journalctl -t selftool` 精确过滤。
+`SyslogIdentifier=localcraft` 便于 `journalctl -t localcraft` 精确过滤。
 """
 
 from __future__ import annotations
@@ -91,7 +91,7 @@ class JsonFormatter(logging.Formatter):
 
 #: 标记我们自己安装的 handler。`configure_logging()` 只清理带这个标记的，
 #: 不动宿主进程（pytest 的 caplog、gunicorn、被嵌入调用等）已装的 handler。
-_OWN_HANDLER_FLAG = "_selftool_stdout_handler"
+_OWN_HANDLER_FLAG = "_localcraft_stdout_handler"
 
 
 def configure_logging() -> None:

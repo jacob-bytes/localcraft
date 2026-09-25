@@ -385,10 +385,10 @@ test.describe("真实后端联调（mock 之外的路径）", () => {
     await expectPortalReady(page);
 
     // 真实字节：SHA256 由脚本本地算一份，稍后与后端/下载结果逐字比对
-    const dir = await mkdtemp(join(tmpdir(), "selftool-e2e-"));
+    const dir = await mkdtemp(join(tmpdir(), "localcraft-e2e-"));
     const fileName = "e2e-payload.txt";
     const filePath = join(dir, fileName);
-    const bytes = Buffer.from(`selftool real-backend e2e ${Date.now()}\n`, "utf8");
+    const bytes = Buffer.from(`localcraft real-backend e2e ${Date.now()}\n`, "utf8");
     await writeFile(filePath, bytes);
     const expectedSha = createHash("sha256").update(bytes).digest("hex");
 
@@ -869,7 +869,7 @@ test.describe("真实后端联调（mock 之外的路径）", () => {
 
     // 易错点 1：加载成功后必须清除标记，否则用户在这次会话里永久失去自动恢复能力
     const leftover = await page.evaluate(() =>
-      Object.keys(window.sessionStorage).filter((key) => key.startsWith("selftool:chunk-retry:")),
+      Object.keys(window.sessionStorage).filter((key) => key.startsWith("localcraft:chunk-retry:")),
     );
     expect(leftover, "成功加载后应清除 chunk 重试标记").toEqual([]);
   });
@@ -920,7 +920,7 @@ test.describe("真实后端联调（mock 之外的路径）", () => {
 
     // 防循环标记确实是生效的那个机制
     const flags = await page.evaluate(() =>
-      Object.keys(window.sessionStorage).filter((key) => key.startsWith("selftool:chunk-retry:")),
+      Object.keys(window.sessionStorage).filter((key) => key.startsWith("localcraft:chunk-retry:")),
     );
     expect(flags.length, "应留下重试标记以阻止第二次自动重载").toBeGreaterThan(0);
   });

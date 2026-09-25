@@ -45,7 +45,7 @@ done
 [ -n "$VERSION" ] || { echo "用法: $(basename "$0") <version> 例如 1.0.0" >&2; exit 2; }
 
 OUT="${OUT_DIR_OVERRIDE:-${OUT_DIR:-$ROOT/backend/dist}}"
-STAGE="$OUT/selftool-$VERSION"
+STAGE="$OUT/localcraft-$VERSION"
 REQUIRE_WHEELHOUSE="${REQUIRE_WHEELHOUSE:-0}"
 
 log()  { printf '\n\033[1;32m==> %s\033[0m\n' "$*"; }
@@ -104,22 +104,22 @@ rsync -a --delete "$ROOT/scripts/" "$STAGE/scripts/"
 
 # deploy/ 在仓库里是平铺的，发布包里按 docs/05 §4.1 重新组织成分目录。
 # 映射表（左=仓库平铺文件，右=发布包内路径）：
-#   deploy/selftool*.service|.timer|.slice  → deploy/systemd/
-#   deploy/selftool-limits.conf             → deploy/systemd/selftool.service.d/limits.conf
-#   deploy/nginx-selftool.conf              → deploy/nginx/selftool-http.conf   （HTTP 快速验证）
-#   deploy/nginx-selftool-tls.conf          → deploy/nginx/selftool.conf        （生产 TLS）
-#   deploy/nginx-selftool-limits.conf       → deploy/nginx/selftool-limits.conf （限流 zone）
-#   deploy/logrotate-selftool               → deploy/logrotate/selftool
-#   deploy/selftool.tmpfiles                → deploy/selftool.tmpfiles          （安装到 /usr/lib/tmpfiles.d/）
-install -d "$STAGE/deploy/systemd" "$STAGE/deploy/systemd/selftool.service.d" \
+#   deploy/localcraft*.service|.timer|.slice  → deploy/systemd/
+#   deploy/localcraft-limits.conf             → deploy/systemd/localcraft.service.d/limits.conf
+#   deploy/nginx-localcraft.conf              → deploy/nginx/localcraft-http.conf   （HTTP 快速验证）
+#   deploy/nginx-localcraft-tls.conf          → deploy/nginx/localcraft.conf        （生产 TLS）
+#   deploy/nginx-localcraft-limits.conf       → deploy/nginx/localcraft-limits.conf （限流 zone）
+#   deploy/logrotate-localcraft               → deploy/logrotate/localcraft
+#   deploy/localcraft.tmpfiles                → deploy/localcraft.tmpfiles          （安装到 /usr/lib/tmpfiles.d/）
+install -d "$STAGE/deploy/systemd" "$STAGE/deploy/systemd/localcraft.service.d" \
            "$STAGE/deploy/nginx" "$STAGE/deploy/logrotate"
 
 # systemd 单元：必须把 backup / maintenance 两套 oneshot+timer 一起打包，
 # 否则 install.sh 的单元分发循环会因文件缺失而静默跳过（它用 -f 做了保护），
 # 结果是"装完没有定时备份"——这种缺失在安装当天完全看不出来。
-for unit in selftool.service selftool.slice \
-            selftool-backup.service selftool-backup.timer \
-            selftool-maintenance.service selftool-maintenance.timer; do
+for unit in localcraft.service localcraft.slice \
+            localcraft-backup.service localcraft-backup.timer \
+            localcraft-maintenance.service localcraft-maintenance.timer; do
     if [ -f "$ROOT/deploy/$unit" ]; then
         install -m 0644 "$ROOT/deploy/$unit" "$STAGE/deploy/systemd/$unit"
     else
@@ -128,21 +128,21 @@ for unit in selftool.service selftool.slice \
 done
 
 # systemd drop-in：资源上限与加固片段
-if [ -f "$ROOT/deploy/selftool-limits.conf" ]; then
-    install -m 0644 "$ROOT/deploy/selftool-limits.conf" \
-        "$STAGE/deploy/systemd/selftool.service.d/limits.conf"
+if [ -f "$ROOT/deploy/localcraft-limits.conf" ]; then
+    install -m 0644 "$ROOT/deploy/localcraft-limits.conf" \
+        "$STAGE/deploy/systemd/localcraft.service.d/limits.conf"
 else
-    warn "缺少 deploy/selftool-limits.conf（发布包将不含 drop-in 加固片段）"
+    warn "缺少 deploy/localcraft-limits.conf（发布包将不含 drop-in 加固片段）"
 fi
 
 # nginx 三个配置：快速验证版、生产 TLS 版、限流 zone
-install -m 0644 "$ROOT/deploy/nginx-selftool.conf"        "$STAGE/deploy/nginx/selftool-http.conf"
-install -m 0644 "$ROOT/deploy/nginx-selftool-tls.conf"    "$STAGE/deploy/nginx/selftool.conf"
-install -m 0644 "$ROOT/deploy/nginx-selftool-limits.conf" "$STAGE/deploy/nginx/selftool-limits.conf"
+install -m 0644 "$ROOT/deploy/nginx-localcraft.conf"        "$STAGE/deploy/nginx/localcraft-http.conf"
+install -m 0644 "$ROOT/deploy/nginx-localcraft-tls.conf"    "$STAGE/deploy/nginx/localcraft.conf"
+install -m 0644 "$ROOT/deploy/nginx-localcraft-limits.conf" "$STAGE/deploy/nginx/localcraft-limits.conf"
 
-install -m 0644 "$ROOT/deploy/logrotate-selftool"   "$STAGE/deploy/logrotate/selftool"
-install -m 0644 "$ROOT/deploy/selftool.env.example" "$STAGE/deploy/selftool.env.example"
-install -m 0644 "$ROOT/deploy/selftool.tmpfiles"    "$STAGE/deploy/selftool.tmpfiles"
+install -m 0644 "$ROOT/deploy/logrotate-localcraft"   "$STAGE/deploy/logrotate/localcraft"
+install -m 0644 "$ROOT/deploy/localcraft.env.example" "$STAGE/deploy/localcraft.env.example"
+install -m 0644 "$ROOT/deploy/localcraft.tmpfiles"    "$STAGE/deploy/localcraft.tmpfiles"
 
 # 发布包根目录的两个入口（docs/05 §4.1 的 install.sh / uninstall.sh），
 # 与 scripts/ 下的同名文件是同一份内容（rsync 之后从 STAGE 里取，保证不会不同步）
@@ -203,8 +203,8 @@ chmod +x "$STAGE/install.sh" "$STAGE"/scripts/*.sh 2>/dev/null || true
         | sed 's|  \./|  |' > SHA256SUMS
 )
 
-TARBALL="$OUT/selftool-$VERSION-offline-$(date +%Y%m%d).tar.gz"
-( cd "$OUT" && tar -czf "$(basename "$TARBALL")" "selftool-$VERSION" )
+TARBALL="$OUT/localcraft-$VERSION-offline-$(date +%Y%m%d).tar.gz"
+( cd "$OUT" && tar -czf "$(basename "$TARBALL")" "localcraft-$VERSION" )
 
 echo
 ls -lh "$TARBALL"
@@ -215,8 +215,8 @@ cat <<'EOF'
 
 提示：
   - 安装：把 tar.gz 拷到目标机后
-      tar -C /opt/selftool/releases -xzf <tarball>
-      cd /opt/selftool/releases/selftool-<version> && ./install.sh
+      tar -C /opt/localcraft/releases -xzf <tarball>
+      cd /opt/localcraft/releases/localcraft-<version> && ./install.sh
   - 契约 §1 的映射已在上面逐条落实（app/ migrations/ web/dist/ deploy/ scripts/），
     另外补了 alembic.ini 与 requirements/ —— 这两项是 docs/05 §4.1 发布包结构
     的一部分，安装脚本依赖它们。

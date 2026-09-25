@@ -15,7 +15,7 @@
 ## 1. 仓库布局（冻结）
 
 ```
-selftool/
+localcraft/
 ├── README.md
 ├── docs/                          # 只读：01~05 号文档
 ├── contracts/
@@ -46,10 +46,10 @@ selftool/
 │   ├── vite.config.ts
 │   └── tsconfig.json
 ├── deploy/                        # ← 后端 agent
-│   ├── selftool.service
-│   ├── selftool.slice
-│   ├── nginx-selftool.conf
-│   └── selftool.env.example
+│   ├── localcraft.service
+│   ├── localcraft.slice
+│   ├── nginx-localcraft.conf
+│   └── localcraft.env.example
 └── scripts/                       # ← 后端 agent
     ├── make-release.sh
     ├── backup.sh  restore.sh  verify-backup.sh
@@ -920,7 +920,7 @@ M4 有三项要求**没有做**，但这**不是开发 agent 的失误**，是�
 | `TOKEN_REVOKED` 四态 | 有效 → 成功；格式非法 → `UNAUTHENTICATED`；查无此凭证 → `UNAUTHENTICATED`；**吊销后 → `TOKEN_REVOKED`** ✅ |
 | 迁移跨库修正 | 0001 的 `WHERE is_current = 1` → `IS TRUE`、0004 的 `server_default="0"` → `"false"`，均为 PG 演练实测产物 |
 | `database is locked` | 读压测与写加压（至并发 40）全过程 **0 次** |
-| 交付件补充 | `selftool-backup.{service,timer}`、`selftool-maintenance.{service,timer}`、`logrotate-selftool` |
+| 交付件补充 | `localcraft-backup.{service,timer}`、`localcraft-maintenance.{service,timer}`、`logrotate-localcraft` |
 
 ### 18.3 裁定：性能目标未达标 —— 接受现实并重新基线（原待裁决「下一步 1」）
 
@@ -1011,8 +1011,8 @@ M4 有三项要求**没有做**，但这**不是开发 agent 的失误**，是�
 | `uninstall.sh` | **要** | 运维合规常要求可卸载 |
 | `RELEASE-NOTES.md` | **要** | 升级流程依赖它判断是否含迁移（`docs/05` §11 已引用） |
 | `deploy/nginx/` 的 TLS 配置 | **要** | `docs/05` §7 的生产版现在只存在于文档里，没有可部署文件 |
-| `selftool-limits.conf` / `selftool.tmpfiles` | **要** | systemd 加固与运行目录创建依赖它们 |
-| `deploy/systemd/selftool-gc.*` | 要（或说明用 `selftool-maintenance.*` 代替） | 需与已有 timer 去重，不要两套做同一件事 |
+| `localcraft-limits.conf` / `localcraft.tmpfiles` | **要** | systemd 加固与运行目录创建依赖它们 |
+| `deploy/systemd/localcraft-gc.*` | 要（或说明用 `localcraft-maintenance.*` 代替） | 需与已有 timer 去重，不要两套做同一件事 |
 | `scripts/{upgrade,rollback}.sh` | **要** | `docs/05` §11 的升级回滚流程没有可执行载体 |
 | `scripts/{notify-ready,metrics-snapshot,disk-alert,alert-webhook,security-check}.sh` | 要 | `docs/05` §10/§13 引用；`disk-alert.sh` 还被 §18.6 复用 |
 
@@ -1254,9 +1254,9 @@ M5 提交了一份去重后的 **36 条**「文档 vs 实现」不一致清单�
 **其中值得单独记录的发现**：
 
 - **`docs/05` §5.10 的 disk-alert service 缺 `EnvironmentFile`**，
-  而 §10.5 又要求把 `SELTOOL_ALERT_CMD` 写进那个文件 ——
+  而 §10.5 又要求把 `LOCALCRAFT_ALERT_CMD` 写进那个文件 ——
   **照原文部署会让外部告警命令永不执行**。已改为直接用 `scripts/disk-alert.sh`
-- **M5 之前的 `make-release.sh` 不打包 `selftool-backup.*` 与 `selftool-maintenance.*`**，
+- **M5 之前的 `make-release.sh` 不打包 `localcraft-backup.*` 与 `localcraft-maintenance.*`**，
   而 `install.sh` 用 `[ -f ]` 静默跳过 → **按旧脚本产出的发布包装完没有定时备份，
   且安装当天完全看不出来**。M5 已修并纳入 `SHA256SUMS`（359 个文件全部 OK）。
   **教训：安装脚本对应当存在却缺失的交付件应报错，而不是跳过**
@@ -1304,19 +1304,19 @@ FR-ACL-02（P0）与 `docs/04` §6.7 要求「搜索用户/组后添加」，但
 **为什么值得破例**：92 冻结是为了防范围蔓延，而这是一个**功能空洞**（P0 需求无法交付），
 不是新功能。100 人内网里工具作者本就能看到彼此名字，最小披露是安全的。
 
-### 20.5 裁定：`selftool-gc.*` 悬空引用 —— 删除，统一用 maintenance
+### 20.5 裁定：`localcraft-gc.*` 悬空引用 —— 删除，统一用 maintenance
 
-M5 判定 `selftool-gc.*` 与 `selftool-maintenance.*` 重复故不创建（判断正确），
+M5 判定 `localcraft-gc.*` 与 `localcraft-maintenance.*` 重复故不创建（判断正确），
 但 `docs/05` §6.6/§8.4/§10.2 与 `cli.py` 的 `gc-versions` docstring 仍在引用它。
 
-**裁定：删悬空引用，统一为 `selftool-maintenance.timer`。** 已在 `docs/09` §4.1 记录；
+**裁定：删悬空引用，统一为 `localcraft-maintenance.timer`。** 已在 `docs/09` §4.1 记录；
 `cli.py` 的 docstring 同步（列入 M6，1 行）。
 
-### 20.6 裁定：`docs/05` 目录树与 `selftool-limits.conf` 形态
+### 20.6 裁定：`docs/05` 目录树与 `localcraft-limits.conf` 形态
 
 - **§4.1 目录树整体作废**，以 `docs/09` §4 为准（6 项删除、6 项回填、
   2 处修正、scripts 补列 14 个）
-- **`selftool-limits.conf` 是 systemd drop-in**（`selftool.service.d/limits.conf`），
+- **`localcraft-limits.conf` 是 systemd drop-in**（`localcraft.service.d/limits.conf`），
   不是普通 deploy 文件 —— systemd 不支持把 `[Service]` 片段 include 进别的 unit。
   M5 的判断正确，已在勘误中记录
 - M5 声明的两处越界处理：**`RELEASE-NOTES.md` 位于仓库根**（M5 任务书 item E 明确要求，

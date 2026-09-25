@@ -1,179 +1,260 @@
-# selftool — 内网工具 / Skill 共享平台
+# localcraft
 
-面向百人规模内网的自托管工具与 Skill 归档、分发、审批平台。
+**面向内网的自托管工具 / Skill 共享平台** —— 把团队里散落各处的脚本、工具包、Agent Skill、Prompt 模板收进一个可检索、可审批、可版本管理的门户。
 
-- **形态**：单机自托管，systemd 原生部署，不使用任何容器方案
-- **目标 OS**：openEuler 24.03 LTS SP1 ~ SP4（x86_64 与 aarch64 双架构）
-- **规模**：约 100 名用户，按 100 并发规划
-- **状态**：需求澄清已完成，本文档集为待评审稿，尚未开始编码
+[![CI](https://github.com/jacob-bytes/localcraft/actions/workflows/ci.yml/badge.svg)](https://github.com/jacob-bytes/localcraft/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
+[![React 18](https://img.shields.io/badge/react-18-61dafb.svg)](https://react.dev/)
 
 ---
 
-## 文档索引
+## 这是什么
+
+一百来人的研发团队里，工具通常是怎么流转的？某个同事写了个好用的批量改配置脚本，扔进群文件；另一个人做了个 SQL 优化 Prompt，发在聊天记录里；再有人把几个可执行文件打包丢到共享盘。三个月后没人记得哪个是最新版、谁维护、能不能对外用。
+
+localcraft 把这件事收敛成一个内网站点：
+
+- **门户大屏** —— 卡片墙 + 分类侧栏 + 全文检索，按分类和标签归档整齐
+- **个人主页** —— 授权用户上传自己的工具，填简介详情、传封面图、发新版本
+- **审批闭环** —— 管理员审批上架；可切「一键全放行」，也可只放行白名单用户
+- **管理 API** —— 签发长效 Token，脚本可以一键批量导入导出、管理用户与权限
+
+它从设计之初就是给**离线内网**用的：不依赖任何外部服务，不需要容器，一次装好就长期跑着。
+
+## 核心特性
+
+| 能力 | 说明 |
+| --- | --- |
+| **四种工具形态** | 文件包（zip / tar.gz / whl / exe）、Agent Skill 包（zip 内含 `SKILL.md`，服务端解压出文件树并渲染预览）、在线网页工具（内网 URL 直跳）、Prompt 模板（纯文本在线预览） |
+| **三级可见性** | `public` 全员 / `restricted` 指定用户或用户组 / `private` 仅自己；超管可开关式查看 `private` 内容 |
+| **四角色 RBAC** | 超级管理员 / 审批管理员 / 普通用户 / 只读访客；管理员建号，**无自助注册**，首次登录强制改密 |
+| **版本管理** | SemVer 字符串手填（不强制格式）；同一工具可反复发新版本，**历史版本最多保留 10 份**，超出按最旧淘汰 |
+| **审批流** | 全局开关「需审批 / 全放行」+ 用户白名单免审；驳回必填理由，用户可改后重提；完整审批历史可查；支持下架与重新上架 |
+| **检索** | SQLite FTS5 全文索引（切 PostgreSQL 后走 `tsvector`），支持分类、标签、形态、可见性多维筛选 |
+| **统计** | 下载量与浏览量走**内存聚合 + 定时批量落库**，不做逐请求自增写入 |
+| **管理 API** | 长效 API Token（`st_` 前缀，SHA256 落库，可吊销、可限 Scope）+ OpenAPI 自动文档 + 批量导入导出 |
+
+## 技术栈
+
+**后端** Python 3.11 · FastAPI · SQLAlchemy 2.0（async）· Alembic · Pydantic v2 · uvicorn
+**前端** React 18 · Vite 5 · TypeScript（strict）· Tailwind CSS v4 · shadcn/ui · TanStack Query v5 · react-router-dom 6
+**数据库** SQLite（WAL）为默认；通过 SQLAlchemy + Alembic 抽象，**切 PostgreSQL 只改连接串**
+**部署** systemd 原生部署 · nginx 反向代理 · **不使用 Docker / Podman / 任何容器方案**
+**架构** x86_64 与 aarch64 双架构，各交付一套离线 wheelhouse
+
+## 架构
+
+```
+                        ┌──────────────────────────────┐
+   浏览器 ──────────────▶│  nginx                       │
+                        │  TLS 终止 / 静态资源 / 限流    │
+                        └───────────────┬──────────────┘
+                                        │  proxy_pass
+                        ┌───────────────▼──────────────┐
+                        │  uvicorn（单 worker）         │
+                        │  ├─ /api/v1/*   REST 接口     │
+                        │  ├─ /docs       OpenAPI       │
+                        │  └─ /*          前端 SPA 产物  │
+                        └───────────────┬──────────────┘
+                                        │
+              ┌─────────────────────────┼─────────────────────────┐
+              ▼                         ▼                         ▼
+    ┌──────────────────┐   ┌──────────────────────┐   ┌──────────────────┐
+    │ SQLite (WAL)     │   │ /var/lib/localcraft  │   │ 内存计数聚合       │
+    │ 20 张表 + FTS5   │   │ 上传文件 / 封面图     │   │ 定时批量落库       │
+    │ 可换 PostgreSQL  │   │ 版本归档 / 备份       │   │ tool_stats_daily │
+    └──────────────────┘   └──────────────────────┘   └──────────────────┘
+```
+
+**为什么是单 worker**：SQLite 在 WAL 下仍是单写者。生产刻意只跑一个 uvicorn worker，靠 asyncio 扛 I/O 并发 —— 加 worker 不会提升写吞吐，只会加剧锁竞争。真要横向扩，先换 PostgreSQL 再谈。
+
+## 快速开始
+
+### 本机一键预览（推荐先试这个）
+
+需要 **Python 3.11+** 和 **Node.js 18+**：
+
+```bash
+git clone https://github.com/jacob-bytes/localcraft.git
+cd localcraft
+
+# 建 venv、装依赖、建库、播种演示数据、构建前端、起服务 —— 全部自动
+bash preview.sh
+```
+
+跑完打开 <http://127.0.0.1:8000>。首次会自动播种 **26 个演示工具 / 6 个账号**（含 8 个边界样本：无封面、超长名称、空文件树等）。
+
+```bash
+bash preview.sh --reset     # 丢弃预览数据重新来
+PORT=8090 bash preview.sh   # 换端口
+```
+
+预览数据落在 `.preview/`（已 gitignore），不碰 `backend/var/`。预览是**生产拓扑**：后端直接托管前端构建产物，单一 URL，没有独立前端进程也没有代理。
+
+演示账号（全部为虚构数据）：
+
+| 角色 | 账号 | 密码 | 用途 |
+| --- | --- | --- | --- |
+| 超级管理员 | `admin` | `Admin@12345` | 全部页面 |
+| 审批员 | `wangwu` | `Author@12345` | user + approver，验证审批台与角色边界 |
+| 普通用户 | `zhangsan` / `lisi` | `Author@12345` | 上传与个人主页 |
+| 只读访客 | `viewer` | `Viewer@12345` | 能看详情但下载被拒 |
+| 需改密 | `newbie` | `Newbie@12345` | 登录后被强制跳转改密页 |
+
+### 分别起前后端（开发模式）
+
+```bash
+# 终端 1 —— 后端
+cd backend
+python3.11 -m venv .venv && .venv/bin/pip install -r requirements.lock
+.venv/bin/python -m alembic upgrade head       # 建库 + 迁移
+.venv/bin/python -m app.cli seed-demo          # 播种演示数据
+.venv/bin/python -m uvicorn app.main:app --reload --port 8000
+
+# 终端 2 —— 前端（Vite 代理 /api 到 8000）
+cd web
+npm install
+npm run dev                                    # http://127.0.0.1:5173
+```
+
+开发模式下前端默认启用 MSW mock（`VITE_ENABLE_MOCKS=true`），不连后端也能点通全部页面。
+
+## 部署到 openEuler
+
+目标环境：**openEuler 24.03 LTS SP1 ~ SP4**，x86_64 或 aarch64，systemd 原生部署。
+
+openEuler 官方源自带 `python3.11` rpm，**目标机不需要编译 Python**。整个安装过程可以完全离线。
+
+```bash
+# 在联网构建机上产出发布包（含目标架构的完整离线 wheelhouse）
+bash scripts/build-wheelhouse.sh --arch x86_64     # 或 aarch64
+bash scripts/make-release.sh
+
+# 在目标机上安装
+tar xzf localcraft-1.0.0-<arch>.tar.gz && cd localcraft-1.0.0-<arch>
+sudo LOCALCRAFT_WHEELHOUSE="$PWD/wheelhouse" bash install.sh
+```
+
+`install.sh` 会依次完成：建 `localcraft` 系统用户 → 解包到 `/opt/localcraft` → 用离线 wheelhouse 建 venv → 建 `/var/lib/localcraft` 与 `/etc/localcraft` → 装 systemd unit / slice / tmpfiles / logrotate → 跑 Alembic 迁移 → 启动并做健康检查。
+
+演练时可以跳过需要 root 的步骤：
+
+```bash
+LOCALCRAFT_SKIP_SYSTEMD=1 bash install.sh    # 跳过 useradd/chown/systemctl，用 nohup 起
+```
+
+配套脚本：`backup.sh` / `restore.sh` / `verify-backup.sh`（一致性备份与恢复）、`upgrade.sh` / `rollback.sh`（升级与回滚）、`uninstall.sh`、`security-check.sh`、`disk-alert.sh`、`metrics-snapshot.sh`。
+
+## 配置
+
+所有配置走环境变量，生产放 `/etc/localcraft/localcraft.env`（`0640 root:localcraft`）。完整示例见 [`deploy/localcraft.env.example`](deploy/localcraft.env.example)。
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `LOCALCRAFT_HOST` / `LOCALCRAFT_PORT` | `127.0.0.1` / `8000` | 监听地址；生产由 nginx 反代，不直接对外 |
+| `LOCALCRAFT_PUBLIC_BASE_URL` | `http://127.0.0.1:8000` | 生成签名 URL 与下载链接的基址 |
+| `DATABASE_URL` | `sqlite+aiosqlite:///…/localcraft.db` | 换 PostgreSQL 时改这里 |
+| `DATA_DIR` | `./var` | 上传文件、封面、归档、备份的根目录 |
+| `SECRET_KEY` | —— | **必改**。`openssl rand -hex 32` 生成 |
+| `ACCESS_TOKEN_MINUTES` / `REFRESH_TOKEN_DAYS` | `30` / `7` | 访问令牌与刷新令牌有效期 |
+| `COOKIE_SECURE` | `true` | 生产必须 `true`（HTTPS）；本机预览置 `false` |
+| `API_DOCS_ENABLED` | `false` | 生产默认关闭 `/docs` |
+| `LOGIN_MAX_FAILURES` / `LOCKOUT_MINUTES` | `5` / `15` | 登录失败锁定策略 |
+| `DB_BUSY_TIMEOUT` | `5000` | SQLite 忙等待毫秒数 |
+| `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` | `5` / `5` | 连接池；仅 PostgreSQL 生效 |
+
+> 环境变量名不做统一前缀：`LOCALCRAFT_*` 只用于应用自身的 5 个字段（host/port/debug/version/public_base_url），其余沿用直觉命名（`DATABASE_URL`、`SECRET_KEY`…）。
+
+## 项目结构
+
+```
+localcraft/
+├── backend/                 FastAPI 应用
+│   ├── app/
+│   │   ├── api/v1/          路由层（75 路径 / 93 操作）
+│   │   ├── core/            配置、安全、依赖注入、日志
+│   │   ├── models/          19 张表的 ORM 模型（+ FTS5 虚拟表）
+│   │   ├── repositories/    数据访问
+│   │   ├── services/        业务逻辑
+│   │   └── cli.py           命令行（init-db / seed / create-user / …）
+│   ├── migrations/          Alembic 迁移（0001~0004）
+│   ├── tests/               449 个测试
+│   └── openapi.json         OpenAPI 快照 —— 接口形状的**权威**，测试守卫其时效性
+├── web/                     React SPA
+│   └── src/{pages,components,api,lib}
+├── deploy/                  systemd unit / slice / tmpfiles / nginx / logrotate
+├── scripts/                 安装、备份、升级、演练、发布等 24 个运维脚本
+├── docs/                    需求、数据模型、API、前端、部署、手册共 12 份
+├── contracts/               接口契约与验收脚本
+├── prompts/                 每个开发里程碑的任务书
+└── preview.sh               本机一键预览
+```
+
+## 文档
+
+`docs/` 里的 12 份文档是这个项目从需求澄清到交付的完整轨迹，全部保留：
 
 | 文档 | 内容 |
 | --- | --- |
-| [docs/01-需求规格说明书.md](docs/01-需求规格说明书.md) | 角色权限、功能需求（带编号）、业务规则与状态机、非功能需求、验收标准 |
-| [docs/02-数据模型设计.md](docs/02-数据模型设计.md) | ER 关系、20 张表的字段级设计、索引、约束、迁移策略 |
-| [docs/03-API接口清单.md](docs/03-API接口清单.md) | REST 接口全集、请求/响应示例、错误码、鉴权与 Scope 矩阵 |
-| [docs/04-前端页面与交互清单.md](docs/04-前端页面与交互清单.md) | 路由表、每页的组件拆解、shadcn/ui 组件选型、交互与空态/异常态 |
-| [docs/05-部署与运维方案.md](docs/05-部署与运维方案.md) | 离线双架构打包、systemd、nginx、备份恢复、升级回滚、故障排查 |
+| [01-需求规格说明书](docs/01-需求规格说明书.md) | 角色权限、编号功能需求、业务规则与状态机、非功能需求、验收标准 |
+| [02-数据模型设计](docs/02-数据模型设计.md) | ER 关系、20 张表的字段级设计、索引、约束、迁移策略 |
+| [03-API接口清单](docs/03-API接口清单.md) | REST 接口全集、请求/响应示例、错误码、鉴权与 Scope 矩阵 |
+| [04-前端页面与交互清单](docs/04-前端页面与交互清单.md) | 路由表、每页组件拆解、shadcn/ui 选型、空态与异常态 |
+| [05-部署与运维方案](docs/05-部署与运维方案.md) | 离线双架构打包、systemd、nginx、备份恢复、升级回滚、故障排查 |
+| [06-用户手册](docs/06-用户手册.md) / [07-管理员手册](docs/07-管理员手册.md) / [08-运维手册](docs/08-运维手册.md) | 面向三类使用者的操作手册 |
+| [09-勘误与已知限制](docs/09-勘误与已知限制.md) | 文档与实现不一致处的勘误表（**优先级高于它所修正的文档**） |
+| [10-交付前置检查清单](docs/10-交付前置检查清单.md) | 交付检查项与真实状态，含未完成项 |
+| [11-优化点分析](docs/11-优化点分析.md) | 性能剖析与优化结论 |
+| [12-前端UI-UX审查](docs/12-前端UI-UX审查.md) | 可访问性与视觉审查，含审查者自身误报的复盘 |
 
----
+[`contracts/CONTRACT.md`](contracts/CONTRACT.md) 是并行开发时的**唯一事实来源**，记录了接口冻结、边界裁定与交付台账。
 
-## 已确认的关键决策
+## 测试与质量
 
-以下每一条都已通过问答确认，是后续设计与编码的约束前提。
+```bash
+# 后端：lint + 449 个测试（约 90% 覆盖率）
+cd backend && .venv/bin/python -m ruff check . && .venv/bin/python -m pytest
 
-### 业务与数据模型
+# 前端：typecheck + lint + 组件约束 + 构建产物检查
+cd web && npm run verify
 
-| # | 决策项 | 结论 |
-| --- | --- | --- |
-| D1 | 工具形态 | 四种并存：**文件包**（zip/tar.gz/whl/exe）、**Agent Skill 包**（zip 内含 SKILL.md）、**在线网页工具**（内网 URL）、**Prompt 模板**（纯文本） |
-| D2 | Skill 包预览深度 | 上传 zip 后服务端自动解压，提取 SKILL.md 渲染预览 + 展示包内文件树；文件树之外的普通文件不做在线预览 |
-| D3 | 在线工具打开方式 | 新标签页直接跳转，不做 iframe 内嵌 |
-| D4 | 分类体系 | 固定一级分类（管理员维护）+ 自由标签 tag（多对多），不做二级分类 |
-| D5 | 可见性模型 | 三级：`public`（全员）/ `restricted`（指定用户或用户组）/ `private`（仅自己） |
-| D6 | 用户组 | **需要**用户组管理，`restricted` 可见性可授权到组 |
-| D7 | 版本号规则 | SemVer 字符串（如 `1.2.3`），用户手填，**不强制格式校验** |
-| D8 | 历史版本保留 | 最多保留 **10 份历史版本**（不含当前版本），超出后淘汰最旧的非当前版本 |
-| D9 | 门户形态 | 工具导航门户：搜索框 + 分类侧栏 + 工具卡片墙；**不做**数据可视化大屏与投屏轮播 |
-| D10 | 统计需求 | 需要下载量 / 浏览量统计（用于门户热门排序）；不需要独立的管理员统计看板图表（仅提供数字概览） |
+# 端到端：MSW mock（默认）或真实后端
+cd web && npm run e2e              # mock
+cd web && npm run e2e:real         # 需要 preview.sh 已在跑
 
-### 审批与权限
+# 交付前自动化检查（36 项）
+bash contracts/acceptance/pre-delivery-checks.sh
+```
 
-| # | 决策项 | 结论 |
-| --- | --- | --- |
-| D11 | 审批模式 | **全局开关**：默认「需审批」，管理员可一键切为「全部放行」 |
-| D12 | 白名单对象 | **用户白名单**：名单内用户上传免审 |
-| D13 | 驳回闭环 | 驳回必填理由；用户可修改后重新提交 |
-| D14 | 下架能力 | 已发布工具支持管理员下架，下架后可重新上架 |
-| D15 | 审批历史 | 需要完整审批历史记录，可查询（谁、何时、什么动作、什么理由） |
-| D16 | 审计日志 | 不要求全量操作审计日志（登录/删除等），仅审批链留痕 |
-| D17 | 角色模型 | RBAC，四角色：超级管理员 / 审批管理员 / 普通用户 / 只读访客；不需要部门组织体系 |
-| D18 | 账号开通 | 管理员建号，**无自助注册**；首次登录强制改密 |
+几条刻意为之的工程约束：
 
-### 技术栈与运维
+- **`backend/openapi.json` 被纳入版本控制**，并有测试守卫它必须与实现同步 —— 它是接口形状的权威，前端类型从这个文件生成。
+- **前端有 `check:api-types` / `check:primitives` / `check:dist` / `check:lazy-retry` 四道结构检查**，防止手写类型漂移、绕过设计原语、mock 代码混进生产产物、以及懒加载 chunk 失效导致白屏。
+- **`ruff` 的 `target-version = "py311"`** 是硬防线：本机可以用更高版本 Python 开发，但语法必须停在 3.11，否则部署到 openEuler 会直接 `SyntaxError`。
+- **图片用签名 URL**（`?sig=` HMAC，7 天 TTL），因为 `<img>` 带不了 `Authorization` 头；**下载用 60 秒一次性 ticket** 并绑定用户。
 
-| # | 决策项 | 结论 |
-| --- | --- | --- |
-| D19 | 前端 | React + Vite + TypeScript + shadcn/ui |
-| D20 | 后端 | Python 3.11 + FastAPI |
-| D21 | 数据库 | SQLite（WAL）作为默认后端；**强制**用 SQLAlchemy 2.0 + Alembic 做抽象，连接串可配置，以便无痛切换 PostgreSQL |
-| D22 | 部署方式 | systemd 原生部署，**禁止 Docker / Podman / 任何容器** |
-| D23 | CPU 架构 | **x86_64 与 aarch64（鲲鹏）都需要支持**，需交付两套离线 wheel |
-| D24 | 网络环境 | 可能完全离线，或仅有内网私有 yum 源 / 私有 PyPI 源 |
-| D25 | 认证可插拔 | 先实现本地账号体系，同时抽象 `AuthProvider` 接口并预留 OIDC 接入点，后期接统一身份不改业务代码 |
-| D26 | 管理 API 鉴权 | 只做**长效 API Token**（可签发/吊销/设权限范围）；**不做** OAuth2 client_credentials |
-| D27 | 管理 API 能力 | 需要批量导入导出接口、需要 Swagger/OpenAPI 自动文档 |
-| D28 | 存储配额 | 需要配额限制（单文件 / 单用户 / 平台总量），默认值见 SRS 第 8 章 |
-| D29 | 备份恢复 | 需要数据备份与恢复方案（SQLite 一致性备份 + 文件目录增量备份） |
-| D30 | 项目节奏 | 不赶工期，以质量与可维护性为先；功能按 MVP / 二期切分 |
-| D31 | 离线 wheel 来源 | 有可联网的构建机，且能安装**与目标机同版本的 openEuler**。因此两套 wheelhouse 均可在真实目标 OS 上产出与验证，无需处理跨发行版 glibc 兼容问题 |
-| D32 | 超管对 private 的可见性 | **可见**全部 `private` 工具的内容，通过 `portal.allow_admin_view_private`（默认 `true`）提供开关 |
-| D33 | 负责人转移 | **要做**，排入 M3（不是 M4） |
-| D34 | 开发环境 | 本机开发用 **Python 3.13**，但代码目标语法为 **3.11**。必须加静态守卫（见下方「Python 版本策略」） |
+## 已知限制
 
----
+诚实地说清楚哪些验过、哪些没验过：
 
-## Python 版本策略（D34）
+| 项 | 状态 |
+| --- | --- |
+| 后端 449 测试 / 90% 覆盖率 | ✅ 通过 |
+| 前端 `npm run verify`、mock E2E、真实后端 E2E | ✅ 通过 |
+| 双架构 wheelhouse 文件级校验（各 59 wheel、0 sdist、平台标签匹配） | ✅ 通过 |
+| **aarch64 真机运行** | ❌ 未验证 —— 本机无 aarch64 设备，文件级检查不等于架构验证 |
+| **真实 systemd 上的 unit / slice / tmpfiles** | ❌ 未验证 —— 本机无 systemd，安装演练走的是 `LOCALCRAFT_SKIP_SYSTEMD=1` 路径 |
+| **用发布包的 linux wheelhouse 真正启动服务** | ❌ 未验证 —— macOS 无法加载 ELF |
+| **PostgreSQL 迁移复跑** | ⚠️ 部分 —— M4 阶段跑过并修了两处迁移问题，后续里程碑未再重跑 |
+| **生产级性能数据** | ⚠️ 仅本机数据，非目标硬件 |
 
-**结论：可以用本机 3.13 开发、以 3.11 为语法目标，但必须加一道静态检查，不能靠自觉。**
+已知的文档—实现不一致集中在 [`docs/09-勘误与已知限制.md`](docs/09-勘误与已知限制.md)（`locate` 类环境变量名、`SHA256SUMS` vs `MANIFEST.sha256` 等）。
 
-### 为什么方向是对的
+## 参与贡献
 
-写 3.11 兼容的代码跑在 3.13 上是**向后兼容的正常方向**，不会有问题。真正危险的是反过来：在 3.13 上写爽了 3.12/3.13 的新语法，本地测试全绿，一部署到 openEuler 的 3.11 上直接 `SyntaxError` —— 而且这类错误**发生在解析阶段**，不是运行时，连 `try/except` 都兜不住，服务根本起不来。
+见 [CONTRIBUTING.md](CONTRIBUTING.md)。简言之：开 issue 说明场景，改动请带上测试，`backend/` 与 `web/` 各自跑通对应验证命令再提 PR。
 
-### 最可能踩的坑（按发生概率排序）
+## 许可证
 
-| # | 陷阱 | 为什么在 3.13 上不报错 |
-| --- | --- | --- |
-| 1 | **f-string 内层用同类引号**：`f"{"key"}"` | 3.12 起放宽了 f-string 的引号与反斜杠限制，3.11 直接 SyntaxError |
-| 2 | **PEP 695 泛型语法**：`def f[T](x: T) -> T`、`class C[T]:` | 3.12 新增，3.11 不认 |
-| 3 | **`type` 别名语句**：`type UserId = int` | 3.12 新增 |
-| 4 | **`itertools.batched()`**、`typing.override`、`@deprecated` | 均为 3.12+ 新增 |
-| 5 | **依赖包自身要求 `>=3.12`** | 装得上、跑得动，但生产环境 3.11 装不上 |
-| 6 | **3.13 移除的标准库**：`cgi`、`imp`、`pipes`、`telnetlib`、`crypt` | 方向相反：本地报错、3.11 反而能用。本地报错是好事，能提前发现 |
-
-### 三道防线（缺一不可）
-
-1. **Ruff 的 `target-version`（最关键的一道）**
-
-   ```toml
-   # pyproject.toml
-   [project]
-   requires-python = ">=3.11"
-
-   [tool.ruff]
-   target-version = "py311"      # 这一行是防线的核心
-   line-length = 100
-
-   [tool.ruff.lint]
-   select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
-   ```
-
-   Ruff 会在**编写时**就把 PEP 695 泛型、`type` 语句、以及部分 3.12+ 的写法标出来。它管不住 f-string 嵌套引号（那是 CPython 解析器的行为，Ruff 不做语法降级检测），所以还需要第 2 道。
-
-2. **发布前在真实的 3.11 上跑测试**
-
-   因为 D31 已确认有同版本 openEuler 构建机，这一步成本极低：把构建机当成 CI 的 3.11 节点，每次发布前跑一遍完整测试。**这是唯一能 100% 覆盖语法兼容性的手段** —— 编译一次就知道。
-
-   如果希望更早发现，本机装一个 3.11 也很便宜（`brew install python@3.11` 或 `pyenv install 3.11`），只用来跑 `pytest` 和 `python -m compileall app/`：
-
-   ```bash
-   # 最快的语法体检，几秒钟，能在写代码当天就发现问题
-   python3.11 -m compileall -q app/ && echo "语法与 3.11 兼容"
-   ```
-
-3. **依赖锁文件里显式约束 Python 版本**
-
-   ```bash
-   # 生成锁文件时必须带这个参数，否则会把 3.12+ 专属的包版本锁进来
-   pip download --python-version 3.11 --only-binary=:all: ...
-   ```
-
-   详见 [docs/05-部署与运维方案.md](docs/05-部署与运维方案.md) 第 3 章。
-
-### 一句话建议
-
-本机 3.13 用来写代码和日常调试，`ruff` 实时拦截语法越界，`python3.11 -m compileall` 作为提交前钩子，发布前在 openEuler 构建机上跑全量测试。**不要**只依赖「我注意一点就行」。
-
-## 关于 SQLite 的风险说明
-
-百人并发下选择 SQLite 是有代价的，需求方已知悉并接受了缓解方案（D21）。具体约束：
-
-1. SQLite 在 WAL 模式下仍是**单写者**，写事务串行化。读并发不受限。
-2. 因此生产部署默认使用 **uvicorn 单 worker**，靠 asyncio 扛 I/O 并发；不得通过加 worker 来提升吞吐。
-3. 所有写入路径必须短事务：禁止在事务内做文件 IO、解压、哈希计算、HTTP 探测。上传流程必须先落盘并计算哈希，再开事务写元数据。
-4. 下载量 / 浏览量计数必须走**内存聚合 + 定时批量落库**，禁止每次请求 `UPDATE ... SET count = count + 1`。
-5. 一旦出现 `database is locked` 频繁告警，或日活写入超过约 50 写事务/秒的持续压力，即为切换 PostgreSQL 的信号 —— 此时只需更换 `DATABASE_URL` 并重跑 Alembic 迁移。
-
----
-
-## 待确认事项
-
-以下是设计过程中浮现的、尚未与你确认的点。**这些不阻塞文档评审，但会影响编码细节**，请在评审时一并回复。
-
-> 已解决：原 Q1（超管对 private 的可见性）确认为**可见 + 开关**，见 D32；原 Q5（负责人转移）确认为**要做**，见 D33。下表保留其余条目。
-
-| # | 问题 | 我的建议方案 |
-| --- | --- | --- |
-| Q2 | 已审核通过的工具，用户发布新版本时是否需要重新审批？ | 默认**需要重新审批**（`approval.version_reapproval = true`），新版本待审期间**旧版本继续可下载**，避免服务中断 |
-| Q3 | 待审的新版本，工具卡片上如何展示？ | 门户仍展示已过审的当前版本，卡片角标提示「有新版本待审」；仅 owner 与审批管理员可见该角标 |
-| Q4 | 历史版本被淘汰后，已下载过的用户还能再下载吗？ | 淘汰即物理删除存储文件，不可再下载；下载页给出「版本已归档」提示 |
-| Q6 | 门户是否允许未登录访问（匿名浏览）？ | 建议默认**不允许**，全部需登录；通过 `portal.allow_anonymous_view` 开关可放开只读 |
-| Q7 | 是否需要在线网页工具的定时探活（URL 可用性监测）？ | 第一轮你未选择，我按**不做**处理；数据模型已预留 `webapp_health_*` 字段，二期可直接启用 |
-| Q8 | 附件类型白名单的具体范围？ | 建议：`.zip .tar.gz .tgz .whl .tar .gz .7z .rar .exe .msi .deb .rpm .sh .py .md .txt .json .yaml .pdf .png .jpg`，管理员可配 |
-| Q9 | 只读访客（viewer）角色实际给谁用？ | 建议用于审计人员或外部协作方，只能浏览 `public` 工具、不能下载受限内容 |
-
----
-
-## 下一步
-
-请评审上述四份文档与「待确认事项」。确认后我将按以下顺序推进：
-
-1. 搭建仓库骨架（后端 FastAPI 工程 + 前端 Vite 工程 + Alembic + CI 脚本）
-2. 实现数据模型与迁移、认证与 RBAC、工具 CRUD 与上传存储（MVP 主干）
-3. 实现审批流、门户检索、个人中心
-4. 实现管理控制台与 API Token / 批量接口
-5. 打通双架构离线打包与 systemd 部署，做一次完整的部署演练与恢复演练
+[MIT](LICENSE) © 2026 jacob-bytes

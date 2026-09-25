@@ -21,7 +21,7 @@
 #   1) 用发布包里的 linux wheelhouse 真的把服务跑起来 —— 需要 linux 主机或
 #      容器/qemu；本机既无 docker/podman 也无 qemu。
 #   2) 验证 systemd 路径（useradd / chown / systemctl）—— 本机无 systemd，
-#      用 SELTOOL_SKIP_SYSTEMD=1 跳过（改由 nohup 拉起同一个 uvicorn 命令）。
+#      用 LOCALCRAFT_SKIP_SYSTEMD=1 跳过（改由 nohup 拉起同一个 uvicorn 命令）。
 #   3) aarch64 的安装验证 —— 完全没有 aarch64 环境。
 # ============================================================
 set -uo pipefail
@@ -31,14 +31,14 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BACKEND="$ROOT/backend"
 DIST="$BACKEND/dist"
-PY="${SELTOOL_PYTHON311:-$BACKEND/.venv/bin/python}"
-SANDBOX="${SELTOOL_DRILL_SANDBOX:-$DIST/drill}"
+PY="${LOCALCRAFT_PYTHON311:-$BACKEND/.venv/bin/python}"
+SANDBOX="${LOCALCRAFT_DRILL_SANDBOX:-$DIST/drill}"
 
 log()  { printf '\n\033[1;32m==> %s\033[0m\n' "$*"; }
 step() { printf '\n\033[1m--- %s ---\033[0m\n' "$*"; }
 die()  { printf '\n\033[1;31m[error] %s\033[0m\n' "$*" >&2; exit 1; }
 
-TARBALL="$(find "$DIST" -maxdepth 1 -name 'selftool-*-offline-*.tar.gz' | sort | tail -1)"
+TARBALL="$(find "$DIST" -maxdepth 1 -name 'localcraft-*-offline-*.tar.gz' | sort | tail -1)"
 [ -n "$TARBALL" ] || die "找不到发布包，请先执行 scripts/make-release.sh <version>"
 log "发布包: $(basename "$TARBALL")  ($(du -h "$TARBALL" | cut -f1))"
 
@@ -48,8 +48,8 @@ tar -C "$SANDBOX/releases" -xzf "$TARBALL"
 RELEASE_DIR="$(find "$SANDBOX/releases" -maxdepth 1 -mindepth 1 -type d | head -1)"
 [ -n "$RELEASE_DIR" ] || die "解压后没有版本目录"
 
-if ! grep -q 'SELTOOL_SKIP_SYSTEMD' "$RELEASE_DIR/install.sh"; then
-    die "发布包内的 install.sh 是旧版（不支持 SELTOOL_SKIP_SYSTEMD）。多半是先打包后改脚本，请重新 make-release.sh"
+if ! grep -q 'LOCALCRAFT_SKIP_SYSTEMD' "$RELEASE_DIR/install.sh"; then
+    die "发布包内的 install.sh 是旧版（不支持 LOCALCRAFT_SKIP_SYSTEMD）。多半是先打包后改脚本，请重新 make-release.sh"
 fi
 
 LOCK="$RELEASE_DIR/requirements/requirements.lock.txt"
@@ -115,19 +115,19 @@ if command -v lsof >/dev/null 2>&1 && lsof -ti:"$PORT" >/dev/null 2>&1; then
     die "端口 $PORT 已被占用，请先释放或换一个端口"
 fi
 
-step "执行 install.sh（SELTOOL_SKIP_SYSTEMD=1 + SELTOOL_WHEELHOUSE=<本机>）"
-SELTOOL_SKIP_SYSTEMD=1 \
-SELTOOL_PREFIX="$SANDBOX/opt" \
-SELTOOL_ETC_DIR="$SANDBOX/etc" \
-SELTOOL_DATA_DIR="$SANDBOX/var" \
-SELTOOL_LOG_DIR="$SANDBOX/log" \
-SELTOOL_WHEELHOUSE="$NATIVE_WH" \
-SELTOOL_PYTHON311="$PY" \
+step "执行 install.sh（LOCALCRAFT_SKIP_SYSTEMD=1 + LOCALCRAFT_WHEELHOUSE=<本机>）"
+LOCALCRAFT_SKIP_SYSTEMD=1 \
+LOCALCRAFT_PREFIX="$SANDBOX/opt" \
+LOCALCRAFT_ETC_DIR="$SANDBOX/etc" \
+LOCALCRAFT_DATA_DIR="$SANDBOX/var" \
+LOCALCRAFT_LOG_DIR="$SANDBOX/log" \
+LOCALCRAFT_WHEELHOUSE="$NATIVE_WH" \
+LOCALCRAFT_PYTHON311="$PY" \
     "$RELEASE_DIR/install.sh"
 RC=$?
 if [ "$RC" -ne 0 ]; then
     echo "--- 应用日志尾部 ---"
-    tail -n 60 "$SANDBOX/log/selftool-stdout.log" 2>/dev/null || true
+    tail -n 60 "$SANDBOX/log/localcraft-stdout.log" 2>/dev/null || true
     die "install.sh 退出码 $RC"
 fi
 
@@ -151,8 +151,8 @@ for mod in ("PIL", "greenlet", "pydantic_core", "argon2", "sqlalchemy", "uvloop"
 PYEOF
 
 step "停止演练服务"
-if [ -f "$SANDBOX/var/selftool.pid" ]; then
-    kill "$(cat "$SANDBOX/var/selftool.pid")" 2>/dev/null || true
+if [ -f "$SANDBOX/var/localcraft.pid" ]; then
+    kill "$(cat "$SANDBOX/var/localcraft.pid")" 2>/dev/null || true
     sleep 2
 fi
 

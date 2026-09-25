@@ -176,8 +176,8 @@ const REFRESH_COOKIE = "refresh_token";
  * frontend behaviour under test (restore after F5, revoke on logout) is identical.
  */
 const REFRESH_COOKIE_PATH = "/";
-const SESSION_STORAGE_KEY = "selftool.msw.sessions";
-const CREDENTIALS_STORAGE_KEY = "selftool.msw.credentials";
+const SESSION_STORAGE_KEY = "localcraft.msw.sessions";
+const CREDENTIALS_STORAGE_KEY = "localcraft.msw.credentials";
 const SIMULATED_LATENCY_MS = 150;
 
 /** One-time download ticket lifetime (docs/03 §1.10 / §3.15: 60 s). */

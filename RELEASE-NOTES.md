@@ -1,4 +1,4 @@
-# selftool 发布说明
+# localcraft 发布说明
 
 **版本：1.0.0** ｜ **发布日：2026-09-25** ｜ **目标平台：openEuler 24.03 LTS（x86_64 / aarch64）+ systemd + nginx**
 
@@ -14,11 +14,11 @@
 
 ## 一、本版本概要
 
-selftool 是内网「工具 / Skill」共享平台：上传 → 审批 → 发布 → 下载的完整闭环，
+localcraft 是内网「工具 / Skill」共享平台：上传 → 审批 → 发布 → 下载的完整闭环，
 带三级可见性、版本管理与回收站，全部数据落在单机 SQLite（可选切 PostgreSQL），
 以 systemd 原生方式部署，**目标机不需要联网、不需要 Node**。
 
-1.0.0 是**首发版本**，覆盖 M1~M5 五个里程碑的全部交付内容。
+1.0.0 是**首发版本**，覆盖 M1~M6 六个里程碑的全部交付内容。
 
 ---
 
@@ -37,14 +37,14 @@ selftool 是内网「工具 / Skill」共享平台：上传 → 审批 → 发�
 - 横切能力：统一错误响应、`X-Request-Id` 请求追踪、结构化日志、
   `/healthz` `/readyz` `/api/v1/meta` 三个探针 / 元信息端点。
 - 部署产物与 CLI：systemd 单元、nginx 配置、`install.sh` / `precheck.sh`、
-  `create-superadmin` / `reset-password` / `list-users` / `health` / `export-meta`。
+  `create-superadmin` / `reset-password` / `list-users` / `health` / `export-openapi`。
 
 ### M2 — 上传 / 审批 / 下载闭环
 
 - 存储层与 Skill 包解析：zip / tar 解压、`SKILL.md` 预览、sha256 计算、
   文件树（含截断标记），解压防护覆盖 **压缩比 / 总体积 / 条目数 / 递归深度 / 单文件大小 / 超时** 六项。
 - 4 类工具（`file` / `skill` / `prompt` / `webapp`）的 CRUD 与状态机；
-  三级可见性（public / internal / private）+ 用户组 ACL。
+  三级可见性（public / restricted / private）+ 用户组 ACL。
 - 版本管理：每个工具至多一个 `is_current`（部分唯一索引强制）；
   历史版本按 `version.history_limit` 保留，淘汰时**物理删除**磁盘文件，被淘汰版本下载返回 404。
 - 审批流：提交 / 批准 / 驳回、`version_seq` 乐观并发（CAS）；
@@ -73,7 +73,7 @@ selftool 是内网「工具 / Skill」共享平台：上传 → 审批 → 发�
   （`scripts/install.sh`：校验包 → 建用户与目录 → 建 venv → 离线装依赖 → 迁移 → 起服务 → 就绪探针）。
 - 备份 / 恢复 / 校验三件套：`backup.sh`（SQLite `.backup` 一致性快照 + `files/`
   `rsync --link-dest` 增量 + 保留份数清理）、`restore.sh`、`verify-backup.sh`，
-  配套 `selftool-backup.service` + `.timer`（每日 03:00）。
+  配套 `localcraft-backup.service` + `.timer`（每日 03:00）。
 - **恢复演练真的跑过一遍**：删库 → 用备份恢复 → `integrity_check` + 行数对账 → 端到端验证。
 - PostgreSQL 迁移演练：驱动与迁移路径验证（`psycopg` 正式声明见 M5）。
 - 100 并发性能验证并落地基线；产出用户手册 / 管理员手册 / 运维手册三份文档。
@@ -93,6 +93,37 @@ selftool 是内网「工具 / Skill」共享平台：上传 → 审批 → 发�
 - **运维交付件补齐**：`uninstall.sh`、`upgrade.sh`、`rollback.sh`、`notify-ready.sh`、
   `metrics-snapshot.sh`、`disk-alert.sh`、`alert-webhook.sh`、`security-check.sh`，
   以及生产 TLS nginx 配置、nginx 限流 zone、systemd 加固 drop-in、systemd-tmpfiles 规则。
+
+### M6 — 审阅期缺陷收口
+
+M5 交付后做了两轮实测审阅，M6 专修**实测确认的真实缺陷**，不加新功能。
+
+- **接口面 92 → 93（唯一的刻意破例）**：新增 `GET /api/v1/directory`。
+  原因是功能空洞而非范围蔓延 —— FR-ACL-02（P0）要求「搜索用户/组后添加 ACL」，
+  但普通用户没有任何可用的搜索接口（`/admin/users`、`/admin/groups` 均需超管），
+  导致设置 `restricted` 可见性时必须手填数字 ID，该 P0 需求实际无法交付。
+  新接口最小披露：用户只返回 `{id, username, display_name}`，组只返回
+  `{id, name, member_count}`，不含邮箱、状态、角色、最后登录时间。
+- **`tool_acl.can_download` 从「静默无效」变为真正生效**：该字段原先前后端都存、
+  `docs/03` §3.11 描述其生效，但**没有任何读取点**，取消勾选「允许下载」毫无作用。
+  现在「能看到详情但无权下载」返回 **403 `DOWNLOAD_NOT_ALLOWED`**
+  （不是 404 —— 用户能看见详情，报 404 只会让人困惑）。
+- **`revoke-sessions` 一并吊销 API Token**：原先管理员「强制下线」后，
+  该用户签发的 API Token **仍然可用**，与「禁用用户」的语义不一致 ——
+  同一个「让这个人失去访问」的意图，轻动作反而比重动作宽松。现在同一事务内一并吊销。
+- **6 个端点补 `response_model`**：此前这 6 处响应结构不受约束，
+  且**没有字段定义**。同时新增 `test_openapi_artifact_is_current` 守卫，
+  确保 `backend/openapi.json` 不会再与实现漂移。
+- **`current_version.can_download` 由授权与版本状态共同派生**：原先前端拿到的
+  可下载标志与实际下载判定不同源，会出现「按钮可点但下载 403」。
+- **附件白名单 21 → 44 项**：补齐常见开发产物与文档格式。
+- **种子补 approver 账号**：`wangwu` 现在同时具有 `user` + `approver` 角色，
+  否则「审批员不该看到超管菜单」这类角色边界无法在真实环境验证（用 admin 看不出差异）。
+- **ACL 主体选择器接入 `/directory`**：前端把数字 ID 输入框换成搜索下拉。
+- **待审新版本的撤回语义修正**：个人页的「撤回待审版本」原先语义含糊，改为明确的
+  「撤回待审版本」动作。
+- **清理悬空引用**：`localcraft-gc.*` 从未创建（与 `localcraft-maintenance.*` 重复），
+  但 `docs/05` 与 `cli.py` 仍在引用，已统一为 `localcraft-maintenance.timer`。
 
 ---
 
@@ -126,15 +157,15 @@ selftool 是内网「工具 / Skill」共享平台：上传 → 审批 → 发�
 
 ```bash
 # 升级（先在测试机演练）
-/opt/selftool/scripts/upgrade.sh /root/selftool-1.0.0-offline-<date>.tar.gz
+/opt/localcraft/scripts/upgrade.sh /root/localcraft-1.0.0-offline-<date>.tar.gz
 
 # 只看会做什么，不动系统
-/opt/selftool/scripts/upgrade.sh --dry-run <tarball>
+/opt/localcraft/scripts/upgrade.sh --dry-run <tarball>
 
 # 回滚到上一个 release
-/opt/selftool/scripts/rollback.sh            # 默认切回 current 之外的最近一个 release
-/opt/selftool/scripts/rollback.sh --list     # 先看有哪些 release 可回
-/opt/selftool/scripts/rollback.sh --to selftool-0.9.0
+/opt/localcraft/scripts/rollback.sh            # 默认切回 current 之外的最近一个 release
+/opt/localcraft/scripts/rollback.sh --list     # 先看有哪些 release 可回
+/opt/localcraft/scripts/rollback.sh --to localcraft-0.9.0
 ```
 
 升级前的准备清单见 `docs/05` §11.1；升级失败时脚本**只提示回滚命令，不自动回滚**
@@ -146,13 +177,13 @@ selftool 是内网「工具 / Skill」共享平台：上传 → 审批 → 发�
 
 ```bash
 # 安装（解压后的发布包根目录，root 执行；幂等）
-tar -C /opt/selftool/releases -xzf selftool-1.0.0-offline-<date>.tar.gz
-cd /opt/selftool/releases/selftool-1.0.0 && ./install.sh
+tar -C /opt/localcraft/releases -xzf localcraft-1.0.0-offline-<date>.tar.gz
+cd /opt/localcraft/releases/localcraft-1.0.0 && ./install.sh
 
 # 卸载（默认保留数据与配置，必须显式 --purge 才删除）
-/opt/selftool/scripts/uninstall.sh            # 交互确认
-/opt/selftool/scripts/uninstall.sh --yes      # 自动化
-/opt/selftool/scripts/uninstall.sh --purge --yes   # 连数据目录与配置目录一起删（不可恢复）
+/opt/localcraft/scripts/uninstall.sh            # 交互确认
+/opt/localcraft/scripts/uninstall.sh --yes      # 自动化
+/opt/localcraft/scripts/uninstall.sh --purge --yes   # 连数据目录与配置目录一起删（不可恢复）
 ```
 
 ---
@@ -173,7 +204,7 @@ cd /opt/selftool/releases/selftool-1.0.0 && ./install.sh
 ## 七、已知限制与注意事项
 
 - **单 worker**：SQLite WAL 单写者模型下 `--workers 1` 是刻意选择；
-  若切 PostgreSQL，可在 `selftool.service` 中调大 worker 数并重新做并发基线。
+  若切 PostgreSQL，可在 `localcraft.service` 中调大 worker 数并重新做并发基线。
 - **SQLite 实践上限**：接近 `docs/05` §9.5 的触发条件时应迁移 PostgreSQL。
 - **`0004` 的 downgrade 有损**：见上文第三节。
 - **CSP 使用 sha256 放行内联主题脚本**：前端若改动 `index.html` 里的内联

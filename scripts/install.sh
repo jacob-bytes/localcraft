@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # ============================================================
-# install.sh — selftool 离线安装脚本（幂等，可重复执行）
+# install.sh — localcraft 离线安装脚本（幂等，可重复执行）
 #
 # 在**解压后的发布包根目录**里以 root 执行：
-#     tar -C /opt/selftool/releases -xzf selftool-<version>-offline-<date>.tar.gz
-#     cd /opt/selftool/releases/selftool-<version>
+#     tar -C /opt/localcraft/releases -xzf localcraft-<version>-offline-<date>.tar.gz
+#     cd /opt/localcraft/releases/localcraft-<version>
 #     ./install.sh
 #
 # 依据: docs/05《部署与运维方案》§5.0~§5.9 / §5.12
@@ -14,11 +14,11 @@
 # 生产用法（openEuler，root，systemd）就是上面那三行，不需要任何额外变量。
 #
 # 演练/沙箱用法（非 root、无 systemd 的机器上验证安装链路）：
-#     SELTOOL_SKIP_SYSTEMD=1 \
-#     SELTOOL_PREFIX=$PWD/sandbox/opt \
-#     SELTOOL_ETC_DIR=$PWD/sandbox/etc \
-#     SELTOOL_DATA_DIR=$PWD/sandbox/var \
-#     SELTOOL_LOG_DIR=$PWD/sandbox/log \
+#     LOCALCRAFT_SKIP_SYSTEMD=1 \
+#     LOCALCRAFT_PREFIX=$PWD/sandbox/opt \
+#     LOCALCRAFT_ETC_DIR=$PWD/sandbox/etc \
+#     LOCALCRAFT_DATA_DIR=$PWD/sandbox/var \
+#     LOCALCRAFT_LOG_DIR=$PWD/sandbox/log \
 #     ./install.sh
 #   此时跳过 useradd / chown / systemctl，改用 nohup 直接拉起 uvicorn，
 #   其余步骤（发布包校验 → 离线 wheelhouse 安装 → 迁移 → 就绪探针）**完全一致**。
@@ -26,24 +26,24 @@
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
-SELTOOL_VERSION="$(cat "$(dirname "$0")/VERSION")"
+LOCALCRAFT_VERSION="$(cat "$(dirname "$0")/VERSION")"
 RELEASE_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # ---------- 路径（可用环境变量覆盖，默认与 docs/05 §4.2 一致）----------
-PREFIX="${SELTOOL_PREFIX:-/opt/selftool}"
-DATA_DIR="${SELTOOL_DATA_DIR:-/var/lib/selftool}"
-ETC_DIR="${SELTOOL_ETC_DIR:-/etc/selftool}"
-LOG_DIR="${SELTOOL_LOG_DIR:-/var/log/selftool}"
+PREFIX="${LOCALCRAFT_PREFIX:-/opt/localcraft}"
+DATA_DIR="${LOCALCRAFT_DATA_DIR:-/var/lib/localcraft}"
+ETC_DIR="${LOCALCRAFT_ETC_DIR:-/etc/localcraft}"
+LOG_DIR="${LOCALCRAFT_LOG_DIR:-/var/log/localcraft}"
 
 VENV="$PREFIX/venv"
 APP_LINK="$PREFIX/app/current"
-ENV_FILE="$ETC_DIR/selftool.env"
-SKIP_SYSTEMD="${SELTOOL_SKIP_SYSTEMD:-0}"
-PID_FILE="$DATA_DIR/selftool.pid"
+ENV_FILE="$ETC_DIR/localcraft.env"
+SKIP_SYSTEMD="${LOCALCRAFT_SKIP_SYSTEMD:-0}"
+PID_FILE="$DATA_DIR/localcraft.pid"
 # systemd 相关落位。做成变量是为了让"演练/沙箱"也能验证安装链路，
 # 生产默认值与 docs/05 §4.2 的对应表完全一致。
-SYSTEMD_UNIT_DIR="${SELTOOL_SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
-TMPFILES_DIR="${SELTOOL_TMPFILES_DIR:-/usr/lib/tmpfiles.d}"
+SYSTEMD_UNIT_DIR="${LOCALCRAFT_SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
+TMPFILES_DIR="${LOCALCRAFT_TMPFILES_DIR:-/usr/lib/tmpfiles.d}"
 
 log()  { printf '\n\033[1;32m==> %s\033[0m\n' "$*"; }
 warn() { printf '\n\033[1;33m[warn] %s\033[0m\n' "$*"; }
@@ -72,10 +72,10 @@ sed_i() {  # sed_i <表达式> <文件>
 }
 
 if [ "$SKIP_SYSTEMD" = "1" ]; then
-    warn "SELTOOL_SKIP_SYSTEMD=1 —— 演练模式：跳过 useradd / chown / systemctl"
+    warn "LOCALCRAFT_SKIP_SYSTEMD=1 —— 演练模式：跳过 useradd / chown / systemctl"
     warn "这不是生产路径。生产安装请以 root 直接执行 ./install.sh"
 else
-    [ "$(id -u)" -eq 0 ] || die "请以 root 执行（或在演练时设 SELTOOL_SKIP_SYSTEMD=1）"
+    [ "$(id -u)" -eq 0 ] || die "请以 root 执行（或在演练时设 LOCALCRAFT_SKIP_SYSTEMD=1）"
 fi
 
 # ------------------------------------------------------------
@@ -98,7 +98,7 @@ case "$ARCH" in
 esac
 
 # 演练时可显式指定 wheelhouse（生产不需要，走上面的按架构自动选择）
-[ -n "${SELTOOL_WHEELHOUSE:-}" ] && WHEELHOUSE="$SELTOOL_WHEELHOUSE"
+[ -n "${LOCALCRAFT_WHEELHOUSE:-}" ] && WHEELHOUSE="$LOCALCRAFT_WHEELHOUSE"
 
 if [ -d "$WHEELHOUSE" ] && [ -n "$(ls -A "$WHEELHOUSE" 2>/dev/null || true)" ]; then
     # wheelhouse 的清单文件名是 MANIFEST.sha256（build-wheelhouse.sh 产出）；
@@ -122,20 +122,20 @@ fi
 log "3/10 创建系统用户与目录"
 if [ "$SKIP_SYSTEMD" != "1" ]; then
     # 系统用户：无登录 shell。它的唯一用途是运行服务。
-    id selftool >/dev/null 2>&1 || useradd \
+    id localcraft >/dev/null 2>&1 || useradd \
         --system \
         --shell /sbin/nologin \
         --home-dir "$DATA_DIR" \
-        --comment "selftool service account" \
-        selftool
-    install -d -m 0750 -o selftool -g selftool \
+        --comment "localcraft service account" \
+        localcraft
+    install -d -m 0750 -o localcraft -g localcraft \
         "$DATA_DIR" \
         "$DATA_DIR/files" \
         "$DATA_DIR/files/uploads" \
         "$DATA_DIR/files/images" \
         "$DATA_DIR/backups"
-    install -d -m 0750 -o root -g selftool "$ETC_DIR"
-    install -d -m 0750 -o selftool -g selftool "$LOG_DIR"
+    install -d -m 0750 -o root -g localcraft "$ETC_DIR"
+    install -d -m 0750 -o localcraft -g localcraft "$LOG_DIR"
 else
     install -d -m 0750 \
         "$DATA_DIR" \
@@ -156,12 +156,12 @@ ls -l "$APP_LINK"
 
 # ------------------------------------------------------------
 log "5/10 创建虚拟环境"
-PY311="${SELTOOL_PYTHON311:-}"
+PY311="${LOCALCRAFT_PYTHON311:-}"
 if [ -z "$PY311" ]; then
     if command -v python3.11 >/dev/null 2>&1; then
         PY311="python3.11"
     else
-        die "未找到 python3.11，请先安装（docs/05 §2.3），或用 SELTOOL_PYTHON311 指定绝对路径"
+        die "未找到 python3.11，请先安装（docs/05 §2.3），或用 LOCALCRAFT_PYTHON311 指定绝对路径"
     fi
 fi
 [ -x "$VENV/bin/python" ] || "$PY311" -m venv "$VENV"
@@ -189,24 +189,24 @@ if [ -f "$ENV_FILE" ]; then
     warn "$ENV_FILE 已存在，保留现有配置（不覆盖 SECRET_KEY）"
 else
     if [ "$SKIP_SYSTEMD" != "1" ]; then
-        install -m 0640 -o root -g selftool "$RELEASE_DIR/deploy/selftool.env.example" "$ENV_FILE"
+        install -m 0640 -o root -g localcraft "$RELEASE_DIR/deploy/localcraft.env.example" "$ENV_FILE"
     else
-        install -m 0640 "$RELEASE_DIR/deploy/selftool.env.example" "$ENV_FILE"
+        install -m 0640 "$RELEASE_DIR/deploy/localcraft.env.example" "$ENV_FILE"
     fi
     SECRET="$(openssl rand -hex 32)"
     sed_i "s|^SECRET_KEY=.*|SECRET_KEY=${SECRET}|" "$ENV_FILE"
-    sed_i "s|^SELTOOL_VERSION=.*|SELTOOL_VERSION=${SELTOOL_VERSION}|" "$ENV_FILE"
+    sed_i "s|^LOCALCRAFT_VERSION=.*|LOCALCRAFT_VERSION=${LOCALCRAFT_VERSION}|" "$ENV_FILE"
     # 自定义前缀时把示例里的绝对路径改到实际位置，否则迁移会写到 /var/lib
-    if [ "$DATA_DIR" != "/var/lib/selftool" ]; then
+    if [ "$DATA_DIR" != "/var/lib/localcraft" ]; then
         sed_i "s|^DATA_DIR=.*|DATA_DIR=${DATA_DIR}|" "$ENV_FILE"
-        sed_i "s|^DATABASE_URL=.*|DATABASE_URL=sqlite+aiosqlite:///${DATA_DIR}/selftool.db|" "$ENV_FILE"
+        sed_i "s|^DATABASE_URL=.*|DATABASE_URL=sqlite+aiosqlite:///${DATA_DIR}/localcraft.db|" "$ENV_FILE"
     fi
-    warn "已生成 ${ENV_FILE}，请检查 DATABASE_URL / SELTOOL_PUBLIC_BASE_URL / COOKIE_SECURE 后继续"
+    warn "已生成 ${ENV_FILE}，请检查 DATABASE_URL / LOCALCRAFT_PUBLIC_BASE_URL / COOKIE_SECURE 后继续"
 fi
 
 # 数据库目录必须由服务账号可写，否则首次迁移会失败
 if [ "$SKIP_SYSTEMD" != "1" ]; then
-    chown -R selftool:selftool "$DATA_DIR"
+    chown -R localcraft:localcraft "$DATA_DIR"
 fi
 
 # ------------------------------------------------------------
@@ -223,71 +223,71 @@ log "8/10 数据库迁移（必须在服务启动之前执行，docs/02 §6.3）
 # ------------------------------------------------------------
 log "9/10 安装 systemd 单元与日志轮转"
 if [ "$SKIP_SYSTEMD" != "1" ]; then
-    for unit in selftool.slice selftool.service selftool-backup.service \
-                selftool-backup.timer selftool-maintenance.service selftool-maintenance.timer; do
+    for unit in localcraft.slice localcraft.service localcraft-backup.service \
+                localcraft-backup.timer localcraft-maintenance.service localcraft-maintenance.timer; do
         if [ -f "$RELEASE_DIR/deploy/systemd/$unit" ]; then
             install -m 0644 "$RELEASE_DIR/deploy/systemd/$unit" "$SYSTEMD_UNIT_DIR/"
         fi
     done
     # 资源上限/加固片段必须装进 drop-in 目录：systemd 不支持 unit 之间 include，
-    # 只有 <unit>.d/*.conf 才会被自动叠加（详见 deploy/selftool-limits.conf 的文件头说明）。
-    if [ -f "$RELEASE_DIR/deploy/systemd/selftool.service.d/limits.conf" ]; then
-        install -d -m 0755 "$SYSTEMD_UNIT_DIR/selftool.service.d"
-        install -m 0644 "$RELEASE_DIR/deploy/systemd/selftool.service.d/limits.conf" \
-            "$SYSTEMD_UNIT_DIR/selftool.service.d/limits.conf"
+    # 只有 <unit>.d/*.conf 才会被自动叠加（详见 deploy/localcraft-limits.conf 的文件头说明）。
+    if [ -f "$RELEASE_DIR/deploy/systemd/localcraft.service.d/limits.conf" ]; then
+        install -d -m 0755 "$SYSTEMD_UNIT_DIR/localcraft.service.d"
+        install -m 0644 "$RELEASE_DIR/deploy/systemd/localcraft.service.d/limits.conf" \
+            "$SYSTEMD_UNIT_DIR/localcraft.service.d/limits.conf"
     else
-        warn "发布包内没有 deploy/systemd/selftool.service.d/limits.conf，跳过 drop-in 安装"
+        warn "发布包内没有 deploy/systemd/localcraft.service.d/limits.conf，跳过 drop-in 安装"
     fi
     # systemd-tmpfiles：声明式创建运行目录与权限；随后立刻 apply 一次，
     # 免得"配置装了但要等下次开机才生效"。
-    if [ -f "$RELEASE_DIR/deploy/selftool.tmpfiles" ]; then
+    if [ -f "$RELEASE_DIR/deploy/localcraft.tmpfiles" ]; then
         install -d -m 0755 "$TMPFILES_DIR"
-        install -m 0644 "$RELEASE_DIR/deploy/selftool.tmpfiles" "$TMPFILES_DIR/selftool.conf"
+        install -m 0644 "$RELEASE_DIR/deploy/localcraft.tmpfiles" "$TMPFILES_DIR/localcraft.conf"
         if command -v systemd-tmpfiles >/dev/null 2>&1; then
-            systemd-tmpfiles --create "$TMPFILES_DIR/selftool.conf" || \
+            systemd-tmpfiles --create "$TMPFILES_DIR/localcraft.conf" || \
                 warn "systemd-tmpfiles --create 返回非零（目录可能已由 install -d 建好），继续"
         fi
     else
-        warn "发布包内没有 deploy/selftool.tmpfiles，跳过 tmpfiles 安装"
+        warn "发布包内没有 deploy/localcraft.tmpfiles，跳过 tmpfiles 安装"
     fi
-    if [ -f "$RELEASE_DIR/deploy/logrotate/selftool" ]; then
-        install -m 0644 "$RELEASE_DIR/deploy/logrotate/selftool" /etc/logrotate.d/selftool
+    if [ -f "$RELEASE_DIR/deploy/logrotate/localcraft" ]; then
+        install -m 0644 "$RELEASE_DIR/deploy/logrotate/localcraft" /etc/logrotate.d/localcraft
     fi
     systemctl daemon-reload
-    systemctl enable selftool.service
-    systemctl restart selftool.service
+    systemctl enable localcraft.service
+    systemctl restart localcraft.service
 else
     # 演练模式：没有 systemd，用 nohup 直接拉起同一个 uvicorn 命令（参数与 unit 一致）
     set -a
     # shellcheck disable=SC1090  # 动态路径 source，shellcheck 无法静态跟踪
     . "$ENV_FILE"
     set +a
-    : > "$LOG_DIR/selftool-stdout.log"
+    : > "$LOG_DIR/localcraft-stdout.log"
     (
         cd "$APP_LINK"
         nohup "$VENV/bin/uvicorn" app.main:app \
-            --host "${SELTOOL_HOST:-127.0.0.1}" \
-            --port "${SELTOOL_PORT:-8000}" \
+            --host "${LOCALCRAFT_HOST:-127.0.0.1}" \
+            --port "${LOCALCRAFT_PORT:-8000}" \
             --workers 1 \
             --proxy-headers \
             --forwarded-allow-ips 127.0.0.1 \
             --timeout-graceful-shutdown 45 \
-            >> "$LOG_DIR/selftool-stdout.log" 2>&1 &
+            >> "$LOG_DIR/localcraft-stdout.log" 2>&1 &
         echo $! > "$PID_FILE"
     )
-    echo "  已启动 uvicorn（PID $(cat "$PID_FILE")），日志 $LOG_DIR/selftool-stdout.log"
+    echo "  已启动 uvicorn（PID $(cat "$PID_FILE")），日志 $LOG_DIR/localcraft-stdout.log"
     echo "  停止：kill \$(cat $PID_FILE)"
 fi
 
 # ------------------------------------------------------------
 log "10/10 启动后验证"
 if "$RELEASE_DIR/scripts/wait-healthy.sh" \
-        --url "http://127.0.0.1:${SELTOOL_PORT:-8000}/readyz" --timeout 90; then
+        --url "http://127.0.0.1:${LOCALCRAFT_PORT:-8000}/readyz" --timeout 90; then
     echo "服务已就绪"
 else
     if [ "$SKIP_SYSTEMD" = "1" ]; then
         echo "--- 最近 40 行应用日志 ---" >&2
-        tail -n 40 "$LOG_DIR/selftool-stdout.log" >&2 || true
+        tail -n 40 "$LOG_DIR/localcraft-stdout.log" >&2 || true
     fi
     die "服务 90 秒内未通过 /readyz"
 fi
@@ -298,27 +298,27 @@ cat <<EOF
 安装完成。接下来还有三件事：
 
 1) 创建超级管理员（密码走交互输入或 --password-stdin，不要用明文参数）
-   sudo -u selftool bash -c '
+   sudo -u localcraft bash -c '
      set -a; . $ENV_FILE; set +a
      cd $APP_LINK
      $VENV/bin/python -m app.cli create-superadmin --username admin --email admin@intra.example.com
    '
 
 2) 配置 nginx（先用 HTTP 快速验证版）
-   install -m 0644 $RELEASE_DIR/deploy/nginx/selftool-http.conf /etc/nginx/conf.d/selftool.conf
+   install -m 0644 $RELEASE_DIR/deploy/nginx/localcraft-http.conf /etc/nginx/conf.d/localcraft.conf
    nginx -t && systemctl reload nginx
 
    验证通过后切生产 TLS（证书放到 $ETC_DIR/tls/）：
-     rm -f /etc/nginx/conf.d/selftool-http.conf
-     install -m 0644 $RELEASE_DIR/deploy/nginx/selftool-limits.conf /etc/nginx/conf.d/selftool-limits.conf
-     install -m 0644 $RELEASE_DIR/deploy/nginx/selftool.conf       /etc/nginx/conf.d/selftool.conf
+     rm -f /etc/nginx/conf.d/localcraft-http.conf
+     install -m 0644 $RELEASE_DIR/deploy/nginx/localcraft-limits.conf /etc/nginx/conf.d/localcraft-limits.conf
+     install -m 0644 $RELEASE_DIR/deploy/nginx/localcraft.conf       /etc/nginx/conf.d/localcraft.conf
      nginx -t && systemctl reload nginx
-   （selftool-http.conf 自带一份 zone/log_format 定义，与 selftool-limits.conf 同名，
+   （localcraft-http.conf 自带一份 zone/log_format 定义，与 localcraft-limits.conf 同名，
      两者不能同时安装，否则 nginx 会因重复定义而启动失败）
 
 3) 验证
-   curl -sS http://127.0.0.1:${SELTOOL_PORT:-8000}/healthz
-   curl -sS http://127.0.0.1:${SELTOOL_PORT:-8000}/readyz
-   curl -sS http://127.0.0.1:${SELTOOL_PORT:-8000}/api/v1/meta
+   curl -sS http://127.0.0.1:${LOCALCRAFT_PORT:-8000}/healthz
+   curl -sS http://127.0.0.1:${LOCALCRAFT_PORT:-8000}/readyz
+   curl -sS http://127.0.0.1:${LOCALCRAFT_PORT:-8000}/api/v1/meta
 ============================================================
 EOF

@@ -1,31 +1,31 @@
 # ============================================================
-# selftool-backup.service — 备份 oneshot 单元
-# 安装位置: /etc/systemd/system/selftool-backup.service
+# localcraft-backup.service — 备份 oneshot 单元
+# 安装位置: /etc/systemd/system/localcraft-backup.service
 # 权限: 0644 root:root
 # 依据: docs/05《部署与运维方案》§8.4
 # ============================================================
 [Unit]
-Description=selftool 数据库一致性备份 + files 增量备份
-Documentation=file:/opt/selftool/app/current/docs/05-部署与运维方案.md
+Description=localcraft 数据库一致性备份 + files 增量备份
+Documentation=file:/opt/localcraft/app/current/docs/05-部署与运维方案.md
 # 备份需要应用处于运行状态（在线备份，走 SQLite Online Backup API）
-After=selftool.service
-Wants=selftool.service
+After=localcraft.service
+Wants=localcraft.service
 
 [Service]
 Type=oneshot
-User=selftool
-Group=selftool
-WorkingDirectory=/opt/selftool/app/current
-EnvironmentFile=/etc/selftool/selftool.env
+User=localcraft
+Group=localcraft
+WorkingDirectory=/opt/localcraft/app/current
+EnvironmentFile=/etc/localcraft/localcraft.env
 # 备份参数可通过环境文件覆盖（docs/05 §8.3 的可配置项）
-Environment=SELTOOL_BACKUP_VACUUM=auto
+Environment=LOCALCRAFT_BACKUP_VACUUM=auto
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=6
 # 备份失败必须非零退出（integrity_check 不过时脚本会 die），供监控发现
-ExecStart=/opt/selftool/scripts/backup.sh
+ExecStart=/opt/localcraft/scripts/backup.sh
 TimeoutStartSec=7200
-SyslogIdentifier=selftool-backup
+SyslogIdentifier=localcraft-backup
 
 # ---------- 安全加固 ----------
 NoNewPrivileges=true
@@ -39,5 +39,5 @@ RestrictSUIDSGID=true
 RestrictRealtime=true
 LockPersonality=true
 # 备份产物写在数据目录内，需要写权限
-ReadWritePaths=/var/lib/selftool
-ReadOnlyPaths=/opt/selftool
+ReadWritePaths=/var/lib/localcraft
+ReadOnlyPaths=/opt/localcraft

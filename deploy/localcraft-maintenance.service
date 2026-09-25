@@ -1,24 +1,24 @@
 # ============================================================
-# selftool-maintenance.service — 数据保留与清理任务的 oneshot 单元
-# 安装位置: /etc/systemd/system/selftool-maintenance.service
+# localcraft-maintenance.service — 数据保留与清理任务的 oneshot 单元
+# 安装位置: /etc/systemd/system/localcraft-maintenance.service
 # 权限: 0644 root:root
-# 依赖文件: /etc/selftool/selftool.env (0640 root:selftool)
+# 依赖文件: /etc/localcraft/localcraft.env (0640 root:localcraft)
 # 依据: docs/02《数据模型设计》§5
 # ============================================================
 [Unit]
-Description=selftool 数据保留与清理任务（docs/02 §5）
-Documentation=file:/opt/selftool/app/current/docs/05-部署与运维方案.md
+Description=localcraft 数据保留与清理任务（docs/02 §5）
+Documentation=file:/opt/localcraft/app/current/docs/05-部署与运维方案.md
 # 清理要读写数据库与 files/，必须等主服务起来（数据库文件与目录已就绪）
-After=selftool.service
-Wants=selftool.service
+After=localcraft.service
+Wants=localcraft.service
 
 [Service]
 Type=oneshot
-User=selftool
-Group=selftool
-WorkingDirectory=/opt/selftool/app/current
-EnvironmentFile=/etc/selftool/selftool.env
-Environment=PYTHONPATH=/opt/selftool/app/current
+User=localcraft
+Group=localcraft
+WorkingDirectory=/opt/localcraft/app/current
+EnvironmentFile=/etc/localcraft/localcraft.env
+Environment=PYTHONPATH=/opt/localcraft/app/current
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONUNBUFFERED=1
 # 清理是 I/O 密集型，降低优先级避免影响在线业务
@@ -27,9 +27,9 @@ IOSchedulingClass=best-effort
 IOSchedulingPriority=6
 # 清理属于破坏性操作，失败不能静默：非零退出会被 systemd 记为 failed，
 # 监控据此告警（journal 里同时留有每项任务的计数明细）
-ExecStart=/opt/selftool/scripts/run-maintenance.sh
+ExecStart=/opt/localcraft/scripts/run-maintenance.sh
 TimeoutStartSec=3600
-SyslogIdentifier=selftool-maintenance
+SyslogIdentifier=localcraft-maintenance
 
 # ---------- 安全加固（与主服务同口径） ----------
 NoNewPrivileges=true
@@ -43,6 +43,6 @@ RestrictSUIDSGID=true
 RestrictRealtime=true
 LockPersonality=true
 # ProtectSystem=strict 下必须显式放开需要写的路径
-ReadWritePaths=/var/lib/selftool
+ReadWritePaths=/var/lib/localcraft
 # 孤儿文件清理需要读整个 files/，ReadOnlyPaths 保证只读部分仍然可读
-ReadOnlyPaths=/opt/selftool
+ReadOnlyPaths=/opt/localcraft

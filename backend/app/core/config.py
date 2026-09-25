@@ -35,17 +35,17 @@ class Settings(BaseSettings):
     )
 
     # ---------- 基础运行参数 ----------
-    selftool_host: str = "127.0.0.1"
-    selftool_port: int = 8000
-    selftool_debug: bool = False
-    selftool_version: str = "1.0.0"
-    selftool_public_base_url: str = "http://127.0.0.1:8000"
+    localcraft_host: str = "127.0.0.1"
+    localcraft_port: int = 8000
+    localcraft_debug: bool = False
+    localcraft_version: str = "1.0.0"
+    localcraft_public_base_url: str = "http://127.0.0.1:8000"
     log_level: str = "INFO"
 
     # ---------- 数据库 ----------
     # SQLite 异步驱动需要四个斜杠表示绝对路径：
-    #   sqlite+aiosqlite:////var/lib/selftool/selftool.db
-    database_url: str = f"sqlite+aiosqlite:///{BASE_DIR / 'var' / 'selftool.db'}"
+    #   sqlite+aiosqlite:////var/lib/localcraft/localcraft.db
+    database_url: str = f"sqlite+aiosqlite:///{BASE_DIR / 'var' / 'localcraft.db'}"
     db_echo: bool = False
     db_pool_size: int = 5
     db_max_overflow: int = 5
@@ -207,7 +207,7 @@ def ensure_runtime_dirs() -> None:
 
     为什么必须有这一步：`alembic upgrade head` 在**服务启动之前**执行
     （docs/02 §6.3），而 SQLite 的 `connect` **不会自动创建父目录** ——
-    全新机器上如果 `backend/var/`（或 `/var/lib/selftool/`）不存在，
+    全新机器上如果 `backend/var/`（或 `/var/lib/localcraft/`）不存在，
     迁移会直接以 `unable to open database file` 失败。
 
     生产环境由 `install.sh` 用 `install -d` 建好目录；开发机没有这一层，

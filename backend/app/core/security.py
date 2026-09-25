@@ -230,14 +230,14 @@ def constant_time_equals(a: str, b: str) -> bool:
 # 是标准做法。
 #
 # 这里用 HKDF-SHA256（RFC 5869）的 extract+expand 两步，不引入额外依赖。
-_HKDF_SALT = b"selftool-hkdf-v1"
+_HKDF_SALT = b"localcraft-hkdf-v1"
 
 
 def derive_subkey(purpose: str, *, length: int = 32) -> bytes:
     """由 SECRET_KEY 派生用途隔离的子密钥（HKDF-SHA256）。"""
     ikm = settings.secret_key.encode("utf-8")
     prk = hmac.new(_HKDF_SALT, ikm, hashlib.sha256).digest()
-    info = f"selftool:{purpose}".encode()
+    info = f"localcraft:{purpose}".encode()
     okm = b""
     block = b""
     counter = 1

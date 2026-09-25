@@ -39,7 +39,7 @@ async function apiJson<T>(
 }
 
 async function makeTempFile(name: string, content: string): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "selftool-m2-"));
+  const dir = await mkdtemp(join(tmpdir(), "localcraft-m2-"));
   const filePath = join(dir, name);
   await writeFile(filePath, content);
   return filePath;
@@ -71,7 +71,7 @@ test.describe("M2 · 个人中心与编辑器", () => {
     await fillRequiredFields(page, name);
 
     // 类型保持默认（文件包），选一个真实文件
-    const filePath = await makeTempFile("e2e-pkg.txt", "selftool m2 e2e payload\n");
+    const filePath = await makeTempFile("e2e-pkg.txt", "localcraft m2 e2e payload\n");
     await page.setInputFiles("#version-content-file", filePath);
     await expect(page.getByText("e2e-pkg.txt").first()).toBeVisible();
 

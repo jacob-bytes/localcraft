@@ -31,7 +31,7 @@ E2E 过程中你修掉的 7 个真实缺陷（尤其 FormControl 的 id 覆盖�
 
 **特别说明**：`contracts/acceptance/real-backend-check.cjs` 是监控方的验收脚本，**不要修改它**。
 
-不执行任何 git 命令。工作目录：`/Users/jlthzy/Documents/selftool`
+不执行任何 git 命令。工作目录：`/Users/jlthzy/Documents/localcraft`
 
 ---
 

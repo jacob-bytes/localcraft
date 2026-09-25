@@ -427,7 +427,7 @@ def test_env_var_aliases_for_token_ttl() -> None:
     """docs/05 §5.4 用 ACCESS_TOKEN_EXPIRE_MINUTES，任务书用 ACCESS_TOKEN_MINUTES。
 
     两个名字都要认（AliasChoices），否则按 docs/05 生成的
-    /etc/selftool/selftool.env 会被静默忽略。
+    /etc/localcraft/localcraft.env 会被静默忽略。
     """
     from app.core.config import Settings
 

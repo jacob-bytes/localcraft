@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# scripts/rollback.sh — selftool 回滚封装
+# scripts/rollback.sh — localcraft 回滚封装
 #
 # 对应 docs/05 §11.4 的三种情况：
 #   情况 A：只换了代码与前端，未执行数据库迁移 —— 只切软链 + 回退依赖，最安全
@@ -16,30 +16,30 @@
 # 用法:
 #   rollback.sh --list                       # 列出可回滚的 release 与当前软链
 #   rollback.sh                              # 切回 current 之外的最近一个 release
-#   rollback.sh --to selftool-0.9.0          # 按版本名
-#   rollback.sh --to /opt/selftool/releases/selftool-0.9.0
-#   rollback.sh --restore-db /var/lib/selftool/backups/db/pre-upgrade-1.0.0-<时间戳>.db --yes
+#   rollback.sh --to localcraft-0.9.0          # 按版本名
+#   rollback.sh --to /opt/localcraft/releases/localcraft-0.9.0
+#   rollback.sh --restore-db /var/lib/localcraft/backups/db/pre-upgrade-1.0.0-<时间戳>.db --yes
 #   rollback.sh --dry-run                    # 只打印将执行的步骤
 #
 # 依据: docs/05《部署与运维方案》§11.4（回滚流程）、§11.5（升级回滚对照表）
 # ============================================================
 set -uo pipefail
 
-PREFIX="${SELTOOL_PREFIX:-/opt/selftool}"
-DATA_DIR="${SELTOOL_DATA_DIR:-/var/lib/selftool}"
-ETC_DIR="${SELTOOL_ETC_DIR:-/etc/selftool}"
-LOG_DIR="${SELTOOL_LOG_DIR:-/var/log/selftool}"
+PREFIX="${LOCALCRAFT_PREFIX:-/opt/localcraft}"
+DATA_DIR="${LOCALCRAFT_DATA_DIR:-/var/lib/localcraft}"
+ETC_DIR="${LOCALCRAFT_ETC_DIR:-/etc/localcraft}"
+LOG_DIR="${LOCALCRAFT_LOG_DIR:-/var/log/localcraft}"
 
-ENV_FILE="$ETC_DIR/selftool.env"
+ENV_FILE="$ETC_DIR/localcraft.env"
 VENV="$PREFIX/venv"
 APP_LINK="$PREFIX/app/current"
 RELEASES_DIR="$PREFIX/releases"
 SCRIPTS_DIR="$PREFIX/scripts"
-DB_FILE="${SELTOOL_DB:-$DATA_DIR/selftool.db}"
-PID_FILE="$DATA_DIR/selftool.pid"
-HEALTH_URL="http://127.0.0.1:${SELTOOL_PORT:-8000}/readyz"
+DB_FILE="${LOCALCRAFT_DB:-$DATA_DIR/localcraft.db}"
+PID_FILE="$DATA_DIR/localcraft.pid"
+HEALTH_URL="http://127.0.0.1:${LOCALCRAFT_PORT:-8000}/readyz"
 
-SKIP_SYSTEMD="${SELTOOL_SKIP_SYSTEMD:-0}"
+SKIP_SYSTEMD="${LOCALCRAFT_SKIP_SYSTEMD:-0}"
 TARGET=""
 ASSUME_YES=0
 DRY_RUN=0
@@ -143,7 +143,7 @@ if [ "$LIST_ONLY" -eq 1 ]; then
 fi
 
 if [ "$SKIP_SYSTEMD" = "1" ]; then
-    warn "SELTOOL_SKIP_SYSTEMD=1 —— 演练模式：不调用 systemctl，改用 pid 文件 + nohup 拉起服务"
+    warn "LOCALCRAFT_SKIP_SYSTEMD=1 —— 演练模式：不调用 systemctl，改用 pid 文件 + nohup 拉起服务"
 elif [ "$DRY_RUN" -eq 0 ]; then
     [ "$(id -u)" -eq 0 ] || die "请以 root 执行"
 fi
@@ -185,9 +185,9 @@ CURRENT_VERSION="$(cat "$APP_LINK/VERSION" 2>/dev/null || echo unknown)"
 # 升级日志（与 upgrade.sh 同目录，便于把一次升级 + 回滚串起来看）
 if [ "$DRY_RUN" -eq 0 ]; then
     if [ -d "$LOG_DIR" ] && [ -w "$LOG_DIR" ]; then
-        LOG="$LOG_DIR/selftool-rollback-${STAMP}.log"
+        LOG="$LOG_DIR/localcraft-rollback-${STAMP}.log"
     else
-        LOG="/tmp/selftool-rollback-${STAMP}.log"
+        LOG="/tmp/localcraft-rollback-${STAMP}.log"
     fi
     exec > >(tee -a "$LOG") 2>&1
 fi
@@ -223,7 +223,7 @@ DB_REV="$(sqlite3 "$DB_FILE" 'SELECT version_num FROM alembic_version;' 2>/dev/n
 DB_REV="${DB_REV:-unknown}"
 
 echo "============================================================"
-echo "selftool 回滚"
+echo "localcraft 回滚"
 echo "  从版本     : ${CURRENT_VERSION}（${CURRENT_LINK}）"
 echo "  回滚到     : ${TARGET_VERSION}（${TARGET}）"
 echo "  数据库版本 : ${DB_REV}"
@@ -305,7 +305,7 @@ if [ "$SKIP_SYSTEMD" = "1" ]; then
         done
     fi
 else
-    run systemctl stop selftool.service || warn "systemctl stop 返回非零（服务可能本就没在跑），继续"
+    run systemctl stop localcraft.service || warn "systemctl stop 返回非零（服务可能本就没在跑），继续"
     if command -v pgrep >/dev/null 2>&1; then
         if pgrep -f 'uvicorn app.main:app' >/dev/null 2>&1; then
             [ "$DRY_RUN" -eq 1 ] || sleep 3
@@ -415,32 +415,32 @@ if [ "$SKIP_SYSTEMD" = "1" ]; then
             mkdir -p "$LOG_DIR"
             cd "$APP_LINK" || exit 1
             nohup "$VENV/bin/uvicorn" app.main:app \
-                --host "${SELTOOL_HOST:-127.0.0.1}" \
-                --port "${SELTOOL_PORT:-8000}" \
+                --host "${LOCALCRAFT_HOST:-127.0.0.1}" \
+                --port "${LOCALCRAFT_PORT:-8000}" \
                 --workers 1 \
                 --proxy-headers \
                 --forwarded-allow-ips 127.0.0.1 \
                 --timeout-graceful-shutdown 45 \
-                >> "$LOG_DIR/selftool-stdout.log" 2>&1 &
+                >> "$LOG_DIR/localcraft-stdout.log" 2>&1 &
             echo $! > "$PID_FILE"
         )
         info "已用 nohup 拉起（PID $(cat "$PID_FILE" 2>/dev/null || echo '?')）"
     fi
 else
-    run systemctl start selftool.service || die "systemctl start 失败"
+    run systemctl start localcraft.service || die "systemctl start 失败"
 fi
 
 if [ "$DRY_RUN" -eq 1 ]; then
     printf '[rollback] $ %s/wait-healthy.sh --url %s --timeout 60\n' "$SCRIPTS_DIR" "$HEALTH_URL"
 else
     "$SCRIPTS_DIR/wait-healthy.sh" --url "$HEALTH_URL" --timeout 60 \
-        || die "服务 60 秒内未通过 ${HEALTH_URL}，请看 ${LOG} 与 journalctl -u selftool.service -n 100"
+        || die "服务 60 秒内未通过 ${HEALTH_URL}，请看 ${LOG} 与 journalctl -u localcraft.service -n 100"
 fi
 
 # ------------------------------------------------------------
 log "7/7 回滚结果"
 if [ "$DRY_RUN" -eq 0 ] && command -v curl >/dev/null 2>&1; then
-    META="$(curl -fsS --max-time 5 "http://127.0.0.1:${SELTOOL_PORT:-8000}/api/v1/meta" 2>/dev/null || true)"
+    META="$(curl -fsS --max-time 5 "http://127.0.0.1:${LOCALCRAFT_PORT:-8000}/api/v1/meta" 2>/dev/null || true)"
     if [ -n "$META" ]; then
         if command -v jq >/dev/null 2>&1; then
             printf '%s\n' "$META" | jq . || printf '%s\n' "$META"

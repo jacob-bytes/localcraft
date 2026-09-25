@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# scripts/upgrade.sh — selftool 升级封装
+# scripts/upgrade.sh — localcraft 升级封装
 #
 # 流程（docs/05 §11.2 的 9 步）:
 #   1) 停服务
@@ -29,23 +29,23 @@
 set -uo pipefail
 
 # ---------- 路径（与 install.sh 同一套变量名与默认值）----------
-PREFIX="${SELTOOL_PREFIX:-/opt/selftool}"
-DATA_DIR="${SELTOOL_DATA_DIR:-/var/lib/selftool}"
-ETC_DIR="${SELTOOL_ETC_DIR:-/etc/selftool}"
-LOG_DIR="${SELTOOL_LOG_DIR:-/var/log/selftool}"
+PREFIX="${LOCALCRAFT_PREFIX:-/opt/localcraft}"
+DATA_DIR="${LOCALCRAFT_DATA_DIR:-/var/lib/localcraft}"
+ETC_DIR="${LOCALCRAFT_ETC_DIR:-/etc/localcraft}"
+LOG_DIR="${LOCALCRAFT_LOG_DIR:-/var/log/localcraft}"
 
-ENV_FILE="$ETC_DIR/selftool.env"
+ENV_FILE="$ETC_DIR/localcraft.env"
 VENV="$PREFIX/venv"
 APP_LINK="$PREFIX/app/current"
 RELEASES_DIR="$PREFIX/releases"
 SCRIPTS_DIR="$PREFIX/scripts"
-BACKUP_ROOT="${SELTOOL_BACKUP_DIR:-$DATA_DIR/backups}"
-DB_FILE="${SELTOOL_DB:-$DATA_DIR/selftool.db}"
-FILES_DIR="${SELTOOL_FILES_DIR:-$DATA_DIR/files}"
-PID_FILE="$DATA_DIR/selftool.pid"
-HEALTH_URL="http://127.0.0.1:${SELTOOL_PORT:-8000}/readyz"
+BACKUP_ROOT="${LOCALCRAFT_BACKUP_DIR:-$DATA_DIR/backups}"
+DB_FILE="${LOCALCRAFT_DB:-$DATA_DIR/localcraft.db}"
+FILES_DIR="${LOCALCRAFT_FILES_DIR:-$DATA_DIR/files}"
+PID_FILE="$DATA_DIR/localcraft.pid"
+HEALTH_URL="http://127.0.0.1:${LOCALCRAFT_PORT:-8000}/readyz"
 
-SKIP_SYSTEMD="${SELTOOL_SKIP_SYSTEMD:-0}"
+SKIP_SYSTEMD="${LOCALCRAFT_SKIP_SYSTEMD:-0}"
 ASSUME_YES=0
 DRY_RUN=0
 SKIP_MIGRATE=0
@@ -86,7 +86,7 @@ done
 [ -f "$TARBALL" ] || die "发布包不存在: ${TARBALL}"
 
 if [ "$SKIP_SYSTEMD" = "1" ]; then
-    warn "SELTOOL_SKIP_SYSTEMD=1 —— 演练模式：不调用 systemctl，改用 pid 文件 + nohup 拉起服务"
+    warn "LOCALCRAFT_SKIP_SYSTEMD=1 —— 演练模式：不调用 systemctl，改用 pid 文件 + nohup 拉起服务"
 elif [ "$DRY_RUN" -eq 0 ]; then
     [ "$(id -u)" -eq 0 ] || die "请以 root 执行"
 fi
@@ -137,21 +137,21 @@ PREV_REV="$(sqlite3 "$DB_FILE" 'SELECT version_num FROM alembic_version;' 2>/dev
 # 备份/回滚提示都依赖这两个变量，先算出来
 BACKUP_DB="$BACKUP_ROOT/db/pre-upgrade-${PREV_VERSION}-${STAMP}.db"
 BACKUP_FILES="$BACKUP_ROOT/files/pre-upgrade-${PREV_VERSION}-${STAMP}"
-BACKUP_ENV="$BACKUP_ROOT/pre-upgrade-selftool-${STAMP}.env"
+BACKUP_ENV="$BACKUP_ROOT/pre-upgrade-localcraft-${STAMP}.env"
 
 # 升级日志：只有真正动手时才落盘（dry-run 不该在 /var/log 留文件）
 LOG="(未启用)"
 if [ "$DRY_RUN" -eq 0 ]; then
     if [ -d "$LOG_DIR" ] && [ -w "$LOG_DIR" ]; then
-        LOG="$LOG_DIR/selftool-upgrade-${STAMP}.log"
+        LOG="$LOG_DIR/localcraft-upgrade-${STAMP}.log"
     else
-        LOG="/tmp/selftool-upgrade-${STAMP}.log"
+        LOG="/tmp/localcraft-upgrade-${STAMP}.log"
     fi
     exec > >(tee -a "$LOG") 2>&1
 fi
 
 echo "============================================================"
-echo "selftool 升级"
+echo "localcraft 升级"
 echo "  当前版本   : ${PREV_VERSION}"
 echo "  当前代码   : ${PREV_LINK}"
 echo "  当前迁移版本: ${PREV_REV:-（读不到，可能是空库）}"
@@ -168,7 +168,7 @@ NEW_DIR="$RELEASES_DIR/$TOP"
 
 # 从包里直接读 VERSION / RELEASE-NOTES，无需解压
 NEW_VERSION="$(tar -xzOf "$TARBALL" "${TOP}/VERSION" 2>/dev/null | head -n1 || true)"
-[ -n "$NEW_VERSION" ] || NEW_VERSION="${TOP#selftool-}"
+[ -n "$NEW_VERSION" ] || NEW_VERSION="${TOP#localcraft-}"
 
 NOTES_TMP=""
 if [ -n "$NOTES_OVERRIDE" ]; then
@@ -177,7 +177,7 @@ elif tar -tzf "$TARBALL" 2>/dev/null | grep -qx "${TOP}/RELEASE-NOTES.md"; then
     # 即使 dry-run 也真的把 RELEASE-NOTES.md 抽到 /tmp 再判定：
     # 「是否含迁移」是决定这次升级能不能只做 dry-run 的关键信息，
     # 只写一句"将会读取"等于没判定。写 /tmp 的临时文件不属于改动系统。
-    NOTES_TMP="${TMPDIR:-/tmp}/selftool-notes-${STAMP}.md"
+    NOTES_TMP="${TMPDIR:-/tmp}/localcraft-notes-${STAMP}.md"
     tar -xzOf "$TARBALL" "${TOP}/RELEASE-NOTES.md" > "$NOTES_TMP" 2>/dev/null || NOTES_TMP=""
     NOTES_FILE="$NOTES_TMP"
 else
@@ -263,10 +263,10 @@ rollback_hint() {
 升级未完成。**脚本不会自动回滚**，请按下面的顺序处置：
 
  1) 停服务
-      systemctl stop selftool.service
+      systemctl stop localcraft.service
 
  2) 查看失败点（先别急着回滚，很多问题看一眼日志就能修）
-      journalctl -u selftool.service -n 200 --no-pager
+      journalctl -u localcraft.service -n 200 --no-pager
       ${LOG}
 
  3) 回滚代码（自动选上一个 release；也可显式 --to）
@@ -277,7 +277,7 @@ rollback_hint() {
       ${SCRIPTS_DIR}/restore.sh --db ${BACKUP_DB} --files ${BACKUP_FILES} --yes
 
  5) 起服务并确认
-      systemctl start selftool.service
+      systemctl start localcraft.service
       ${SCRIPTS_DIR}/wait-healthy.sh --url ${HEALTH_URL} --timeout 90
 
  升级前状态：版本 ${PREV_VERSION}，代码 ${PREV_LINK}，迁移 ${PREV_REV:-未知}
@@ -306,7 +306,7 @@ stop_service() {
         fi
         return 0
     fi
-    run systemctl stop selftool.service || warn "systemctl stop 返回非零（服务可能本就没在跑），继续"
+    run systemctl stop localcraft.service || warn "systemctl stop 返回非零（服务可能本就没在跑），继续"
     # 确认进程真的退出了：文件句柄若仍被占用，后面切软链/装依赖会出怪问题
     if command -v pgrep >/dev/null 2>&1; then
         if pgrep -f 'uvicorn app.main:app' >/dev/null 2>&1; then
@@ -338,7 +338,7 @@ run rsync -a --delete "$FILES_DIR/" "$BACKUP_FILES/" || fail "files 目录备份
 run install -m 0600 "$ENV_FILE" "$BACKUP_ENV" || fail "环境变量文件备份失败"
 # 2.4 journal 尾部（升级前最后的现场，出问题时能对照"升级前是否已经不正常"）
 if command -v journalctl >/dev/null 2>&1; then
-    run sh -c "journalctl -u selftool.service -n 200 --no-pager > '${BACKUP_ROOT}/pre-upgrade-journal-${STAMP}.log' 2>/dev/null" \
+    run sh -c "journalctl -u localcraft.service -n 200 --no-pager > '${BACKUP_ROOT}/pre-upgrade-journal-${STAMP}.log' 2>/dev/null" \
         || warn "journalctl 导出失败（不影响升级）"
 fi
 info "备份完成：${BACKUP_ROOT}"
@@ -469,19 +469,19 @@ start_service() {
             mkdir -p "$LOG_DIR"
             cd "$APP_LINK" || exit 1
             nohup "$VENV/bin/uvicorn" app.main:app \
-                --host "${SELTOOL_HOST:-127.0.0.1}" \
-                --port "${SELTOOL_PORT:-8000}" \
+                --host "${LOCALCRAFT_HOST:-127.0.0.1}" \
+                --port "${LOCALCRAFT_PORT:-8000}" \
                 --workers 1 \
                 --proxy-headers \
                 --forwarded-allow-ips 127.0.0.1 \
                 --timeout-graceful-shutdown 45 \
-                >> "$LOG_DIR/selftool-stdout.log" 2>&1 &
+                >> "$LOG_DIR/localcraft-stdout.log" 2>&1 &
             echo $! > "$PID_FILE"
         )
         info "已用 nohup 拉起（PID $(cat "$PID_FILE" 2>/dev/null || echo '?')）"
         return 0
     fi
-    run systemctl start selftool.service || fail "systemctl start 失败"
+    run systemctl start localcraft.service || fail "systemctl start 失败"
     return 0
 }
 start_service || exit 1
@@ -496,11 +496,11 @@ fi
 # ------------------------------------------------------------
 log "8/9 结果验证"
 if [ "$DRY_RUN" -eq 1 ]; then
-    printf '[upgrade] $ curl -fsS http://127.0.0.1:%s/api/v1/meta\n' "${SELTOOL_PORT:-8000}"
+    printf '[upgrade] $ curl -fsS http://127.0.0.1:%s/api/v1/meta\n' "${LOCALCRAFT_PORT:-8000}"
     echo '[upgrade] $ curl -o /dev/null -w "经 nginx /healthz HTTP %%{http_code}" http://127.0.0.1/healthz'
 else
     if command -v curl >/dev/null 2>&1; then
-        META="$(curl -fsS --max-time 5 "http://127.0.0.1:${SELTOOL_PORT:-8000}/api/v1/meta" 2>/dev/null || true)"
+        META="$(curl -fsS --max-time 5 "http://127.0.0.1:${LOCALCRAFT_PORT:-8000}/api/v1/meta" 2>/dev/null || true)"
         if [ -n "$META" ]; then
             if command -v jq >/dev/null 2>&1; then
                 printf '%s\n' "$META" | jq . || printf '%s\n' "$META"
@@ -530,8 +530,8 @@ echo "  日志    : ${LOG}"
 echo
 echo "  旧版本目录仍保留在 ${PREV_LINK}（确认稳定后再清理）"
 echo "  观察 10 分钟后，确认无误再清理过老版本："
-echo "      ls -1dt ${RELEASES_DIR}/selftool-* | tail -n +4   # 先看要删哪些"
-echo "      ls -1dt ${RELEASES_DIR}/selftool-* | tail -n +4 | xargs -r rm -rf"
+echo "      ls -1dt ${RELEASES_DIR}/localcraft-* | tail -n +4   # 先看要删哪些"
+echo "      ls -1dt ${RELEASES_DIR}/localcraft-* | tail -n +4 | xargs -r rm -rf"
 echo "  升级前备份保留在 ${BACKUP_ROOT}（至少留到观察期结束）"
 echo
 echo "============================================================"

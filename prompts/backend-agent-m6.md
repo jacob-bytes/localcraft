@@ -16,7 +16,7 @@ A1 图片签名、A2~A4 种子、B 死桩修复、C psycopg、D2 storage_warning
 
 - **`docs/05` §5.10 的 disk-alert service 缺 `EnvironmentFile`** —— 照原文部署会让外部告警命令
   **永不执行**。这是真缺陷
-- **旧 `make-release.sh` 不打包 `selftool-backup.*` / `selftool-maintenance.*`**，
+- **旧 `make-release.sh` 不打包 `localcraft-backup.*` / `localcraft-maintenance.*`**，
   而 `install.sh` 用 `[ -f ]` 静默跳过 → **按旧脚本产出的发布包装完没有定时备份，且安装当天看不出来**。
   发现并修掉这个「静默跳过导致功能缺失」很有价值
 - **CSV 列那条你特别核实后确认「实现是对的」** —— 导出绝不能带明文口令。这是「实现比文档正确」的
@@ -38,7 +38,7 @@ A1 图片签名、A2~A4 种子、B 死桩修复、C psycopg、D2 storage_warning
 不执行任何 git 命令，**包括 `git status`**。委派子 agent 时在提示里显式写明这一条，
 并对其产出做一次越界复核。
 
-工作目录：`/Users/jlthzy/Documents/selftool`
+工作目录：`/Users/jlthzy/Documents/localcraft`
 
 ---
 
@@ -158,10 +158,10 @@ revoke 后同一 Token: 仍可用!     ← 缺陷
 ### J-6. 两处注释/docstring 同步（各 1 行）
 
 - ~~`app/services/tool_service.py` 的 facets 注释~~ —— **监控方在实施 O3 时已顺手修正**，本项无需再做
-- `app/cli.py` 的 `gc-versions` docstring 仍需改（引用已删除的 `selftool-gc.*`）
-- `app/cli.py` 的 `gc-versions` docstring：仍在引用 `selftool-gc.*`
-  （该 unit 已判定为与 `selftool-maintenance.*` 重复而删除）。改为引用
-  `selftool-maintenance.timer`
+- `app/cli.py` 的 `gc-versions` docstring 仍需改（引用已删除的 `localcraft-gc.*`）
+- `app/cli.py` 的 `gc-versions` docstring：仍在引用 `localcraft-gc.*`
+  （该 unit 已判定为与 `localcraft-maintenance.*` 重复而删除）。改为引用
+  `localcraft-maintenance.timer`
 
 ### J-7. `GET /api/v1/admin/groups` 的删除影响面补 `slug`（M5 漏做）
 

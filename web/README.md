@@ -1,4 +1,4 @@
-# selftool web（前端）
+# localcraft web（前端）
 
 内网工具 / Skill 共享平台的前端。技术栈与目录约定见 `docs/04-前端页面与交互清单.md`，
 与后端的接口约定见 `contracts/CONTRACT.md`（M1 裁决在 §14，M2 接口清单在 §6.1）。

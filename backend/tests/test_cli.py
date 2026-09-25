@@ -370,7 +370,7 @@ def test_alembic_creates_missing_parent_directory(tmp_path) -> None:
     没修之前，在干净仓库上执行 `alembic upgrade head` 会直接报
     `unable to open database file` —— 必须由 `ensure_runtime_dirs()` 兜住。
     """
-    nested_db = tmp_path / "not" / "created" / "yet" / "selftool.db"
+    nested_db = tmp_path / "not" / "created" / "yet" / "localcraft.db"
     assert not nested_db.parent.exists()
 
     data_dir = tmp_path / "also-missing-data-dir"

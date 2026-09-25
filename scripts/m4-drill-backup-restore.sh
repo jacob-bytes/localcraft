@@ -24,18 +24,18 @@ PORT="${1:-8000}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BACKEND="$ROOT/backend"
-SANDBOX="${SELTOOL_DRILL_SANDBOX:-$BACKEND/dist/drill}"
+SANDBOX="${LOCALCRAFT_DRILL_SANDBOX:-$BACKEND/dist/drill}"
 RELEASE_DIR="$(find "$SANDBOX/releases" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | head -1)"
 
 VPY="$SANDBOX/opt/venv/bin/python"
 VDATA="$SANDBOX/var"
-VENVF="$SANDBOX/etc/selftool.env"
+VENVF="$SANDBOX/etc/localcraft.env"
 BASE="http://127.0.0.1:${PORT}"
-export SELTOOL_DATA_DIR="$VDATA"
-export SELTOOL_BACKUP_DIR="$VDATA/backups"
-export SELTOOL_BACKUP_VACUUM=false      # 演练固定走 .backup 路径
-export SELTOOL_BACKUP_GZIP=false
-export SELTOOL_BACKUP_MIN_FREE_MB=10    # 沙箱盘余量有限，门槛调低
+export LOCALCRAFT_DATA_DIR="$VDATA"
+export LOCALCRAFT_BACKUP_DIR="$VDATA/backups"
+export LOCALCRAFT_BACKUP_VACUUM=false      # 演练固定走 .backup 路径
+export LOCALCRAFT_BACKUP_GZIP=false
+export LOCALCRAFT_BACKUP_MIN_FREE_MB=10    # 沙箱盘余量有限，门槛调低
 
 log()  { printf '\n\033[1;32m==> %s\033[0m\n' "$*"; }
 step() { printf '\n\033[1m--- %s ---\033[0m\n' "$*"; }
@@ -54,16 +54,16 @@ start_service() {
     set +a
     ( cd "$SANDBOX/opt/app/current"
       nohup "$VPY" -m uvicorn app.main:app --host 127.0.0.1 --port "$PORT" --workers 1 \
-          >> "$SANDBOX/log/selftool-stdout.log" 2>&1 &
-      echo $! > "$VDATA/selftool.pid" )
+          >> "$SANDBOX/log/localcraft-stdout.log" 2>&1 &
+      echo $! > "$VDATA/localcraft.pid" )
     "$RELEASE_DIR/scripts/wait-healthy.sh" --url "${BASE}/readyz" --timeout 60 >/dev/null \
         || die "服务起不来"
 }
 stop_service() {
-    if [ -f "$VDATA/selftool.pid" ] && kill -0 "$(cat "$VDATA/selftool.pid")" 2>/dev/null; then
-        kill "$(cat "$VDATA/selftool.pid")" 2>/dev/null || true
+    if [ -f "$VDATA/localcraft.pid" ] && kill -0 "$(cat "$VDATA/localcraft.pid")" 2>/dev/null; then
+        kill "$(cat "$VDATA/localcraft.pid")" 2>/dev/null || true
         for _ in $(seq 1 30); do
-            kill -0 "$(cat "$VDATA/selftool.pid")" 2>/dev/null || break
+            kill -0 "$(cat "$VDATA/localcraft.pid")" 2>/dev/null || break
             sleep 1
         done
     fi
@@ -75,7 +75,7 @@ log "1) 准备沙箱环境与超级管理员"
 # ===========================================================================
 log "重建沙箱（保证从零开始，不与上一次演练串味）"
 stop_service
-SELTOOL_PYTHON311="${SELTOOL_PYTHON311:-$BACKEND/.venv/bin/python}" \
+LOCALCRAFT_PYTHON311="${LOCALCRAFT_PYTHON311:-$BACKEND/.venv/bin/python}" \
     "$SCRIPT_DIR/m4-drill-install.sh" "$PORT" >/dev/null 2>&1 \
     || die "沙箱重建失败，请单独运行 scripts/m4-drill-install.sh 看详细输出"
 ok "沙箱就绪"
@@ -144,7 +144,7 @@ ok "下载成功，SHA256=${ORIG_SHA:0:16}…"
 # 所以这里必须等过一个 flush 周期，否则会看到 download_logs=0 而误判成功能坏了。
 # 轮询等待，最多 45s。不要写死 sleep：flush 周期是 30s，
 # 写小了会看到 download_logs=0 而误判成功能坏了（第一次就踩了这个坑）。
-TB_WAIT="$VDATA/selftool.db"
+TB_WAIT="$VDATA/localcraft.db"
 for i in $(seq 1 45); do
     N="$(sqlite3 "$TB_WAIT" 'SELECT COUNT(*) FROM download_logs;' 2>/dev/null || echo 0)"
     [ "$N" -ge 1 ] 2>/dev/null && break
@@ -153,7 +153,7 @@ done
 ok "下载明细已批量落库（等待 ${i}s，flush 周期 30s）"
 
 step "记录破坏前的基线（行数 + 磁盘文件清单）"
-TB="$VDATA/selftool.db"
+TB="$VDATA/localcraft.db"
 count_of() { sqlite3 "$TB" "SELECT COUNT(*) FROM $1;" 2>/dev/null || echo '?'; }
 BASE_USERS="$(count_of users)"; BASE_TOOLS="$(count_of tools)"
 BASE_VERS="$(count_of tool_versions)"; BASE_DL="$(count_of download_logs)"
@@ -169,13 +169,13 @@ printf '  files 目录文件数=%s\n' "$FILES_N"
 log "3) 跑 backup.sh"
 # ===========================================================================
 step "备份前的 WAL 状态（用于说明 -wal/-shm 的处理）"
-ls -la "$VDATA"/selftool.db* 2>/dev/null | sed 's/^/  /'
+ls -la "$VDATA"/localcraft.db* 2>/dev/null | sed 's/^/  /'
 "$SCRIPT_DIR/backup.sh" 2>&1 | sed 's/^/  /'
 [ "${PIPESTATUS[0]}" -eq 0 ] || die "backup.sh 非零退出"
 
 step "备份产物"
-find "$VDATA/backups" -maxdepth 2 -name 'selftool-*.db*' -o -maxdepth 2 -name '*.meta' | sort | sed 's/^/  /'
-DB_BACKUP="$(find "$VDATA/backups/db" -name 'selftool-*.db' | sort | tail -1)"
+find "$VDATA/backups" -maxdepth 2 -name 'localcraft-*.db*' -o -maxdepth 2 -name '*.meta' | sort | sed 's/^/  /'
+DB_BACKUP="$(find "$VDATA/backups/db" -name 'localcraft-*.db' | sort | tail -1)"
 [ -n "$DB_BACKUP" ] || die "没有产出数据库快照"
 ok "数据库快照: $(basename "$DB_BACKUP") ($(du -h "$DB_BACKUP" | cut -f1))"
 
@@ -278,7 +278,7 @@ CORRUPT_DIR="$SANDBOX/corrupt"
 rm -rf "$CORRUPT_DIR"; mkdir -p "$CORRUPT_DIR/db" "$CORRUPT_DIR/files"
 cp "$DB_BACKUP" "$CORRUPT_DIR/db/"
 cp "${DB_BACKUP}.meta" "$CORRUPT_DIR/db/"
-CORRUPT_DB="$(find "$CORRUPT_DIR/db" -name 'selftool-*.db' | head -1)"
+CORRUPT_DB="$(find "$CORRUPT_DIR/db" -name 'localcraft-*.db' | head -1)"
 python3 - "$CORRUPT_DB" <<'PYEOF'
 import sys, os
 p = sys.argv[1]
@@ -295,7 +295,7 @@ PYEOF
 # files 也拿走，制造「备份不完整」
 rm -rf "$CORRUPT_DIR/files"
 set +e
-SELTOOL_BACKUP_DIR="$CORRUPT_DIR" "$SCRIPT_DIR/verify-backup.sh" 2>&1 | tail -22 | sed 's/^/  /'
+LOCALCRAFT_BACKUP_DIR="$CORRUPT_DIR" "$SCRIPT_DIR/verify-backup.sh" 2>&1 | tail -22 | sed 's/^/  /'
 CORRUPT_RC="${PIPESTATUS[0]}"
 set -e
 if [ "$CORRUPT_RC" -ne 0 ]; then ok "verify-backup.sh 正确检出损坏的备份（退出码 ${CORRUPT_RC}）"

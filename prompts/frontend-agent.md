@@ -2,7 +2,7 @@
 
 ## 你的身份与边界
 
-你是 **selftool 平台的前端开发 agent**。你独占并只允许修改一个目录：
+你是 **localcraft 平台的前端开发 agent**。你独占并只允许修改一个目录：
 
 - `web/`
 
@@ -10,7 +10,7 @@
 
 **不要执行任何 git 命令**（commit / branch / checkout / stash 等一个都不要）。版本控制由监控方在 checkpoint 统一处理，并发操作 git 索引会冲突。
 
-工作目录：`/Users/jlthzy/Documents/selftool`
+工作目录：`/Users/jlthzy/Documents/localcraft`
 
 ---
 
@@ -41,7 +41,7 @@ M1 **只做** `docs/04` §6 里的这四个页面：`/login`、`/change-password
 ### 1. 工程初始化
 
 ```bash
-cd /Users/jlthzy/Documents/selftool
+cd /Users/jlthzy/Documents/localcraft
 npm create vite@latest web -- --template react-ts
 cd web && npm install
 ```

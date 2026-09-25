@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# scripts/precheck.sh — selftool 安装前环境自检
+# scripts/precheck.sh — localcraft 安装前环境自检
 # 来源: docs/05《部署与运维方案》§2.6
 # 用法: ./precheck.sh
 # 退出码: 0 = 无 FAIL 项（WARN 需人工确认）；1 = 存在 FAIL 项
@@ -15,7 +15,7 @@ err()  { echo "[ FAIL ] $*"; FAIL=1; }
 # `date -Is` 是 GNU 扩展，macOS/BSD 的 date 不认。用可移植写法。
 now_iso() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
 
-echo "=== selftool 前置条件自检 ==="
+echo "=== localcraft 前置条件自检 ==="
 echo "时间: $(now_iso)"
 echo
 
@@ -80,7 +80,7 @@ for c in semanage restorecon setsebool firewall-cmd jq logrotate; do
 done
 
 # 8) 目录可写性
-for d in /etc/selftool /var/lib/selftool /opt; do
+for d in /etc/localcraft /var/lib/localcraft /opt; do
     if [ -d "$d" ]; then
         ok "目录已存在: $d"
     elif [ -w "$(dirname "$d")" ]; then

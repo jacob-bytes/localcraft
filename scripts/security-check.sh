@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# scripts/security-check.sh — selftool 安全基线自查
+# scripts/security-check.sh — localcraft 安全基线自查
 #
 # 用途：一键核查 docs/05《部署与运维方案》§13 的安全基线项，输出 OK / FAIL / WARN 清单。
 #       设计成"可以随时跑、只读不改"：不使用任何有副作用的命令，
@@ -8,9 +8,9 @@
 #
 # 检查项（对应 §13.9 的 10 条，另补 2 条 §13.1/§13.2 的显式项）:
 #   1) 监听地址只绑回环，不得出现 0.0.0.0 / [::]
-#   2) env 文件权限 0640 root:selftool，且 SECRET_KEY 不是占位符、长度足够
+#   2) env 文件权限 0640 root:localcraft，且 SECRET_KEY 不是占位符、长度足够
 #   3) TLS 私钥权限不得过宽
-#   4) 数据目录权限 0750 selftool:selftool
+#   4) 数据目录权限 0750 localcraft:localcraft
 #   5) 脚本目录不得对 group/other 可写（防止被篡改后由 systemd 执行）
 #   6) /docs /redoc /openapi.json 已关闭（期望 404）
 #   7) systemd 加固项与 LimitNOFILE
@@ -23,7 +23,7 @@
 # 用法:
 #   scripts/security-check.sh
 #   scripts/security-check.sh --base-url http://127.0.0.1
-#   SELTOOL_SKIP_SYSTEMD=1 scripts/security-check.sh   # 无 systemd 环境：相关项记 WARN
+#   LOCALCRAFT_SKIP_SYSTEMD=1 scripts/security-check.sh   # 无 systemd 环境：相关项记 WARN
 #
 # 依据: docs/05《部署与运维方案》§13（安全基线）、§13.9（自查脚本）、§13.1、§13.2
 #
@@ -31,21 +31,21 @@
 # ============================================================
 set -uo pipefail
 
-PREFIX="${SELTOOL_PREFIX:-/opt/selftool}"
-DATA_DIR="${SELTOOL_DATA_DIR:-/var/lib/selftool}"
-ETC_DIR="${SELTOOL_ETC_DIR:-/etc/selftool}"
-LOG_DIR="${SELTOOL_LOG_DIR:-/var/log/selftool}"
-DB_FILE="${SELTOOL_DB:-$DATA_DIR/selftool.db}"
-BACKUP_ROOT="${SELTOOL_BACKUP_DIR:-$DATA_DIR/backups}"
-ENV_FILE="$ETC_DIR/selftool.env"
-TLS_KEY="$ETC_DIR/tls/selftool.key"
+PREFIX="${LOCALCRAFT_PREFIX:-/opt/localcraft}"
+DATA_DIR="${LOCALCRAFT_DATA_DIR:-/var/lib/localcraft}"
+ETC_DIR="${LOCALCRAFT_ETC_DIR:-/etc/localcraft}"
+LOG_DIR="${LOCALCRAFT_LOG_DIR:-/var/log/localcraft}"
+DB_FILE="${LOCALCRAFT_DB:-$DATA_DIR/localcraft.db}"
+BACKUP_ROOT="${LOCALCRAFT_BACKUP_DIR:-$DATA_DIR/backups}"
+ENV_FILE="$ETC_DIR/localcraft.env"
+TLS_KEY="$ETC_DIR/tls/localcraft.key"
 SCRIPTS_DIR="$PREFIX/scripts"
 APP_LINK="$PREFIX/app/current"
 
-PORT="${SELTOOL_PORT:-8000}"
-BASE_URL="${SELTOOL_BASE_URL:-http://127.0.0.1}"
-SKIP_SYSTEMD="${SELTOOL_SKIP_SYSTEMD:-0}"
-BACKUP_STALE_H="${SELTOOL_ALERT_BACKUP_STALE_H:-48}"
+PORT="${LOCALCRAFT_PORT:-8000}"
+BASE_URL="${LOCALCRAFT_BASE_URL:-http://127.0.0.1}"
+SKIP_SYSTEMD="${LOCALCRAFT_SKIP_SYSTEMD:-0}"
+BACKUP_STALE_H="${LOCALCRAFT_ALERT_BACKUP_STALE_H:-48}"
 
 FAIL=0
 ok()   { printf '[ OK ]   %s\n' "$*"; }
@@ -90,7 +90,7 @@ http_code() {  # http_code <url>
 # `date -Is` 是 GNU 扩展，macOS/BSD 不支持；与 precheck.sh 用同一可移植写法
 now_iso() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
 
-echo "=== selftool 安全基线自查 $(now_iso) ==="
+echo "=== localcraft 安全基线自查 $(now_iso) ==="
 echo
 
 # ------------------------------------------------------------
@@ -114,10 +114,10 @@ fi
 # 2) 环境变量文件权限与 SECRET_KEY
 # ------------------------------------------------------------
 PERM="$(file_stat "$ENV_FILE")"
-if [ "$PERM" = "640 root selftool" ]; then
+if [ "$PERM" = "640 root localcraft" ]; then
     ok "env 文件权限: ${PERM}"
 else
-    bad "env 文件权限异常: ${PERM}（期望 640 root selftool）"
+    bad "env 文件权限异常: ${PERM}（期望 640 root localcraft）"
 fi
 
 if [ -r "$ENV_FILE" ]; then
@@ -152,24 +152,24 @@ esac
 # 4) 数据目录权限
 # ------------------------------------------------------------
 PERM="$(file_stat "$DATA_DIR")"
-if [ "$PERM" = "750 selftool selftool" ]; then
+if [ "$PERM" = "750 localcraft localcraft" ]; then
     ok "数据目录权限: ${PERM}"
 elif [ "$PERM" = "missing" ]; then
     bad "数据目录不存在: ${DATA_DIR}"
 else
-    warn "数据目录权限: ${PERM}（期望 750 selftool selftool）"
+    warn "数据目录权限: ${PERM}（期望 750 localcraft localcraft）"
 fi
 
 # ------------------------------------------------------------
 # 4.1) 日志目录权限 与 current 软链落位
 # ------------------------------------------------------------
 PERM="$(file_stat "$LOG_DIR")"
-if [ "$PERM" = "750 selftool selftool" ]; then
+if [ "$PERM" = "750 localcraft localcraft" ]; then
     ok "日志目录权限: ${PERM}"
 elif [ "$PERM" = "missing" ]; then
     warn "日志目录不存在: ${LOG_DIR}（纯 journald 部署且未开启文件日志时可忽略）"
 else
-    warn "日志目录权限: ${PERM}（期望 750 selftool selftool）"
+    warn "日志目录权限: ${PERM}（期望 750 localcraft localcraft）"
 fi
 
 # 升级/回滚全靠 current 软链切换。它一旦被替换成真目录，
@@ -227,16 +227,16 @@ fi
 # 7) systemd 加固项
 # ------------------------------------------------------------
 if [ "$SKIP_SYSTEMD" = "1" ] || ! command -v systemctl >/dev/null 2>&1; then
-    warn "无 systemd（或 SELTOOL_SKIP_SYSTEMD=1），跳过 systemd 加固与 LimitNOFILE 检查"
+    warn "无 systemd（或 LOCALCRAFT_SKIP_SYSTEMD=1），跳过 systemd 加固与 LimitNOFILE 检查"
 else
     for opt in NoNewPrivileges PrivateTmp ProtectSystem ProtectHome; do
-        V="$(systemctl show selftool.service -p "$opt" --value 2>/dev/null || true)"
+        V="$(systemctl show localcraft.service -p "$opt" --value 2>/dev/null || true)"
         case "$V" in
             yes|strict|true) ok "systemd ${opt}=${V}" ;;
             *)               bad "systemd ${opt}=${V:-空}（期望已启用；检查 drop-in 是否安装）" ;;
         esac
     done
-    NF="$(systemctl show selftool.service -p LimitNOFILE --value 2>/dev/null || echo 0)"
+    NF="$(systemctl show localcraft.service -p LimitNOFILE --value 2>/dev/null || echo 0)"
     case "$NF" in
         ''|*[!0-9]*) bad "LimitNOFILE 读取异常: ${NF}" ;;
         *) [ "$NF" -ge 65536 ] && ok "LimitNOFILE=${NF}" \
@@ -246,7 +246,7 @@ else
     # --------------------------------------------------------
     # 8) worker 数
     # --------------------------------------------------------
-    if systemctl show selftool.service -p ExecStart --value 2>/dev/null | grep -q -- '--workers 1'; then
+    if systemctl show localcraft.service -p ExecStart --value 2>/dev/null | grep -q -- '--workers 1'; then
         ok "worker 数为 1（与 SQLite WAL 单写者匹配）"
     else
         warn "worker 数不是 1：请确认已了解 SQLite 写锁风险（docs/05 §6.3）"
@@ -318,7 +318,7 @@ fi
 # ------------------------------------------------------------
 # 12) 备份新鲜度
 # ------------------------------------------------------------
-LATEST_BK="$(find "$BACKUP_ROOT/db" -maxdepth 1 \( -name 'selftool-*.db' -o -name 'selftool-*.db.gz' \) -print 2>/dev/null | sort | tail -1)"
+LATEST_BK="$(find "$BACKUP_ROOT/db" -maxdepth 1 \( -name 'localcraft-*.db' -o -name 'localcraft-*.db.gz' \) -print 2>/dev/null | sort | tail -1)"
 if [ -n "$LATEST_BK" ]; then
     H=$(( ( $(date +%s) - $(mtime_epoch "$LATEST_BK") ) / 3600 ))
     if [ "$H" -le "$BACKUP_STALE_H" ]; then

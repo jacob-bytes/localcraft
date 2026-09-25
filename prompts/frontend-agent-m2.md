@@ -48,7 +48,7 @@
 **特别说明**：`contracts/acceptance/real-backend-check.cjs` 是**监控方的验收脚本**，不属于你，
 **不要修改它**。你要自己写一套等价或更完善的真实后端 E2E。
 
-不执行任何 git 命令。工作目录：`/Users/jlthzy/Documents/selftool`
+不执行任何 git 命令。工作目录：`/Users/jlthzy/Documents/localcraft`
 
 ---
 

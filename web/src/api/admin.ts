@@ -720,10 +720,10 @@ function datedFilename(prefix: string, extension: string): string {
 
 /** 导出用户 CSV（后端已带 BOM，中文不乱码）。 */
 export function exportUsers(): Promise<void> {
-  return downloadExport("/admin/export/users", datedFilename("selftool-users", "csv"));
+  return downloadExport("/admin/export/users", datedFilename("localcraft-users", "csv"));
 }
 
 /** 导出工具 JSON。 */
 export function exportTools(): Promise<void> {
-  return downloadExport("/admin/export/tools", datedFilename("selftool-tools", "json"));
+  return downloadExport("/admin/export/tools", datedFilename("localcraft-tools", "json"));
 }

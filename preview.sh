@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# selftool 本地预览（生产拓扑：后端直接托管前端构建产物，单一 URL）
+# localcraft 本地预览（生产拓扑：后端直接托管前端构建产物，单一 URL）
 #
 #   bash preview.sh            # 首次会自动建库+播种，然后起服务
 #   bash preview.sh --reset    # 丢弃预览数据，重新建库+播种
@@ -25,14 +25,54 @@ PY="$BE/.venv/bin/python"
 RESET=0
 [[ "${1:-}" == "--reset" ]] && RESET=1
 
+# ---- 后端虚拟环境：不存在就自动创建 ----------------------------------------
+# 目标是把「git clone 之后一条命令跑起来」这件事做实，所以这里不做「请先手动
+# 建 venv」的失败退出。优先用 python3.11（与生产一致），退而求其次用 python3，
+# 但会检查版本 —— 低于 3.11 直接报错，避免跑出「本地能跑、生产语法不兼容」。
 if [[ ! -x "$PY" ]]; then
-  echo "找不到后端虚拟环境：$PY" >&2
-  echo "先执行：cd backend && python3.11 -m venv .venv && .venv/bin/pip install -r requirements.lock" >&2
-  exit 1
+  PYTHON_BIN="${PYTHON:-}"
+  if [[ -z "$PYTHON_BIN" ]]; then
+    if command -v python3.11 >/dev/null 2>&1; then
+      PYTHON_BIN=python3.11
+    elif command -v python3 >/dev/null 2>&1; then
+      PYTHON_BIN=python3
+    else
+      echo "找不到 python3，请先安装 Python 3.11 或更高版本" >&2
+      exit 1
+    fi
+  fi
+
+  if ! "$PYTHON_BIN" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'; then
+    echo "$PYTHON_BIN 版本过低：需要 Python 3.11+，当前 $("$PYTHON_BIN" -V 2>&1)" >&2
+    exit 1
+  fi
+
+  echo "==> 创建后端虚拟环境（$BE/.venv，使用 $PYTHON_BIN）"
+  "$PYTHON_BIN" -m venv "$BE/.venv"
+  "$PY" -m pip install --quiet --upgrade pip
+
+  if [[ -f "$BE/requirements.lock" ]]; then
+    echo "==> 安装后端依赖（requirements.lock，全量锁定）"
+    "$PY" -m pip install --quiet -r "$BE/requirements.lock"
+  else
+    echo "==> 安装后端依赖（pyproject 的 dev extra，未找到 lock）"
+    "$PY" -m pip install --quiet -e "$BE[dev]"
+  fi
+fi
+
+# ---- 前端：依赖与构建产物都按需补齐 -----------------------------------------
+if [[ ! -d "$ROOT/web/node_modules" ]]; then
+  if [[ -f "$ROOT/web/package-lock.json" ]]; then
+    echo "==> 安装前端依赖（npm ci）"
+    (cd "$ROOT/web" && npm ci)
+  else
+    echo "==> 安装前端依赖（npm install）"
+    (cd "$ROOT/web" && npm install)
+  fi
 fi
 
 if [[ ! -f "$ROOT/web/dist/index.html" ]]; then
-  echo "前端产物不存在，正在构建…"
+  echo "==> 构建前端产物（npm run build）"
   (cd "$ROOT/web" && npm run build)
 fi
 
@@ -68,14 +108,14 @@ cat <<EOF
 
   可用账号（全部为演示数据）
     超管      admin      / Admin@12345    ← 用它可以访问全部页面
-    普通用户  wangwu     / Author@12345
+    审批员    wangwu     / Author@12345   ← user + approver，用它预览审批台
     普通用户  zhangsan   / Author@12345
     普通用户  lisi       / Author@12345
     只读访客  viewer     / Viewer@12345   ← 能看详情但下载被拒（FR-ACL-05）
     需改密    newbie     / Newbie@12345   ← 登录后会被强制跳转改密页
 
-  注：当前种子里没有独立的 approver 账号（wangwu 是 user），
-      审批台的功能请用 admin 预览；角色菜单渲染要到 M6 J-11 补齐后才能验。
+  注：wangwu 是种子中唯一的 approver（用户 J-11）。用它验证「审批员看不到
+      超管菜单」这类角色边界；admin 也能进审批台，但看不出角色差异。
 
   停止：Ctrl-C
 ============================================================

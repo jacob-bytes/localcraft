@@ -227,7 +227,7 @@ class CounterService:
     async def start(self) -> None:
         if self._task is None or self._task.done():
             self._stopping = False
-            self._task = asyncio.create_task(self._run(), name="selftool-counter-flush")
+            self._task = asyncio.create_task(self._run(), name="localcraft-counter-flush")
             logger.info("计数器后台任务已启动（每 %s 秒落库）", self._flush_interval)
 
     async def stop(self) -> None:

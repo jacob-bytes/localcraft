@@ -54,7 +54,7 @@ from app.storage import get_storage
 
 cli = typer.Typer(
     add_completion=False,
-    help="selftool 后端命令行工具",
+    help="localcraft 后端命令行工具",
     no_args_is_help=True,
 )
 
@@ -1278,7 +1278,7 @@ def maintenance_cmd(
 ) -> None:
     """一次性执行 docs/02 §5 的数据保留与清理任务。
 
-    `scripts/run-maintenance.sh` 与 `selftool-maintenance.timer` 调用的就是本命令。
+    `scripts/run-maintenance.sh` 与 `localcraft-maintenance.timer` 调用的就是本命令。
 
     与 `purge-recycle-bin` / `gc-versions` 的关系：那两个是**单项**命令，
     本命令按 docs/02 §5 的顺序跑全套，并对单项失败做隔离（一项失败不影响其余）。
@@ -1374,7 +1374,7 @@ async def _maintenance(task: str, dry_run: bool, json_out: bool) -> None:
 def gc_versions_cmd(
     apply: bool = typer.Option(False, "--apply", help="真正执行；不加则只报告"),
 ) -> None:
-    """清理超出 `version.history_limit` 的历史版本（由 `selftool-maintenance.timer` 调度）。
+    """清理超出 `version.history_limit` 的历史版本（由 `localcraft-maintenance.timer` 调度）。
 
     正常路径下淘汰在「审批通过」时同步触发；本命令是**兜底与修复**用
     （例如直接改过设置、或历史上有失败的删除）。

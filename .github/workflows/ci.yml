@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# 同一分支的旧运行在新推送到来时取消，省 runner 时间
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 后端：ruff + pytest
+  #
+  # 锁定 Python 3.11 —— 这正是目标环境 openEuler 24.03 自带的版本。
+  # 在 3.11 上跑测试是唯一能 100% 覆盖「语法与运行时兼容性」的手段：
+  # 3.12+ 才有的语法在这里会直接 SyntaxError，跑不起来就是红叉。
+  # ---------------------------------------------------------------------------
+  backend:
+    name: 后端（ruff + pytest）
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.lock
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.lock
+
+      - name: ruff（含 py311 语法兼容防线）
+        run: python -m ruff check .
+
+      - name: pytest + 覆盖率
+        run: python -m pytest --cov=app --cov-report=term-missing
+
+      - name: 守卫 openapi.json 与实现同步
+        # 重新导出快照后若与仓库中的文件有差异，说明接口改了但没更新
+        # backend/openapi.json —— 它是接口形状的权威，前端类型从它生成。
+        run: |
+          python -m app.cli export-openapi
+          if ! git diff --quiet -- openapi.json; then
+            echo "::error::openapi.json 与实现不同步。请在 backend/ 下执行 'python -m app.cli export-openapi' 并提交结果。"
+            git --no-pager diff --stat -- openapi.json
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------------------
+  # 前端：类型检查 + lint + 设计原语约束 + API 类型一致性 + 生产构建
+  #
+  # 就是本地那条 npm run verify，不额外加重型 E2E —— Playwright 需要额外
+  # 拉浏览器，在 CI 上首次容易调不通，收益不抵维护成本。
+  # ---------------------------------------------------------------------------
+  frontend:
+    name: 前端（npm run verify）
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: verify（typecheck → lint → 原语约束 → API 类型 → build → dist 检查）
+        run: npm run verify
+
+  # ---------------------------------------------------------------------------
+  # 仓库卫生：确认没有把容器方案带进来
+  #
+  # 「禁止 Docker / Podman / 任何容器」是项目的硬约束（生产是 systemd 原生
+  # 部署）。这条检查很便宜，但能防止约束被无意破坏。
+  # ---------------------------------------------------------------------------
+  no-containers:
+    name: 仓库卫生（禁止容器方案）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 确认仓库中没有容器相关文件
+        run: |
+          found=$(git ls-files | grep -Ei '(^|/)(Dockerfile|Containerfile|docker-compose\.ya?ml|compose\.ya?ml|\.dockerignore)$' || true)
+          if [ -n "$found" ]; then
+            echo "::error::本项目禁止容器化部署，但仓库中发现了容器相关文件："
+            echo "$found"
+            exit 1
+          fi
+          echo "通过：未发现容器相关文件。"

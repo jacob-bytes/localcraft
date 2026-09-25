@@ -22,7 +22,7 @@
 
 **不要执行任何 git 命令**。版本控制由监控方在 checkpoint 统一处理。
 
-工作目录：`/Users/jlthzy/Documents/selftool`
+工作目录：`/Users/jlthzy/Documents/localcraft`
 
 ---
 

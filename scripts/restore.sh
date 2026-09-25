@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ============================================================
-# scripts/restore.sh — selftool 恢复脚本
+# scripts/restore.sh — localcraft 恢复脚本
 #   停服务 → 备份现状 → 还原数据库 → 还原 files → 校验 → 起服务
 #
 # 用法:
-#   restore.sh --db /var/lib/selftool/backups/db/selftool-20250101-030000.db.gz \
-#              --files /var/lib/selftool/backups/files/files-20250101-030000
+#   restore.sh --db /var/lib/localcraft/backups/db/localcraft-20250101-030000.db.gz \
+#              --files /var/lib/localcraft/backups/files/files-20250101-030000
 #   restore.sh --latest                # 使用最近一份备份
 #   restore.sh --db <路径> --yes       # 跳过交互确认（供演练脚本使用）
 #
@@ -20,10 +20,10 @@
 # ============================================================
 set -uo pipefail
 
-DATA_DIR="${SELTOOL_DATA_DIR:-/var/lib/selftool}"
-DB_FILE="${SELTOOL_DB:-$DATA_DIR/selftool.db}"
-FILES_DIR="${SELTOOL_FILES_DIR:-$DATA_DIR/files}"
-BACKUP_ROOT="${SELTOOL_BACKUP_DIR:-$DATA_DIR/backups}"
+DATA_DIR="${LOCALCRAFT_DATA_DIR:-/var/lib/localcraft}"
+DB_FILE="${LOCALCRAFT_DB:-$DATA_DIR/localcraft.db}"
+FILES_DIR="${LOCALCRAFT_FILES_DIR:-$DATA_DIR/files}"
+BACKUP_ROOT="${LOCALCRAFT_BACKUP_DIR:-$DATA_DIR/backups}"
 DB_DIR="$BACKUP_ROOT/db"
 FILES_BACKUP_DIR="$BACKUP_ROOT/files"
 
@@ -52,7 +52,7 @@ done
 command -v sqlite3 >/dev/null 2>&1 || die "缺少 sqlite3 命令"
 
 if [ "$USE_LATEST" -eq 1 ]; then
-    DB_ARG="$(find "$DB_DIR" -maxdepth 1 \( -name 'selftool-*.db' -o -name 'selftool-*.db.gz' \) -print 2>/dev/null | sort | tail -1)"
+    DB_ARG="$(find "$DB_DIR" -maxdepth 1 \( -name 'localcraft-*.db' -o -name 'localcraft-*.db.gz' \) -print 2>/dev/null | sort | tail -1)"
     FILES_ARG="$(find "$FILES_BACKUP_DIR" -maxdepth 1 -type d -name 'files-*' -print 2>/dev/null | sort | tail -1)"
 fi
 
@@ -78,7 +78,7 @@ fi
 # 2) 校验备份，先确认它是可用的再动手
 # ------------------------------------------------------------
 log "校验备份可用性"
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/selftool-restore-XXXXXX")"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/localcraft-restore-XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 
 DB_SRC="$DB_ARG"
@@ -102,10 +102,10 @@ log "备份校验通过：users=${EXP_USERS} tools=${EXP_TOOLS} versions=${EXP_V
 # 3) 停服务
 # ------------------------------------------------------------
 SERVICE_STOPPED=0
-PID_FILE="$DATA_DIR/selftool.pid"
-if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet selftool.service 2>/dev/null; then
-    log "停止 selftool.service"
-    systemctl stop selftool.service
+PID_FILE="$DATA_DIR/localcraft.pid"
+if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet localcraft.service 2>/dev/null; then
+    log "停止 localcraft.service"
+    systemctl stop localcraft.service
     SERVICE_STOPPED=1
 elif [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
     log "停止演练模式进程（PID $(cat "$PID_FILE")）"
@@ -192,9 +192,9 @@ for suffix in -wal -shm; do
 done
 
 if [ "$START_AFTER" -eq 1 ]; then
-    if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files 2>/dev/null | grep -q '^selftool.service'; then
-        log "启动 selftool.service"
-        systemctl start selftool.service
+    if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files 2>/dev/null | grep -q '^localcraft.service'; then
+        log "启动 localcraft.service"
+        systemctl start localcraft.service
     else
         warn "未找到 systemd 单元，请手工启动服务后再验证 /readyz"
     fi

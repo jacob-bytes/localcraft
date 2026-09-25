@@ -17,14 +17,14 @@ import { lazy, type ComponentType, type LazyExoticComponent } from "react";
  *   4. `sessionStorage` 不可用（隐私模式/被禁用）时无法防循环 → 不自动重载。
  *
  * 存储布局（同一个会话内）：
- *   `selftool:chunk-retry:file`   最近一次触发自动重载的 chunk **文件名**（带哈希）
- *   `selftool:chunk-retry:name`   同一时刻的稳定页面名，用于成功时归还额度
- *   `selftool:chunk-retry:count`  本会话已自动重载的次数（硬上限，兜底防循环）
+ *   `localcraft:chunk-retry:file`   最近一次触发自动重载的 chunk **文件名**（带哈希）
+ *   `localcraft:chunk-retry:name`   同一时刻的稳定页面名，用于成功时归还额度
+ *   `localcraft:chunk-retry:count`  本会话已自动重载的次数（硬上限，兜底防循环）
  *
  * 判定用**文件名**（错误信息里只有文件名），归还用**页面名**（成功路径拿不到文件名）。
  */
 
-export const CHUNK_RETRY_PREFIX = "selftool:chunk-retry:";
+export const CHUNK_RETRY_PREFIX = "localcraft:chunk-retry:";
 const KEY_FILE = `${CHUNK_RETRY_PREFIX}file`;
 const KEY_NAME = `${CHUNK_RETRY_PREFIX}name`;
 const KEY_COUNT = `${CHUNK_RETRY_PREFIX}count`;

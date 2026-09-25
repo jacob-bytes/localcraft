@@ -43,7 +43,7 @@
 需要确认改动范围时用 `find backend -newer <ref> -type f` 之类的文件系统手段。
 委派子 agent 时必须在提示里显式写这一条，并对子 agent 的产出做一次越界复核。
 
-工作目录：`/Users/jlthzy/Documents/selftool`
+工作目录：`/Users/jlthzy/Documents/localcraft`
 
 ---
 
@@ -149,9 +149,9 @@
 | `scripts/uninstall.sh` | 停止并禁用服务、移除 unit、**保留数据目录并要求显式 `--purge` 才删** |
 | `RELEASE-NOTES.md` | 升级流程依赖它判断「本次是否含数据库迁移」（`docs/05` §11 已引用）。首版写 M1~M5 的概要 |
 | `deploy/nginx/` 下的 TLS 生产配置 | `docs/05` §7 的生产版目前只存在于文档里，需要有可部署文件 |
-| `deploy/selftool-limits.conf` | systemd 加固 / 文件描述符上限 |
-| `deploy/selftool.tmpfiles` | 运行目录的创建与权限 |
-| `deploy/systemd/selftool-gc.*` | **先检查是否与已有的 `selftool-maintenance.*` 重复**；若重复则只保留一套并在报告里说明取舍，不要两套做同一件事 |
+| `deploy/localcraft-limits.conf` | systemd 加固 / 文件描述符上限 |
+| `deploy/localcraft.tmpfiles` | 运行目录的创建与权限 |
+| `deploy/systemd/localcraft-gc.*` | **先检查是否与已有的 `localcraft-maintenance.*` 重复**；若重复则只保留一套并在报告里说明取舍，不要两套做同一件事 |
 | `scripts/upgrade.sh` / `scripts/rollback.sh` | `docs/05` §11 的升级回滚流程需要可执行载体 |
 | `scripts/notify-ready.sh` | systemd `Type=notify` 变体需要（`docs/05` §6.4 有说明） |
 | `scripts/metrics-snapshot.sh` | `docs/05` §10 的指标清单 |

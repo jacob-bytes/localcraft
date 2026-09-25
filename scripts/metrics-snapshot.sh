@@ -8,7 +8,7 @@
 # 指标口径严格对齐 docs/05《部署与运维方案》§10.4 的清单，
 # 且**每一项都来自真实可取的来源**（不编造 Prometheus 指标名、不估算）：
 #   /healthz、/readyz、/api/v1/meta  → HTTP 码与关键字段
-#   selftool.db / -wal / -shm        → 文件大小
+#   localcraft.db / -wal / -shm        → 文件大小
 #   files/                           → 占用与文件数
 #   backups/                         → 快照份数、最近一份的时间与年龄
 #   df / df -i                       → 磁盘与 inode 使用率
@@ -17,27 +17,27 @@
 #
 # 用法:
 #   metrics-snapshot.sh                # 打印到 stdout
-#   metrics-snapshot.sh --journal      # 同时写入 journal（logger -t selftool-metrics）
+#   metrics-snapshot.sh --journal      # 同时写入 journal（logger -t localcraft-metrics）
 #   metrics-snapshot.sh --base-url http://127.0.0.1:8000
 #
 # 建议：手工执行，或挂一个每日一次的 timer；输出可用
-#       journalctl -t selftool-metrics --since today 回看。
+#       journalctl -t localcraft-metrics --since today 回看。
 #
 # 依据: docs/05《部署与运维方案》§10.4（应用侧关键指标）、§10.2（journald 查询）
 # ============================================================
 set -uo pipefail
 
-PREFIX="${SELTOOL_PREFIX:-/opt/selftool}"
-DATA_DIR="${SELTOOL_DATA_DIR:-/var/lib/selftool}"
-DB_FILE="${SELTOOL_DB:-$DATA_DIR/selftool.db}"
-FILES_DIR="${SELTOOL_FILES_DIR:-$DATA_DIR/files}"
-BACKUP_ROOT="${SELTOOL_BACKUP_DIR:-$DATA_DIR/backups}"
+PREFIX="${LOCALCRAFT_PREFIX:-/opt/localcraft}"
+DATA_DIR="${LOCALCRAFT_DATA_DIR:-/var/lib/localcraft}"
+DB_FILE="${LOCALCRAFT_DB:-$DATA_DIR/localcraft.db}"
+FILES_DIR="${LOCALCRAFT_FILES_DIR:-$DATA_DIR/files}"
+BACKUP_ROOT="${LOCALCRAFT_BACKUP_DIR:-$DATA_DIR/backups}"
 APP_LINK="$PREFIX/app/current"
-SKIP_SYSTEMD="${SELTOOL_SKIP_SYSTEMD:-0}"
+SKIP_SYSTEMD="${LOCALCRAFT_SKIP_SYSTEMD:-0}"
 
-BASE_URL="${SELTOOL_BASE_URL:-http://127.0.0.1:${SELTOOL_PORT:-8000}}"
+BASE_URL="${LOCALCRAFT_BASE_URL:-http://127.0.0.1:${LOCALCRAFT_PORT:-8000}}"
 USE_JOURNAL=0
-TAG="selftool-metrics"
+TAG="localcraft-metrics"
 
 log() { printf '[metrics] %s\n' "$*" >&2; }
 
@@ -94,11 +94,11 @@ sqlite_count() {  # sqlite_count <表名>；表不存在时输出 ?
 
 command -v curl >/dev/null 2>&1 || log "警告：缺少 curl，探针与 meta 指标会显示 000"
 
-TMP="$(mktemp "${TMPDIR:-/tmp}/selftool-metrics-XXXXXX")" || exit 1
+TMP="$(mktemp "${TMPDIR:-/tmp}/localcraft-metrics-XXXXXX")" || exit 1
 trap 'rm -f "$TMP"' EXIT
 
 {
-    echo "=== selftool 运行摘要 $(now_iso) ==="
+    echo "=== localcraft 运行摘要 $(now_iso) ==="
 
     # ---------- 基础 ----------
     echo "[基础]"
@@ -111,12 +111,12 @@ trap 'rm -f "$TMP"' EXIT
     # ---------- 服务状态 ----------
     echo "[服务]"
     if [ "$SKIP_SYSTEMD" = "1" ] || ! command -v systemctl >/dev/null 2>&1; then
-        echo "  systemd      : （跳过：无 systemd 或 SELTOOL_SKIP_SYSTEMD=1）"
+        echo "  systemd      : （跳过：无 systemd 或 LOCALCRAFT_SKIP_SYSTEMD=1）"
     else
-        echo "  systemd 状态 : $(systemctl is-active selftool.service 2>/dev/null || echo unknown)"
-        echo "  重启次数     : $(systemctl show -p NRestarts --value selftool.service 2>/dev/null || echo unknown)"
-        echo "  备份定时器   : $(systemctl is-active selftool-backup.timer 2>/dev/null || echo unknown)"
-        echo "  清理定时器   : $(systemctl is-active selftool-maintenance.timer 2>/dev/null || echo unknown)"
+        echo "  systemd 状态 : $(systemctl is-active localcraft.service 2>/dev/null || echo unknown)"
+        echo "  重启次数     : $(systemctl show -p NRestarts --value localcraft.service 2>/dev/null || echo unknown)"
+        echo "  备份定时器   : $(systemctl is-active localcraft-backup.timer 2>/dev/null || echo unknown)"
+        echo "  清理定时器   : $(systemctl is-active localcraft-maintenance.timer 2>/dev/null || echo unknown)"
     fi
 
     # ---------- 探针 ----------
@@ -152,9 +152,9 @@ trap 'rm -f "$TMP"' EXIT
     echo "  files/ 占用  : $(human_size "$FILES_DIR")"
     echo "  files/ 文件数: $(find "$FILES_DIR" -type f 2>/dev/null | wc -l | tr -d ' ')"
     echo "  backups/ 占用: $(human_size "$BACKUP_ROOT")"
-    DB_SNAP_COUNT="$(find "$BACKUP_ROOT/db" -maxdepth 1 \( -name 'selftool-*.db' -o -name 'selftool-*.db.gz' \) 2>/dev/null | wc -l | tr -d ' ')"
+    DB_SNAP_COUNT="$(find "$BACKUP_ROOT/db" -maxdepth 1 \( -name 'localcraft-*.db' -o -name 'localcraft-*.db.gz' \) 2>/dev/null | wc -l | tr -d ' ')"
     echo "  数据库快照数 : ${DB_SNAP_COUNT}"
-    LATEST_BK="$(find "$BACKUP_ROOT/db" -maxdepth 1 \( -name 'selftool-*.db' -o -name 'selftool-*.db.gz' \) -print 2>/dev/null | sort | tail -1)"
+    LATEST_BK="$(find "$BACKUP_ROOT/db" -maxdepth 1 \( -name 'localcraft-*.db' -o -name 'localcraft-*.db.gz' \) -print 2>/dev/null | sort | tail -1)"
     if [ -n "$LATEST_BK" ]; then
         AGE_H=$(( ( $(date +%s) - $(mtime_epoch "$LATEST_BK") ) / 3600 ))
         echo "  最近备份     : $(basename "$LATEST_BK")  （${AGE_H} 小时前）"
@@ -176,9 +176,9 @@ trap 'rm -f "$TMP"' EXIT
     # ---------- 日志派生指标 ----------
     echo "[日志（今日）]"
     if command -v journalctl >/dev/null 2>&1; then
-        C5XX="$(journalctl -u selftool.service --since today --no-pager 2>/dev/null | grep -cE '" 5[0-9]{2} ' || true)"
-        LOCKED="$(journalctl -u selftool.service --since today --no-pager 2>/dev/null | grep -ci 'database is locked' || true)"
-        UNZIP="$(journalctl -u selftool.service --since today --no-pager 2>/dev/null | grep -ciE 'zip bomb|path traversal' || true)"
+        C5XX="$(journalctl -u localcraft.service --since today --no-pager 2>/dev/null | grep -cE '" 5[0-9]{2} ' || true)"
+        LOCKED="$(journalctl -u localcraft.service --since today --no-pager 2>/dev/null | grep -ci 'database is locked' || true)"
+        UNZIP="$(journalctl -u localcraft.service --since today --no-pager 2>/dev/null | grep -ciE 'zip bomb|path traversal' || true)"
         echo "  5xx 行数     : ${C5XX:-0}"
         echo "  database is locked: ${LOCKED:-0}"
         echo "  解压拦截     : ${UNZIP:-0}"

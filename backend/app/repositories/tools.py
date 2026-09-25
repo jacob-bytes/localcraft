@@ -382,7 +382,7 @@ _FACET_CACHE: dict[str, tuple[float, list[CategoryFacet], list[TypeFacet]]] = {}
 
 
 def _cache_enabled() -> bool:
-    """缓存开关。`SELTOOL_DISABLE_FACET_CACHE=1` 时绕过缓存。
+    """缓存开关。`LOCALCRAFT_DISABLE_FACET_CACHE=1` 时绕过缓存。
 
     存在的意义有两个：
       1) **可验证性** —— 没有开关就没法在同一份构建上做「开/关缓存」的 A/B 对比，
@@ -392,7 +392,7 @@ def _cache_enabled() -> bool:
     """
     import os
 
-    return os.environ.get("SELTOOL_DISABLE_FACET_CACHE") != "1"
+    return os.environ.get("LOCALCRAFT_DISABLE_FACET_CACHE") != "1"
 
 
 _FACET_CACHE_TTL_SECONDS = 30.0

@@ -1,10 +1,10 @@
 # ============================================================
-# selftool 日志轮转
-# 安装位置: /etc/logrotate.d/selftool
+# localcraft 日志轮转
+# 安装位置: /etc/logrotate.d/localcraft
 # 说明: 应用日志默认走 journald（StandardOutput=journal），本文件覆盖
-#       nginx 侧与可选的 SELTOOL_LOG_TO_FILE=true 场景。
+#       nginx 侧与可选的 LOCALCRAFT_LOG_TO_FILE=true 场景。
 # ============================================================
-/var/log/nginx/selftool.access.log /var/log/nginx/selftool.error.log {
+/var/log/nginx/localcraft.access.log /var/log/nginx/localcraft.error.log {
     daily
     rotate 30
     missingok
@@ -18,7 +18,7 @@
     endscript
 }
 
-/var/log/selftool/*.log {
+/var/log/localcraft/*.log {
     daily
     rotate 30
     missingok
@@ -26,5 +26,5 @@
     compress
     delaycompress
     copytruncate
-    su selftool selftool
+    su localcraft localcraft
 }

@@ -44,13 +44,13 @@ from app.services import settings_service
 
 #: 标记：本依赖链包含鉴权。守卫测试遍历 `app.routes` 时用它判断
 #: 「这个路由到底有没有挂权限」。挂在函数对象上，闭包也能被检查到。
-AUTH_DEP_ATTR = "__selftool_requires_auth__"
+AUTH_DEP_ATTR = "__localcraft_requires_auth__"
 
 #: 标记：本依赖链包含**强制改密拦截**（FR-AUTH-03）。
 #: 守卫测试用它断言「除豁免前缀外，每个路由都被改密拦截覆盖」。
 #: 该标记只应出现在 `require_authenticated`（及复用它的一切）与
 #: `portal_access`（它在依赖内部自行做了同一判断）上。
-PASSWORD_GATE_ATTR = "__selftool_password_gate__"
+PASSWORD_GATE_ATTR = "__localcraft_password_gate__"
 
 BEARER_PREFIX = "bearer "
 

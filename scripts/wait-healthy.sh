@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ============================================================
-# /opt/selftool/scripts/wait-healthy.sh
+# /opt/localcraft/scripts/wait-healthy.sh
 # 用途：轮询就绪探针，通过则退出 0，超时退出非零
-#       被 selftool.service 的 ExecStartPost 调用，使 systemctl start
+#       被 localcraft.service 的 ExecStartPost 调用，使 systemctl start
 #       的返回语义等价于"应用真正可用"
 # 来源: docs/05《部署与运维方案》§11
 # 用法: wait-healthy.sh [--url URL] [--timeout SECONDS] [--interval SECONDS]
@@ -47,5 +47,5 @@ while [ "$(date +%s)" -lt "$DEADLINE" ]; do
 done
 
 echo "wait-healthy: ${TIMEOUT}s 内未通过 ${URL}（最后状态 HTTP ${CODE:-000}）" >&2
-echo "wait-healthy: 请检查 journalctl -u selftool.service -n 100 --no-pager" >&2
+echo "wait-healthy: 请检查 journalctl -u localcraft.service -n 100 --no-pager" >&2
 exit 1

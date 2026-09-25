@@ -30,7 +30,7 @@ export function AppShell() {
       <footer className="border-t py-6">
         <div className="mx-auto flex w-full max-w-[1400px] flex-col items-center justify-between gap-2 px-4 text-xs text-muted-foreground sm:flex-row sm:px-6 lg:px-8">
           <span>
-            selftool {meta?.app_version ? `v${meta.app_version}` : ""}
+            localcraft {meta?.app_version ? `v${meta.app_version}` : ""}
             {meta?.api_version ? ` · API ${meta.api_version}` : ""}
           </span>
           <span>内网工具与 Skill 共享平台</span>

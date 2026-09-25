@@ -1,46 +1,46 @@
 #!/usr/bin/env bash
 # ============================================================
-# scripts/backup.sh — selftool 备份脚本
+# scripts/backup.sh — localcraft 备份脚本
 #
 #   1) SQLite **一致性快照**（`.backup`，绝不用 cp —— 见 docs/05 §8.1）
 #   2) files 目录 rsync 硬链接增量
 #   3) 保留最近 N 份，自动清理过期备份
 #   4) 每次备份做 integrity_check，失败即非零退出（供 systemd 判定失败）
 #
-# 由 selftool-backup.service（oneshot）+ selftool-backup.timer 调用，
-# 也可手工执行：/opt/selftool/scripts/backup.sh
+# 由 localcraft-backup.service（oneshot）+ localcraft-backup.timer 调用，
+# 也可手工执行：/opt/localcraft/scripts/backup.sh
 #
 # 依据: docs/05《部署与运维方案》§8.2 / §8.3
 # ============================================================
 set -uo pipefail
 
-DATA_DIR="${SELTOOL_DATA_DIR:-/var/lib/selftool}"
-DB_FILE="${SELTOOL_DB:-$DATA_DIR/selftool.db}"
-FILES_DIR="${SELTOOL_FILES_DIR:-$DATA_DIR/files}"
-BACKUP_ROOT="${SELTOOL_BACKUP_DIR:-$DATA_DIR/backups}"
+DATA_DIR="${LOCALCRAFT_DATA_DIR:-/var/lib/localcraft}"
+DB_FILE="${LOCALCRAFT_DB:-$DATA_DIR/localcraft.db}"
+FILES_DIR="${LOCALCRAFT_FILES_DIR:-$DATA_DIR/files}"
+BACKUP_ROOT="${LOCALCRAFT_BACKUP_DIR:-$DATA_DIR/backups}"
 
 DB_DIR="$BACKUP_ROOT/db"
 FILES_BACKUP_DIR="$BACKUP_ROOT/files"
 LATEST_LINK="$FILES_BACKUP_DIR/latest"
 
 #: 数据库快照保留份数
-KEEP_DB="${SELTOOL_BACKUP_KEEP_DB:-14}"
+KEEP_DB="${LOCALCRAFT_BACKUP_KEEP_DB:-14}"
 #: 文件快照保留份数
-KEEP_FILES="${SELTOOL_BACKUP_KEEP_FILES:-7}"
+KEEP_FILES="${LOCALCRAFT_BACKUP_KEEP_FILES:-7}"
 #: 是否 gzip 数据库快照（gzip 后不能直接被 sqlite3 打开，恢复时脚本会自动解压）
-GZIP_DB="${SELTOOL_BACKUP_GZIP:-false}"
+GZIP_DB="${LOCALCRAFT_BACKUP_GZIP:-false}"
 #: 备份前要求的最小剩余空间（MB）
-MIN_FREE_MB="${SELTOOL_BACKUP_MIN_FREE_MB:-2048}"
+MIN_FREE_MB="${LOCALCRAFT_BACKUP_MIN_FREE_MB:-2048}"
 #: true / false / auto（auto = 周日或每月 1 日用 VACUUM INTO）
-DO_VACUUM="${SELTOOL_BACKUP_VACUUM:-auto}"
+DO_VACUUM="${LOCALCRAFT_BACKUP_VACUUM:-auto}"
 #: 可选远程同步（留空 = 不做）
-REMOTE="${SELTOOL_BACKUP_REMOTE:-}"
+REMOTE="${LOCALCRAFT_BACKUP_REMOTE:-}"
 
 LOCK_FILE="$BACKUP_ROOT/.backup.lock"
 LOCK_DIR="$BACKUP_ROOT/.backup.lockdir"
 
 TS="$(date +%Y%m%d-%H%M%S)"
-DB_BACKUP="$DB_DIR/selftool-$TS.db"
+DB_BACKUP="$DB_DIR/localcraft-$TS.db"
 FILES_BACKUP="$FILES_BACKUP_DIR/files-$TS"
 
 log()  { printf '[backup] %s\n' "$*"; }
@@ -81,7 +81,7 @@ case "$DO_VACUUM" in
     true)  VACUUM_NOW=true ;;
     false) VACUUM_NOW=false ;;
     auto)  [ "$DOW" = "7" ] || [ "$DOM" = "01" ] && VACUUM_NOW=true ;;
-    *)     warn "SELTOOL_BACKUP_VACUUM 取值无法识别（${DO_VACUUM}），按 auto 处理"
+    *)     warn "LOCALCRAFT_BACKUP_VACUUM 取值无法识别（${DO_VACUUM}），按 auto 处理"
            [ "$DOW" = "7" ] || [ "$DOM" = "01" ] && VACUUM_NOW=true ;;
 esac
 
@@ -150,7 +150,7 @@ tools_rows=${TOOL_CNT}
 tool_versions_rows=${VER_CNT}
 compressed=${GZIP_DB}
 host=$(hostname 2>/dev/null || echo unknown)
-selftool_version=$(cat "${SELTOOL_PREFIX:-/opt/selftool}/app/current/VERSION" 2>/dev/null || echo unknown)
+localcraft_version=$(cat "${LOCALCRAFT_PREFIX:-/opt/localcraft}/app/current/VERSION" 2>/dev/null || echo unknown)
 alembic_revision=${ALEMBIC_REV}
 EOF
 
@@ -194,8 +194,8 @@ prune() {  # prune <目录> <前缀> <保留份数>
         log "清理过期备份: $(basename "$v")"
     done
 }
-prune "$DB_DIR" 'selftool-*.db' "$KEEP_DB"
-prune "$DB_DIR" 'selftool-*.db.gz' "$KEEP_DB"
+prune "$DB_DIR" 'localcraft-*.db' "$KEEP_DB"
+prune "$DB_DIR" 'localcraft-*.db.gz' "$KEEP_DB"
 if [ "$KEEP_FILES" -gt 0 ]; then
     # 文件快照是目录，单独清理（保留 latest 软链指向的那一份）
     find "$FILES_BACKUP_DIR" -maxdepth 1 -type d -name 'files-*' -print | sort -r \
@@ -216,7 +216,7 @@ fi
 # ------------------------------------------------------------
 # 6) 汇总
 # ------------------------------------------------------------
-DB_COUNT="$(find "$DB_DIR" -maxdepth 1 \( -name 'selftool-*.db' -o -name 'selftool-*.db.gz' \) | wc -l | tr -d ' ')"
+DB_COUNT="$(find "$DB_DIR" -maxdepth 1 \( -name 'localcraft-*.db' -o -name 'localcraft-*.db.gz' \) | wc -l | tr -d ' ')"
 log "汇总: 数据库快照 ${DB_COUNT} 份（保留 ${KEEP_DB}）  文件快照状态 ${FILES_STATUS}  users=${USER_CNT}"
 
 [ "$FILES_STATUS" = "failed" ] && exit 1

@@ -65,9 +65,9 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     lifespan=lifespan,
-    title="selftool API",
-    version=settings.selftool_version,
-    description="selftool — 内网工具 / Skill 共享平台后端",
+    title="localcraft API",
+    version=settings.localcraft_version,
+    description="localcraft — 内网工具 / Skill 共享平台后端",
     # 生产默认关闭（SRS FR-API-07），运维可通过 API_DOCS_ENABLED 临时打开
     docs_url="/docs" if settings.api_docs_enabled else None,
     redoc_url=None,
@@ -230,7 +230,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
         },
     )
     details: dict[str, Any] | None = None
-    if settings.selftool_debug:
+    if settings.localcraft_debug:
         details = {"exception": type(exc).__name__}
     return JSONResponse(
         status_code=500,

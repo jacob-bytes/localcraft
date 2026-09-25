@@ -3,13 +3,13 @@
 # scripts/disk-alert.sh — 磁盘 / inode / WAL / 备份新鲜度 / 配额水位告警
 #
 # 用途：在没有专业监控系统时，用定时器（建议每 15 分钟）跑一遍关键水位检查，
-#       有问题的写 journal + 落一份 /var/lib/selftool/ALERT.txt（便于路过的
+#       有问题的写 journal + 落一份 /var/lib/localcraft/ALERT.txt（便于路过的
 #       运维一眼看到）+ 可选调用外部告警命令。
 #
 # 告警方式（可同时使用）:
 #   1) stdout → 由 systemd 收集进 journal（默认，始终执行）
 #   2) 写 ${DATA_DIR}/ALERT.txt（文件存在 = 有告警；恢复正常时自动删除）
-#   3) SELTOOL_ALERT_CMD 指定的命令（例：scripts/alert-webhook.sh）
+#   3) LOCALCRAFT_ALERT_CMD 指定的命令（例：scripts/alert-webhook.sh）
 #
 # ── 配额水位阈值与后端**同一口径**（重要） ──────────────────────────────
 # 后端 `backend/app/services/settings_service.py` 里：
@@ -33,7 +33,7 @@
 #   scripts/disk-alert.sh                 # 检查并输出
 #   scripts/disk-alert.sh --quiet         # 仅在有告警时输出
 #
-# 建议的 timer：selftool-disk-alert.timer（15 分钟一次，本仓库未随包提供该 unit，
+# 建议的 timer：localcraft-disk-alert.timer（15 分钟一次，本仓库未随包提供该 unit，
 # 可用 systemd-run --on-calendar 或 cron 承载，见 docs/05 §10.5）。
 #
 # 依据: docs/05《部署与运维方案》§10.5（磁盘水位告警）、§9.6（容量监控阈值）
@@ -43,30 +43,30 @@
 # ============================================================
 set -uo pipefail
 
-# DATA_DIR / BACKUP_DIR 与 selftool.env 里的真实变量名一致（docs/05 §5.4）；
+# DATA_DIR / BACKUP_DIR 与 localcraft.env 里的真实变量名一致（docs/05 §5.4）；
 # 两者都没设时才用生产默认值，方便在沙箱里演练。
-DATA_DIR="${DATA_DIR:-${SELTOOL_DATA_DIR:-/var/lib/selftool}}"
-BACKUP_DIR="${BACKUP_DIR:-${SELTOOL_BACKUP_DIR:-${DATA_DIR}/backups}}"
-DB="${SELTOOL_DB:-${DATA_DIR}/selftool.db}"
-ALERT_FILE="${SELTOOL_ALERT_FILE:-${DATA_DIR}/ALERT.txt}"
+DATA_DIR="${DATA_DIR:-${LOCALCRAFT_DATA_DIR:-/var/lib/localcraft}}"
+BACKUP_DIR="${BACKUP_DIR:-${LOCALCRAFT_BACKUP_DIR:-${DATA_DIR}/backups}}"
+DB="${LOCALCRAFT_DB:-${DATA_DIR}/localcraft.db}"
+ALERT_FILE="${LOCALCRAFT_ALERT_FILE:-${DATA_DIR}/ALERT.txt}"
 
 # 阈值（百分比 / MB / 小时），默认值与 docs/05 §9.6、§10.5 一致
-WARN_PCT="${SELTOOL_ALERT_DISK_WARN:-80}"
-CRIT_PCT="${SELTOOL_ALERT_DISK_CRIT:-90}"
-INODE_WARN_PCT="${SELTOOL_ALERT_INODE_WARN:-80}"
-WAL_WARN_MB="${SELTOOL_ALERT_WAL_WARN_MB:-1024}"
+WARN_PCT="${LOCALCRAFT_ALERT_DISK_WARN:-80}"
+CRIT_PCT="${LOCALCRAFT_ALERT_DISK_CRIT:-90}"
+INODE_WARN_PCT="${LOCALCRAFT_ALERT_INODE_WARN:-80}"
+WAL_WARN_MB="${LOCALCRAFT_ALERT_WAL_WARN_MB:-1024}"
 #: 备份过期阈值（小时）。48 小时 = 连错过两轮每日备份，一定是链路坏了
-BACKUP_STALE_H="${SELTOOL_ALERT_BACKUP_STALE_H:-48}"
+BACKUP_STALE_H="${LOCALCRAFT_ALERT_BACKUP_STALE_H:-48}"
 #: 数据库体积提示阈值（MB），docs/05 §10.5 用 10240（即 10 GB，接近 SQLite 实践上限）
-DB_HINT_MB="${SELTOOL_ALERT_DB_HINT_MB:-10240}"
+DB_HINT_MB="${LOCALCRAFT_ALERT_DB_HINT_MB:-10240}"
 
 #: 与后端 settings_service.STORAGE_WARNING_DEFAULT_PCT 对齐的回落值
 QUOTA_WARN_DEFAULT_PCT=85
 #: 与后端 stats_service 的 quota.total_mb 兜底一致
 QUOTA_TOTAL_DEFAULT_MB=51200
 
-ALERT_CMD="${SELTOOL_ALERT_CMD:-}"
-SKIP_SYSTEMD="${SELTOOL_SKIP_SYSTEMD:-0}"
+ALERT_CMD="${LOCALCRAFT_ALERT_CMD:-}"
+SKIP_SYSTEMD="${LOCALCRAFT_SKIP_SYSTEMD:-0}"
 QUIET=0
 
 LEVEL=0            # 0=正常 1=警告 2=严重
@@ -213,7 +213,7 @@ fi
 # ------------------------------------------------------------
 # 6) 备份新鲜度与最近结果
 # ------------------------------------------------------------
-LATEST_BK="$(find "$BACKUP_DIR/db" -maxdepth 1 \( -name 'selftool-*.db' -o -name 'selftool-*.db.gz' \) -print 2>/dev/null | sort | tail -1)"
+LATEST_BK="$(find "$BACKUP_DIR/db" -maxdepth 1 \( -name 'localcraft-*.db' -o -name 'localcraft-*.db.gz' \) -print 2>/dev/null | sort | tail -1)"
 if [ -z "$LATEST_BK" ]; then
     add 2 "找不到任何数据库备份，备份链路可能从未成功运行（${BACKUP_DIR}/db）"
 else
@@ -228,20 +228,20 @@ else
 fi
 
 if [ "$SKIP_SYSTEMD" != "1" ] && command -v systemctl >/dev/null 2>&1; then
-    if systemctl is-failed --quiet selftool-backup.service 2>/dev/null; then
-        add 2 "selftool-backup.service 处于 failed 状态，请查看 journalctl -t selftool-backup -n 100"
+    if systemctl is-failed --quiet localcraft-backup.service 2>/dev/null; then
+        add 2 "localcraft-backup.service 处于 failed 状态，请查看 journalctl -t localcraft-backup -n 100"
     fi
-    if ! systemctl is-active --quiet selftool-backup.timer 2>/dev/null; then
-        add 1 "selftool-backup.timer 未在运行，自动备份不会触发"
+    if ! systemctl is-active --quiet localcraft-backup.timer 2>/dev/null; then
+        add 1 "localcraft-backup.timer 未在运行，自动备份不会触发"
     fi
     # 主服务
-    if ! systemctl is-active --quiet selftool.service 2>/dev/null; then
-        add 2 "selftool.service 未在运行"
+    if ! systemctl is-active --quiet localcraft.service 2>/dev/null; then
+        add 2 "localcraft.service 未在运行"
     fi
-    NRESTART="$(systemctl show -p NRestarts --value selftool.service 2>/dev/null || echo 0)"
+    NRESTART="$(systemctl show -p NRestarts --value localcraft.service 2>/dev/null || echo 0)"
     case "$NRESTART" in
         ''|*[!0-9]*) : ;;
-        *) [ "$NRESTART" -gt 5 ] && add 1 "selftool.service 累计重启 ${NRESTART} 次，请排查崩溃原因" ;;
+        *) [ "$NRESTART" -gt 5 ] && add 1 "localcraft.service 累计重启 ${NRESTART} 次，请排查崩溃原因" ;;
     esac
 fi
 
@@ -258,7 +258,7 @@ fi
 HOSTNAME_S="$(hostname 2>/dev/null || echo unknown)"
 LEVEL_NAME="WARN"
 [ "$LEVEL" -eq 2 ] && LEVEL_NAME="CRIT"
-SUMMARY="selftool 告警（主机 ${HOSTNAME_S}，级别 ${LEVEL_NAME}）"
+SUMMARY="localcraft 告警（主机 ${HOSTNAME_S}，级别 ${LEVEL_NAME}）"
 
 if [ "$QUIET" -eq 0 ]; then
     log "${SUMMARY}"
@@ -278,9 +278,9 @@ if [ -d "$DATA_DIR" ] && [ -w "$DATA_DIR" ]; then
         echo
         echo "详细排查命令:"
         echo "  df -h; df -i; du -sh ${DATA_DIR}/*"
-        echo "  journalctl -u selftool.service --since '1 hour ago' -p warning"
-        echo "  journalctl -t selftool-backup -n 100"
-        echo "  ${SELTOOL_PREFIX:-/opt/selftool}/scripts/verify-backup.sh"
+        echo "  journalctl -u localcraft.service --since '1 hour ago' -p warning"
+        echo "  journalctl -t localcraft-backup -n 100"
+        echo "  ${LOCALCRAFT_PREFIX:-/opt/localcraft}/scripts/verify-backup.sh"
     } > "$ALERT_FILE" 2>/dev/null || warn "写告警文件失败: ${ALERT_FILE}"
     chmod 0644 "$ALERT_FILE" 2>/dev/null || true
 else
@@ -288,7 +288,7 @@ else
 fi
 
 # 可选外部告警（例如 alert-webhook.sh）。
-# SELTOOL_ALERT_CMD 允许带参数，所以按空白切成数组后再执行；
+# LOCALCRAFT_ALERT_CMD 允许带参数，所以按空白切成数组后再执行；
 # 不用 eval，也不用无引号展开（那会踩 SC2086 且容易被消息内容注入）。
 if [ -n "$ALERT_CMD" ]; then
     ALERT_CMD_ARR=()

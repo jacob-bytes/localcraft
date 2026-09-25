@@ -1,13 +1,13 @@
 # ============================================================
-# selftool 主服务单元
-# 安装位置: /etc/systemd/system/selftool.service
+# localcraft 主服务单元
+# 安装位置: /etc/systemd/system/localcraft.service
 # 权限: 0644 root:root
-# 依赖文件: /etc/selftool/selftool.env (0640 root:selftool)
+# 依赖文件: /etc/localcraft/localcraft.env (0640 root:localcraft)
 # 来源: docs/05《部署与运维方案》§6.2（按仓库布局调整了 Documentation 路径）
 # ============================================================
 [Unit]
-Description=selftool - 内网工具与 Skill 共享平台
-Documentation=file:/opt/selftool/app/current/docs/05-部署与运维方案.md
+Description=localcraft - 内网工具与 Skill 共享平台
+Documentation=file:/opt/localcraft/app/current/docs/05-部署与运维方案.md
 # 网络与文件系统就绪后再启动，避免首次运行时挂载点尚未可用
 After=network-online.target local-fs.target
 Wants=network-online.target
@@ -15,7 +15,7 @@ Wants=network-online.target
 # 若确实需要"nginx 先起"，把下一行取消注释
 # After=nginx.service
 # 使用独立的 slice，便于对整套服务做 CPU/内存限额
-Slice=selftool.slice
+Slice=localcraft.slice
 
 [Service]
 # 启动完成判定：uvicorn 不发送 sd_notify，故使用 simple
@@ -24,17 +24,17 @@ Type=simple
 
 # ---------- 运行身份 ----------
 # 专用系统用户，无登录 shell，最小权限原则
-User=selftool
-Group=selftool
-# 关键目录：代码与 venv 在 /opt/selftool，运行数据在 /var/lib/selftool
-WorkingDirectory=/opt/selftool/app/current
+User=localcraft
+Group=localcraft
+# 关键目录：代码与 venv 在 /opt/localcraft，运行数据在 /var/lib/localcraft
+WorkingDirectory=/opt/localcraft/app/current
 
 # ---------- 配置 ----------
 # 环境变量文件：systemd 会在启动时读取并注入进程环境
 # 注意：文件内容不会出现在 systemctl show 的 Environment 里（更安全）
-EnvironmentFile=/etc/selftool/selftool.env
+EnvironmentFile=/etc/localcraft/localcraft.env
 # 兜底 PYTHONPATH，保证 `python -m app.cli` 能找到包
-Environment=PYTHONPATH=/opt/selftool/app/current
+Environment=PYTHONPATH=/opt/localcraft/app/current
 # 关闭 .pyc 写入（配合 ProtectSystem=strict，避免只读文件系统报错）
 Environment=PYTHONDONTWRITEBYTECODE=1
 # 让 Python 立即刷新 stdout/stderr，日志在 journal 中按行及时可见
@@ -45,19 +45,19 @@ Environment=PYTHONUNBUFFERED=1
 # --workers 1：SQLite WAL 单写者，多 worker 只会加剧写锁竞争（docs/05 §6.3）
 # --proxy-headers + --forwarded-allow-ips：信任 nginx 传来的 X-Forwarded-*
 # --timeout-graceful-shutdown：收到 SIGTERM 后给在途请求（含大文件下载）留出收尾时间
-ExecStart=/opt/selftool/venv/bin/python -m uvicorn app.main:app \
-    --host ${SELTOOL_HOST} \
-    --port ${SELTOOL_PORT} \
+ExecStart=/opt/localcraft/venv/bin/python -m uvicorn app.main:app \
+    --host ${LOCALCRAFT_HOST} \
+    --port ${LOCALCRAFT_PORT} \
     --workers 1 \
     --proxy-headers \
     --forwarded-allow-ips=127.0.0.1 \
     --timeout-keep-alive 15 \
     --timeout-graceful-shutdown 30 \
     --no-server-header \
-    --log-level ${SELTOOL_LOG_LEVEL}
+    --log-level ${LOCALCRAFT_LOG_LEVEL}
 
 # 启动后等待就绪探针通过；失败则单元进入 failed，便于监控发现
-ExecStartPost=/opt/selftool/scripts/wait-healthy.sh --url http://127.0.0.1:${SELTOOL_PORT}/readyz --timeout 60
+ExecStartPost=/opt/localcraft/scripts/wait-healthy.sh --url http://127.0.0.1:${LOCALCRAFT_PORT}/readyz --timeout 60
 
 # ---------- 重启策略 ----------
 # 只在异常退出时重启（正常 stop 不重启）
@@ -79,8 +79,8 @@ KillMode=mixed
 # ---------- 日志 ----------
 StandardOutput=journal
 StandardError=journal
-# 日志标识，便于 journalctl -t selftool 精确过滤
-SyslogIdentifier=selftool
+# 日志标识，便于 journalctl -t localcraft 精确过滤
+SyslogIdentifier=localcraft
 
 # ---------- 资源限制 ----------
 # 文件描述符上限。原因见 docs/05 §6.5：每个并发连接 + 每个正在 sendfile 的
@@ -142,7 +142,7 @@ SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
 # 关键：ProtectSystem=strict 让整个文件系统只读，
 # 因此必须显式列出服务需要写入的路径，否则应用启动会因 EROFS 失败
-ReadWritePaths=/var/lib/selftool /var/log/selftool
+ReadWritePaths=/var/lib/localcraft /var/log/localcraft
 
 [Install]
 WantedBy=multi-user.target

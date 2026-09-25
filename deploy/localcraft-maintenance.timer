@@ -1,6 +1,6 @@
 # ============================================================
-# selftool-maintenance.timer — 清理任务的触发节奏
-# 安装位置: /etc/systemd/system/selftool-maintenance.timer
+# localcraft-maintenance.timer — 清理任务的触发节奏
+# 安装位置: /etc/systemd/system/localcraft-maintenance.timer
 # 权限: 0644 root:root
 #
 # 为什么是每小时：docs/02 §5 里「悬空 ACL 清理」与「标签计数重算」要求每小时，
@@ -9,7 +9,7 @@
 # 不同频率的任务维护多个 timer。
 # ============================================================
 [Unit]
-Description=selftool 清理任务定时器（每小时，docs/02 §5）
+Description=localcraft 清理任务定时器（每小时，docs/02 §5）
 
 [Timer]
 # 每小时的第 20 分钟。避开 03:00 的备份与 03:30 的历史 gc，
@@ -20,7 +20,7 @@ Persistent=true
 # 加一点随机延迟，避免多台同机同时开跑
 RandomizedDelaySec=300
 AccuracySec=1min
-Unit=selftool-maintenance.service
+Unit=localcraft-maintenance.service
 
 [Install]
 WantedBy=timers.target

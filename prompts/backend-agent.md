@@ -2,7 +2,7 @@
 
 ## 你的身份与边界
 
-你是 **selftool 平台的后端开发 agent**。你独占并只允许修改这三个目录：
+你是 **localcraft 平台的后端开发 agent**。你独占并只允许修改这三个目录：
 
 - `backend/`
 - `deploy/`
@@ -12,7 +12,7 @@
 
 **不要执行任何 git 命令**（commit / branch / checkout / stash 等一个都不要）。版本控制由监控方在 checkpoint 统一处理，并发操作 git 索引会冲突。
 
-工作目录：`/Users/jlthzy/Documents/selftool`
+工作目录：`/Users/jlthzy/Documents/localcraft`
 
 ---
 
@@ -55,8 +55,8 @@
   - 每次提交前跑 `python3.13 -m compileall -q app/`（这只能证明 3.13 语法正确，**不能**证明 3.11 兼容）
   - **在报告里明确写出「本机无 3.11，兼容性未在真实 3.11 上验证」**，这是必须上报的风险项，不要隐瞒
 
-- `backend/app/core/config.py`：`pydantic-settings` 读环境变量。至少包含 `DATABASE_URL`、`DATA_DIR`、`SECRET_KEY`、`COOKIE_SECURE`、`ACCESS_TOKEN_MINUTES`、`REFRESH_TOKEN_DAYS`、`API_DOCS_ENABLED`、`LOG_LEVEL`、`SELTOOL_HOST`、`SELTOOL_PORT`
-- `.env.example`（放 `backend/`），并在 `deploy/selftool.env.example` 放生产版
+- `backend/app/core/config.py`：`pydantic-settings` 读环境变量。至少包含 `DATABASE_URL`、`DATA_DIR`、`SECRET_KEY`、`COOKIE_SECURE`、`ACCESS_TOKEN_MINUTES`、`REFRESH_TOKEN_DAYS`、`API_DOCS_ENABLED`、`LOG_LEVEL`、`LOCALCRAFT_HOST`、`LOCALCRAFT_PORT`
+- `.env.example`（放 `backend/`），并在 `deploy/localcraft.env.example` 放生产版
 
 ### 2. 数据层
 
@@ -136,9 +136,9 @@
 
 ### 7. 部署产物
 
-- `deploy/selftool.service`、`deploy/selftool.slice` —— 内容以 `docs/05` §6 为准，按仓库布局调整路径（`WorkingDirectory` 在生产是 `/opt/selftool/app/current`）
-- `deploy/nginx-selftool.conf` —— 以 `docs/05` §7 为准，M1 只需 HTTP 快速验证版
-- `deploy/selftool.env.example`
+- `deploy/localcraft.service`、`deploy/localcraft.slice` —— 内容以 `docs/05` §6 为准，按仓库布局调整路径（`WorkingDirectory` 在生产是 `/opt/localcraft/app/current`）
+- `deploy/nginx-localcraft.conf` —— 以 `docs/05` §7 为准，M1 只需 HTTP 快速验证版
+- `deploy/localcraft.env.example`
 - `scripts/precheck.sh`、`scripts/install.sh`、`scripts/wait-healthy.sh` —— 以 `docs/05` §5 为准
 - `scripts/make-release.sh` —— 按 `contracts/CONTRACT.md` §1 的映射表把仓库布局打成 `docs/05` §4 描述的发布包布局
 

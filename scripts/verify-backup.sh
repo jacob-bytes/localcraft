@@ -15,14 +15,14 @@
 # ============================================================
 set -uo pipefail
 
-DATA_DIR="${SELTOOL_DATA_DIR:-/var/lib/selftool}"
-BACKUP_ROOT="${SELTOOL_BACKUP_DIR:-$DATA_DIR/backups}"
+DATA_DIR="${LOCALCRAFT_DATA_DIR:-/var/lib/localcraft}"
+BACKUP_ROOT="${LOCALCRAFT_BACKUP_DIR:-$DATA_DIR/backups}"
 DB_DIR="$BACKUP_ROOT/db"
 FILES_BACKUP_DIR="$BACKUP_ROOT/files"
 
 EXPECT_TOOLS=""
 EXPECT_FILES=""
-SAMPLE_LIMIT="${SELTOOL_VERIFY_SAMPLE:-5}"
+SAMPLE_LIMIT="${LOCALCRAFT_VERIFY_SAMPLE:-5}"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -50,7 +50,7 @@ command -v sqlite3 >/dev/null 2>&1 || { echo "  [ FAIL ] 缺少 sqlite3"; exit 1
 # 1) 备份文件存在性
 # ------------------------------------------------------------
 echo "-- 1) 备份文件存在性"
-LATEST_DB="$(find "$DB_DIR" -maxdepth 1 \( -name 'selftool-*.db' -o -name 'selftool-*.db.gz' \) -print 2>/dev/null | sort | tail -1)"
+LATEST_DB="$(find "$DB_DIR" -maxdepth 1 \( -name 'localcraft-*.db' -o -name 'localcraft-*.db.gz' \) -print 2>/dev/null | sort | tail -1)"
 if [ -z "$LATEST_DB" ]; then
     bad "找不到任何数据库备份（${DB_DIR}）"
 else
@@ -98,7 +98,7 @@ fi
 # ------------------------------------------------------------
 echo
 echo "-- 3) 真实解压 + PRAGMA integrity_check"
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/selftool-verify-XXXXXX")"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/localcraft-verify-XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 
 CAND="$WORK/candidate.db"
@@ -165,7 +165,7 @@ fi
 # ------------------------------------------------------------
 echo
 echo "-- 4) 保留份数与磁盘"
-N_DB="$(find "$DB_DIR" -maxdepth 1 \( -name 'selftool-*.db' -o -name 'selftool-*.db.gz' \) | wc -l | tr -d ' ')"
+N_DB="$(find "$DB_DIR" -maxdepth 1 \( -name 'localcraft-*.db' -o -name 'localcraft-*.db.gz' \) | wc -l | tr -d ' ')"
 N_FILES="$(find "$FILES_BACKUP_DIR" -maxdepth 1 -type d -name 'files-*' 2>/dev/null | wc -l | tr -d ' ')"
 ok "数据库快照 ${N_DB} 份 / 文件快照 ${N_FILES} 份"
 # --expect-files：把"文件快照里到底有多少个文件"与期望值对账。

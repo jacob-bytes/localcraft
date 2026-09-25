@@ -1,7 +1,7 @@
 [project]
-name = "selftool-backend"
+name = "localcraft-backend"
 version = "1.0.0"
-description = "selftool — 内网工具 / Skill 共享平台后端"
+description = "localcraft — 内网工具 / Skill 共享平台后端"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi",

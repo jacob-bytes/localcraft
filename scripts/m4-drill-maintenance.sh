@@ -24,12 +24,12 @@ PORT="${1:-8000}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BACKEND="$ROOT/backend"
-SANDBOX="${SELTOOL_DRILL_SANDBOX:-$BACKEND/dist/drill}"
+SANDBOX="${LOCALCRAFT_DRILL_SANDBOX:-$BACKEND/dist/drill}"
 RELEASE_DIR="$(find "$SANDBOX/releases" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | head -1)"
 VPY="$SANDBOX/opt/venv/bin/python"
 VDATA="$SANDBOX/var"
-VENVF="$SANDBOX/etc/selftool.env"
-TB="$VDATA/selftool.db"
+VENVF="$SANDBOX/etc/localcraft.env"
+TB="$VDATA/localcraft.db"
 BASE="http://127.0.0.1:${PORT}"
 FAIL=0
 
@@ -57,9 +57,9 @@ q() { sqlite3 "$TB" "$1"; }
 # 这样连脚本本身也一起验证了。
 run_maint() {
     local task="${1:-all}"
-    SELTOOL_PREFIX="$SANDBOX/opt" \
-    SELTOOL_DATA_DIR="$VDATA" \
-    SELTOOL_ENV_FILE="$VENVF" \
+    LOCALCRAFT_PREFIX="$SANDBOX/opt" \
+    LOCALCRAFT_DATA_DIR="$VDATA" \
+    LOCALCRAFT_ENV_FILE="$VENVF" \
         "$SCRIPT_DIR/run-maintenance.sh" --task "$task" 2>&1
 }
 
@@ -70,16 +70,16 @@ start_service() {
     set +a
     ( cd "$SANDBOX/opt/app/current" || exit 1
       nohup "$VPY" -m uvicorn app.main:app --host 127.0.0.1 --port "$PORT" --workers 1 \
-          >> "$SANDBOX/log/selftool-stdout.log" 2>&1 &
-      echo $! > "$VDATA/selftool.pid" )
+          >> "$SANDBOX/log/localcraft-stdout.log" 2>&1 &
+      echo $! > "$VDATA/localcraft.pid" )
     "$RELEASE_DIR/scripts/wait-healthy.sh" --url "${BASE}/readyz" --timeout 60 >/dev/null \
         || die "服务起不来"
 }
 stop_service() {
-    if [ -f "$VDATA/selftool.pid" ] && kill -0 "$(cat "$VDATA/selftool.pid")" 2>/dev/null; then
-        kill "$(cat "$VDATA/selftool.pid")" 2>/dev/null || true
+    if [ -f "$VDATA/localcraft.pid" ] && kill -0 "$(cat "$VDATA/localcraft.pid")" 2>/dev/null; then
+        kill "$(cat "$VDATA/localcraft.pid")" 2>/dev/null || true
         for _ in $(seq 1 30); do
-            kill -0 "$(cat "$VDATA/selftool.pid")" 2>/dev/null || break
+            kill -0 "$(cat "$VDATA/localcraft.pid")" 2>/dev/null || break
             sleep 1
         done
     fi
@@ -331,7 +331,7 @@ RC=${PIPESTATUS[0]}
 
 log "11) --dry-run 不应改动数据"
 DL_SNAPSHOT="$(q 'SELECT COUNT(*) FROM download_logs;')"
-SELTOOL_PREFIX="$SANDBOX/opt" SELTOOL_DATA_DIR="$VDATA" SELTOOL_ENV_FILE="$VENVF" \
+LOCALCRAFT_PREFIX="$SANDBOX/opt" LOCALCRAFT_DATA_DIR="$VDATA" LOCALCRAFT_ENV_FILE="$VENVF" \
     "$SCRIPT_DIR/run-maintenance.sh" --dry-run >/dev/null 2>&1
 DL_AFTER_DRY="$(q 'SELECT COUNT(*) FROM download_logs;')"
 [ "$DL_SNAPSHOT" = "$DL_AFTER_DRY" ] && ok "--dry-run 未改动数据" || bad "--dry-run 竟然改了数据"
