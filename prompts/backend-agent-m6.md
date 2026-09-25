@@ -157,8 +157,8 @@ revoke 后同一 Token: 仍可用!     ← 缺陷
 
 ### J-6. 两处注释/docstring 同步（各 1 行）
 
-- `app/services/tool_service.py`：注释仍写「翻页时整个 facets 键省略」，
-  与实现（始终返回该键，`page>1` 为 `null`）矛盾。**文档已改（§19.4），注释同步改**
+- ~~`app/services/tool_service.py` 的 facets 注释~~ —— **监控方在实施 O3 时已顺手修正**，本项无需再做
+- `app/cli.py` 的 `gc-versions` docstring 仍需改（引用已删除的 `selftool-gc.*`）
 - `app/cli.py` 的 `gc-versions` docstring：仍在引用 `selftool-gc.*`
   （该 unit 已判定为与 `selftool-maintenance.*` 重复而删除）。改为引用
   `selftool-maintenance.timer`

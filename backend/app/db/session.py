@@ -23,16 +23,29 @@ ensure_runtime_dirs()
 
 
 def _build_engine() -> AsyncEngine:
+    # 内存库由 SQLAlchemy 强制使用 StaticPool，不接受 pool_size / max_overflow。
+    is_memory = ":memory:" in settings.database_url
+
     kwargs: dict[str, Any] = {
         "echo": settings.db_echo,
-        "pool_pre_ping": True,
+        # O1：SQLite 下关闭 pool_pre_ping。
+        # pre_ping 的用途是防「连接被中间设备悄悄切断」——这是**网络数据库**的问题；
+        # SQLite 是本地文件，连接不会那样失效，pre_ping 只是每次取连接白加一次往返。
+        # 实测（c=20，只做「取连接 + SELECT 1」）：CPU 1.155 → 0.840 ms，
+        # 吞吐 3000 → 3968 req/s。见 docs/11-优化点分析.md §1.5 / O1。
+        "pool_pre_ping": not settings.is_sqlite,
         "future": True,
     }
+
     if settings.is_sqlite:
-        # SQLite 文件库用默认的 NullPool/QueuePool 均可；显式给出小的池，
-        # 百人规模 + 单写者模型下不需要更大的池（README「SQLite 风险说明」第 2 条）。
         kwargs["connect_args"] = {"check_same_thread": False}
-    else:
+
+    # O2：池参数对 SQLite 与 PG **都**显式设置。
+    # 此前只在非 SQLite 分支设置，导致 SQLite 部署改了 DB_POOL_SIZE / DB_MAX_OVERFLOW
+    # 却完全不生效 —— 「配置项存在但不生效」比不存在更糟，它会让人以为已经调过。
+    # 实测池大小对吞吐无影响（50+50 ≈ 5+10，见 docs/11 §1.5），保留可配是为了
+    # 让运维能按实际连接数调整，而不是让配置项变成摆设。
+    if not is_memory:
         kwargs["pool_size"] = settings.db_pool_size
         kwargs["max_overflow"] = settings.db_max_overflow
 

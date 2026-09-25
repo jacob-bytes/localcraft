@@ -61,11 +61,22 @@ def build_list_item(
     can_download: bool,
     ttl_hours: int,
 ) -> ToolListItem:
-    """ORM → 卡片。字段逐条对应 docs/03 §3.3 的响应示例。"""
+    """ORM → 卡片。字段逐条对应 docs/03 §3.3 的响应示例。
+
+    O3：嵌套的 `CategoryBrief` / `UserBrief` 用 `model_construct` 而非构造器。
+    两者都是「三个字段原样搬运」的载体，数据直接来自 ORM 实例（已强类型），
+    Pydantic 的校验在这里没有信息可增加，却占掉构造开销的 71%
+    （实测 24 条目：完整校验 0.242 ms vs 纯构造 0.070 ms，docs/11-优化点分析.md §1.2）。
+
+    **注意**：只有这两个内部 brief 走 `model_construct`。外层的 `ToolListItem`
+    仍走正常构造 —— 它包含 `cover_url`、`has_pending_version` 等**计算字段**，
+    保留校验才能在字段拼错时立刻失败，这个保障值得那点开销。
+    """
     sees_pending = viewer_user_id == tool.owner_id or bool(
         set(viewer_roles) & PENDING_VISIBLE_ROLES
     )
     current = tool.current_version
+    category = tool.category
     return ToolListItem(
         id=tool.id,
         slug=tool.slug,
@@ -74,20 +85,20 @@ def build_list_item(
         tool_type=tool.tool_type,
         visibility=tool.visibility,
         category=(
-            CategoryBrief(
-                id=tool.category.id,
-                slug=tool.category.slug,
-                name=tool.category.name,
-                icon=tool.category.icon,
+            CategoryBrief.model_construct(
+                id=category.id,
+                slug=category.slug,
+                name=category.name,
+                icon=category.icon,
             )
-            if tool.category is not None
+            if category is not None
             else None
         ),
         # 展示用 display_name（保留原始大小写）；服务端对 `?tag=` 入参做同样的
         # 归一化，所以前端拿这个值回填 URL 依然能正确筛选（FR-TAX-03）。
         tags=[t.display_name for t in tool.tags],
         cover_url=cover_url_for(tool, ttl_hours=ttl_hours),
-        owner=UserBrief(
+        owner=UserBrief.model_construct(
             id=tool.owner.id,
             username=tool.owner.username,
             display_name=tool.owner.display_name,
@@ -117,8 +128,11 @@ async def list_portal_tools(
 ) -> ToolListResponse:
     """门户列表 + facets。
 
-    **`facets` 只在 `page == 1` 时返回**，翻页时整个键省略（docs/03 §3.3），
-    避免每次翻页都重复算一遍聚合。
+    **`facets` 的聚合只在 `page == 1` 时计算**（避免每次翻页都重复算）。
+
+    但 `facets` **这个键始终存在**：`page == 1` 时是对象，翻页时为 `null`
+    —— 见 contracts/CONTRACT.md §19.4 与 docs/03 §3.3。
+    （原先这里写「翻页时整个键省略」，与实现不符，已按裁定修正。）
     """
     # 每个请求解析一次签名 TTL（内部有 60 秒进程内缓存），避免逐条工具查设置
     ttl_hours = await image_signature_service.get_ttl_hours(session)
@@ -437,7 +451,7 @@ async def build_detail(
         history_version_count=history_versions,
         download_count=tool.download_count,
         view_count=tool.view_count,
-        owner=UserBrief(
+        owner=UserBrief.model_construct(
             id=tool.owner.id,
             username=tool.owner.username,
             display_name=tool.owner.display_name,
