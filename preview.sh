@@ -37,7 +37,7 @@ if [[ ! -f "$ROOT/web/dist/index.html" ]]; then
 fi
 
 if [[ "$RESET" == "1" ]]; then
-  echo "==> 丢弃预览数据（$PREVIEW）"
+  echo "==> 丢弃预览数据（${PREVIEW}）"
   rm -rf "$PREVIEW"
 fi
 
