@@ -1008,6 +1008,49 @@ export interface RevokeSessionsResponse {
 /* 用户组（docs/04 §6.14）                                                      */
 /* -------------------------------------------------------------------------- */
 
+/* -------------------------------------------------------------------------- */
+/* M6 新增（contracts/CONTRACT.md §20.4）                                       */
+/* -------------------------------------------------------------------------- */
+
+/** GET /api/v1/directory —— 最小披露的主体目录，供 ACL 授权时搜索。
+ *
+ * 任何已登录用户可调。**刻意不含邮箱/状态/角色**（§20.4③），前端不要期待这些字段。
+ */
+export interface DirectoryUser {
+  id: number;
+  username: string;
+  display_name: string;
+}
+
+export interface DirectoryGroup {
+  id: number;
+  name: string;
+  member_count: number;
+}
+
+export interface DirectoryResponse {
+  users: DirectoryUser[];
+  groups: DirectoryGroup[];
+}
+
+/** DELETE /admin/categories/{id} —— 软删除（FR-TAX-02）。 */
+export interface CategoryDeleteResponse {
+  status: string;
+  soft_deleted: boolean;
+}
+
+/** DELETE /admin/groups/{id} —— 附被清理 ACL 条目的工具 id。 */
+export interface GroupDeleteResponse {
+  status: string;
+  cleaned_acl_entries: number;
+  affected_tools: number[];
+}
+
+/** 只有 {"status":"ok"} 的通用响应（移除组成员、删除 Token 记录）。 */
+export interface OkResponse {
+  status: string;
+}
+
 export interface GroupOut {
   id: number;
   name: string;

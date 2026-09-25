@@ -2,6 +2,7 @@ import { request, upload, type QueryValue } from "./client";
 import type {
   AclReplaceRequest,
   AclResponse,
+  DirectoryResponse,
   DownloadLogItem,
   ImagePatchRequest,
   MyToolListParams,
@@ -38,6 +39,23 @@ export const profileQueryKey = ["me", "profile"] as const;
 export const myStatsQueryKey = ["me", "stats"] as const;
 
 /** GET /me/profile — profile + usage in one call (docs/04 §6.5). */
+/** GET /api/v1/directory —— ACL 授权时搜索用户/用户组（M6 J-1）。
+ *
+ * 任何已登录用户可调；后端**最小披露**（用户仅 id/username/display_name，
+ * 组仅 id/name/member_count）。`q` 为空时返回前 N 条。
+ */
+export function searchDirectory(
+  params: { q?: string; type?: "user" | "group"; limit?: number } = {},
+  signal?: AbortSignal,
+): Promise<DirectoryResponse> {
+  const query = new URLSearchParams();
+  if (params.q) query.set("q", params.q);
+  if (params.type) query.set("type", params.type);
+  if (params.limit) query.set("limit", String(params.limit));
+  const suffix = query.toString();
+  return request<DirectoryResponse>(`/directory${suffix ? `?${suffix}` : ""}`, { signal });
+}
+
 export function fetchProfile(signal?: AbortSignal): Promise<Profile> {
   return request<Profile>("/me/profile", { signal });
 }

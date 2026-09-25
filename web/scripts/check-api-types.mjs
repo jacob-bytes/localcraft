@@ -274,6 +274,13 @@ const PAIRS = [
   "AdminRoleReplaceRequest→AdminRoleReplaceRequest",
   "ResetPasswordResponse→ResetPasswordResponse",
   "RevokeSessionsResponse→RevokeSessionsResponse",
+  // M6（契约 §20.4）
+  "DirectoryResponse→DirectoryResponse",
+  "DirectoryUser→DirectoryUser",
+  "DirectoryGroup→DirectoryGroup",
+  "CategoryDeleteResponse→CategoryDeleteResponse",
+  "GroupDeleteResponse→GroupDeleteResponse",
+  "OkResponse→OkResponse",
   "GroupOut→GroupOut",
   "GroupListResponse→GroupListResponse",
   "GroupMemberListResponse→GroupMemberListResponse",

@@ -21,6 +21,7 @@ import { toast } from "sonner";
 import { getErrorMessage } from "@/api/client";
 import {
   deleteTool,
+  deleteVersion,
   fetchMyStats,
   fetchMyTools,
   myStatsQueryKey,
@@ -131,10 +132,33 @@ export default function MyToolsPage() {
   });
 
   const statusMutation = useMutation({
-    mutationFn: ({ id, action }: { id: number; action: "submit" | "withdraw" }) =>
-      action === "submit" ? submitTool(id) : withdrawTool(id),
+    mutationFn: ({
+      id,
+      action,
+      version,
+    }: {
+      id: number;
+      action: "submit" | "withdraw" | "withdraw_version";
+      version?: string;
+    }) => {
+      if (action === "submit") return submitTool(id);
+      // M6（前端 M5 第 3 节）：`pending_update` 的撤回必须走**删除待审版本** ——
+      // `WITHDRAWAL` 动作只覆盖 `pending`，对 `pending_update` 会返回 409 STATE_CONFLICT。
+      // 后端 J-5 保证删掉最后一个待审版本后工具状态回落为 approved。
+      if (action === "withdraw_version") {
+        if (!version) throw new Error("缺少待审版本号");
+        return deleteVersion(id, version);
+      }
+      return withdrawTool(id);
+    },
     onSuccess: (_data, variables) => {
-      toast.success(variables.action === "submit" ? "已提交审批" : "已撤回提交");
+      toast.success(
+        variables.action === "submit"
+          ? "已提交审批"
+          : variables.action === "withdraw_version"
+            ? "已撤回待审版本，工具回退到当前版本继续服务"
+            : "已撤回提交",
+      );
       // Prefix invalidation (no args) on purpose — the live key carries the
       // active tab's statuses and page size (docs/04 §9).
       void queryClient.invalidateQueries({ queryKey: ["me", "tools"] });
@@ -255,7 +279,15 @@ export default function MyToolsPage() {
               tool={tool}
               onNavigate={(path) => navigate(path)}
               onSubmit={() => statusMutation.mutate({ id: tool.id, action: "submit" })}
-              onWithdraw={() => statusMutation.mutate({ id: tool.id, action: "withdraw" })}
+              onWithdraw={() =>
+                tool.status === "pending_update"
+                  ? statusMutation.mutate({
+                      id: tool.id,
+                      action: "withdraw_version",
+                      version: tool.pending_version ?? undefined,
+                    })
+                  : statusMutation.mutate({ id: tool.id, action: "withdraw" })
+              }
               onDelete={() => setPendingDelete(tool)}
             />
           ))}
@@ -413,7 +445,7 @@ function MyToolRow({
               {pending ? (
                 <DropdownMenuItem onSelect={onWithdraw}>
                   <Undo2 aria-hidden="true" className="size-4" />
-                  撤回提交
+                  {tool.status === "pending_update" ? "撤回待审版本" : "撤回提交"}
                 </DropdownMenuItem>
               ) : null}
               <DropdownMenuItem onSelect={() => onNavigate(`/tools/${tool.slug}`)}>
