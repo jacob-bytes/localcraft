@@ -44,7 +44,27 @@ jobs:
         run: python -m ruff check .
 
       - name: pytest + 覆盖率
-        run: python -m pytest --cov=app --cov-report=term-missing
+        # 失败时把摘要回显成 annotation。
+        # 为什么需要这一步：公开仓库的 job 原始日志要仓库 admin 权限才能通过
+        # API 拉取，而没有管理权限的贡献者（以及自动化排查）只能看到
+        # 「Process completed with exit code 1」。annotation 是公开可读的，
+        # 把失败摘要放进去，红叉就不再是一句无信息量的报错。
+        run: |
+          set +e
+          python -m pytest --cov=app --cov-report=term-missing 2>&1 | tee "$RUNNER_TEMP/pytest.log"
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            # 注意 ${rc} 的花括号不能省：后面紧跟全角「）」，
+            # `${rc}）` 会让 bash 把变量名解析歪掉（本项目已踩过一次同类坑）。
+            detail="$(grep -E '^(FAILED|ERROR)|^E   |^E  |^assert|[0-9]+ (passed|failed|error)' \
+              "$RUNNER_TEMP/pytest.log" | tail -n 60 | head -c 55000)"
+            # 先转义 %，再把换行转成 %0A —— workflow command 的转义要求。
+            # 替换串里不要加引号，`${v//a/'b'}` 会把引号当字面量写进结果。
+            detail="${detail//'%'/'%25'}"
+            detail="${detail//$'\n'/%0A}"
+            echo "::error::pytest 失败（exit ${rc}）。失败摘要：%0A${detail}"
+          fi
+          exit "$rc"
 
       - name: 守卫 openapi.json 与实现同步
         # 重新导出快照后若与仓库中的文件有差异，说明接口改了但没更新

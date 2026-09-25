@@ -47,7 +47,7 @@ if [[ ! -x "$PY" ]]; then
     exit 1
   fi
 
-  echo "==> 创建后端虚拟环境（$BE/.venv，使用 $PYTHON_BIN）"
+  echo "==> 创建后端虚拟环境（$BE/.venv，使用 ${PYTHON_BIN}）"
   "$PYTHON_BIN" -m venv "$BE/.venv"
   "$PY" -m pip install --quiet --upgrade pip
 
