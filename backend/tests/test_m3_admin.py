@@ -388,7 +388,8 @@ async def test_revoked_token_rejected(client, seeded) -> None:
 
     after = await client.get(TOOLS, headers=token_auth)
     assert after.status_code == 401
-    assert after.json()["code"] in {"TOKEN_REVOKED", "UNAUTHENTICATED"}
+    # M4 修正：吊销就是吊销，不再返回 UNAUTHENTICATED（契约 §16.4）
+    assert after.json()["code"] == "TOKEN_REVOKED"
 
 
 async def test_token_scope_cannot_exceed_creator(client, seeded) -> None:
@@ -533,9 +534,10 @@ async def test_disable_user_revokes_tokens_and_sessions(client, seeded) -> None:
 
     # refresh token 立即失效
     assert (await client.post("/api/v1/auth/refresh")).status_code in (401, 403)
-    # Token 立即失效（403 ACCOUNT_DISABLED 或 401）
+    # Token 立即失效：M4 起固定为 401 TOKEN_REVOKED（契约 §16.4）
     after = await client.get(TOOLS, headers=token_auth)
-    assert after.status_code in (401, 403), after.text
+    assert after.status_code == 401, after.text
+    assert after.json()["code"] == "TOKEN_REVOKED", after.text
 
     async with SessionLocal() as session:
         row = await session.get(ApiToken, token_id)

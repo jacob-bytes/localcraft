@@ -17,7 +17,11 @@ from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
 
 from app.core.config import settings
-from app.core.errors import TokenExpiredError, TokenRevokedError, ValidationError
+from app.core.errors import (
+    TokenExpiredError,
+    UnauthenticatedError,
+    ValidationError,
+)
 
 # ---------------------------------------------------------------------------
 # 密码哈希 —— Argon2id（docs/01 FR-AUTH-05）
@@ -164,10 +168,13 @@ def decode_access_token(token: str) -> dict[str, Any]:
     except jwt.ExpiredSignatureError as exc:
         raise TokenExpiredError() from exc
     except jwt.PyJWTError as exc:
-        raise TokenRevokedError("凭证无效") from exc
+        # 签名不对 / 结构不对 —— 属于「凭证格式非法」，不是「已签发后被吊销」。
+        # 两者都会让前端做不同的事：UNAUTHENTICATED 直接跳登录，
+        # TOKEN_REVOKED 提示「登录已失效」。这里必须是前者。
+        raise UnauthenticatedError("凭证无效") from exc
 
     if payload.get("type") != TOKEN_TYPE_ACCESS:
-        raise TokenRevokedError("凭证类型不正确")
+        raise UnauthenticatedError("凭证类型不正确")
     return payload
 
 

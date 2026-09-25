@@ -29,6 +29,11 @@ from app.api.public import (
 )
 from app.core.deps import AUTH_DEP_ATTR, PASSWORD_GATE_ATTR
 from app.main import app
+from tests.m4_helpers import (
+    documented_admin_endpoints,
+    normalize_path,
+    normalized_omissions,
+)
 
 HTTP_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
 
@@ -194,33 +199,60 @@ def test_spa_fallback_is_the_only_non_api_catch_all() -> None:
 
 
 def test_no_undeclared_admin_paths() -> None:
-    """反向断言：`/admin/*` 下不允许出现冻结清单之外的路径。
+    """`/admin/*` 必须与 **docs/03 §2.5 的权威清单**逐条一致（契约 §16.5）。
 
-    这条与上面的精确相等断言是**双重保险**：即使有人把新路径加进了
-    `M3_ENDPOINTS` 常量（那会让上面那条通过），这里也会因为
-    「它不在 docs/03 §2.5 的清单里」而失败 —— 清单本身也得是诚实的。
+    这条与上面的「精确等于冻结常量」是双重保险：
+    即使有人把新路径加进 `M3_TOTAL_ENDPOINTS` 常量（那会让上面那条通过），
+    这里仍会因为「它不在 docs/03 §2.5 里」而失败 —— 清单本身也得是诚实的。
+
+    路径参数名归一化后再比（文档写 `{id}`，实现写 `{tool_id}`，属命名差异）。
     """
-    documented = {
-        "/api/v1/admin/approvals",
-        "/api/v1/admin/approvals/batch-approve",
-        "/api/v1/admin/approvals/history",
-        "/api/v1/admin/approvals/{tool_id}/approve",
-        "/api/v1/admin/approvals/{tool_id}/reject",
-        "/api/v1/admin/approvals/{tool_id}/offline",
-        "/api/v1/admin/approvals/{tool_id}/relist",
-        "/api/v1/admin/approval-whitelist",
-        "/api/v1/admin/approval-whitelist/{user_id}",
-        "/api/v1/admin/settings",
-    } | {path for _m, path in M3_ENDPOINTS}
-    undeclared = sorted({p for _m, p, _r in ALL_ROUTES if "/admin/" in p} - documented)
-    assert not undeclared, f"docs/03 §2.5 未列出的 admin 路径: {undeclared}"
+    actual = {
+        (method, normalize_path(path))
+        for method, path, _route in ALL_ROUTES
+        if path.startswith("/api/v1/admin")
+    }
+    documented = documented_admin_endpoints()
+
+    phantom = sorted(actual - documented - normalized_omissions())
+    assert not phantom, (
+        "以下 admin 接口实现里有、但 docs/03 §2.5 未列出（且不属于 §5.2 的已知例外）：\n  "
+        + "\n  ".join(f"{m} {p}" for m, p in phantom)
+    )
+
+    missing = sorted(documented - actual)
+    assert not missing, (
+        "以下 admin 接口 docs/03 §2.5 列了、但实现里没有：\n  "
+        + "\n  ".join(f"{m} {p}" for m, p in missing)
+    )
+
+    # 已知例外只能是那两个代创建接口，多一个都要重新走契约 §9 变更流程
+    assert actual - documented == set(normalized_omissions()), (
+        "docs/03 §2.5 之外的 admin 接口集合发生变化："
+        f"{sorted(actual - documented)}（预期 {sorted(normalized_omissions())}）"
+    )
 
 
-def test_no_m4_endpoints() -> None:
-    """M4 是「打磨与交付」，**不新增接口**（prompts/backend-agent-m3.md 的明确边界）。"""
-    actual = {(method, path) for method, path, _ in ALL_ROUTES}
-    assert len(M3_TOTAL_ENDPOINTS) == 92
-    assert actual == set(M3_TOTAL_ENDPOINTS)
+def test_frozen_surface_matches_docs_03_section_2_5_row_by_row() -> None:
+    """M4 验收 4：操作总数恰为 92，且管理侧与 docs/03 §2.5 **逐条**一致。"""
+    from tests.m4_helpers import parse_docs_03_section_2_5
+
+    rows = parse_docs_03_section_2_5()
+    assert len(rows) == 52, (
+        f"docs/03 §2.5 应当有 52 行接口，解析出 {len(rows)} 行 —— "
+        "文档改了或解析逻辑失效，两种都要有人看一眼"
+    )
+    assert len(set(rows)) == len(rows), "§2.5 总表里出现了重复行"
+
+    actual = {(method, path) for method, path, _route in ALL_ROUTES}
+    assert len(actual) == 92, f"接口操作总数应为 92，实际 {len(actual)}"
+
+    # 逐行确认：每一条文档行都能在实现里找到（归一化参数名）
+    implemented = {(m, normalize_path(p)) for m, p in actual}
+    for method, path in rows:
+        assert (method, normalize_path(path)) in implemented, (
+            f"docs/03 §2.5 的 {method} {path} 在实现里找不到"
+        )
 
 
 def test_m2_portal_routes_are_read_only_except_ticket() -> None:

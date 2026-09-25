@@ -116,11 +116,22 @@ cp "$STAGE/scripts/install.sh" "$STAGE/install.sh"
 # ------------------------------------------------------------
 log "6/7 处理 wheelhouse 与随包文档"
 HAVE_WHEELHOUSE=0
+# wheelhouse 的**源**位置：docs/05 §3.4 的示例放在源码根目录；
+# 本仓库的构建脚本（scripts/build-wheelhouse.sh）默认放在 backend/ 下。
+# 两处都找一遍，「源码根」的写法（照 docs 做的构建机）仍然可用。
+# 注意：发布包**内部**的布局不变，仍然是根级的 wheelhouse-<arch>/（docs/05 §4.1）。
 for arch in x86_64 aarch64; do
-    if [ -d "$ROOT/wheelhouse-$arch" ] && [ -n "$(ls -A "$ROOT/wheelhouse-$arch" 2>/dev/null || true)" ]; then
-        rsync -a "$ROOT/wheelhouse-$arch/" "$STAGE/wheelhouse-$arch/"
+    src=""
+    for base in "$ROOT" "$ROOT/backend"; do
+        if [ -d "$base/wheelhouse-${arch}" ] && [ -n "$(ls -A "$base/wheelhouse-${arch}" 2>/dev/null || true)" ]; then
+            src="$base/wheelhouse-${arch}"
+            break
+        fi
+    done
+    if [ -n "$src" ]; then
+        rsync -a "$src/" "$STAGE/wheelhouse-${arch}/"
         HAVE_WHEELHOUSE=1
-        echo "  已包含 wheelhouse-$arch"
+        echo "  已包含 wheelhouse-${arch}（来自 ${src}）"
     fi
 done
 if [ "$HAVE_WHEELHOUSE" -eq 0 ]; then

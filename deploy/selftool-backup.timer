@@ -1,0 +1,20 @@
+# ============================================================
+# selftool-backup.timer — 备份触发节奏
+# 安装位置: /etc/systemd/system/selftool-backup.timer
+# 权限: 0644 root:root
+# 依据: docs/05《部署与运维方案》§8.4
+# ============================================================
+[Unit]
+Description=selftool 每日备份定时器（03:00）
+
+[Timer]
+# 每天凌晨 3 点。避开业务高峰，且与 03:30 的历史 gc / 每小时的清理错开
+OnCalendar=*-*-* 03:00:00
+# 关机期间错过的时间点，开机后补跑
+Persistent=true
+RandomizedDelaySec=600
+AccuracySec=1min
+Unit=selftool-backup.service
+
+[Install]
+WantedBy=timers.target

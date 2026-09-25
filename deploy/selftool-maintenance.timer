@@ -1,0 +1,26 @@
+# ============================================================
+# selftool-maintenance.timer — 清理任务的触发节奏
+# 安装位置: /etc/systemd/system/selftool-maintenance.timer
+# 权限: 0644 root:root
+#
+# 为什么是每小时：docs/02 §5 里「悬空 ACL 清理」与「标签计数重算」要求每小时，
+# 「下载明细 / 会话 / 孤儿文件 / 回收站」要求每日。全部任务都幂等，
+# 每小时跑一次全套的代价很低（空库上是几条 SELECT），换来的是**不需要**为
+# 不同频率的任务维护多个 timer。
+# ============================================================
+[Unit]
+Description=selftool 清理任务定时器（每小时，docs/02 §5）
+
+[Timer]
+# 每小时的第 20 分钟。避开 03:00 的备份与 03:30 的历史 gc，
+# 防止几个 I/O 密集任务同时打满磁盘
+OnCalendar=*-*-* *:20:00
+# 关机期间错过的时间点，开机后补跑一次
+Persistent=true
+# 加一点随机延迟，避免多台同机同时开跑
+RandomizedDelaySec=300
+AccuracySec=1min
+Unit=selftool-maintenance.service
+
+[Install]
+WantedBy=timers.target

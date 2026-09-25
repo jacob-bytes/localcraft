@@ -1052,6 +1052,115 @@ async def _purge_recycle_bin(days: int, dry_run: bool) -> None:
             _ok(f"已彻底清除 {len(purged)} 个工具（含磁盘文件）")
 
 
+@cli.command("maintenance")
+def maintenance_cmd(
+    task: str = typer.Option(
+        "all",
+        "--task",
+        help=(
+            "只跑某一项：all / download-logs / sessions / orphans / acl / "
+            "tags / recycle-bin / gc-versions"
+        ),
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="只统计不落库（回收站与版本淘汰本就跳过）"
+    ),
+    json_out: bool = typer.Option(False, "--json", help="以 JSON 输出汇总，便于脚本消费"),
+) -> None:
+    """一次性执行 docs/02 §5 的数据保留与清理任务。
+
+    `scripts/run-maintenance.sh` 与 `selftool-maintenance.timer` 调用的就是本命令。
+
+    与 `purge-recycle-bin` / `gc-versions` 的关系：那两个是**单项**命令，
+    本命令按 docs/02 §5 的顺序跑全套，并对单项失败做隔离（一项失败不影响其余）。
+    """
+    _run(_maintenance(task, dry_run, json_out))
+
+
+async def _maintenance(task: str, dry_run: bool, json_out: bool) -> None:
+    from app.core.config import settings
+    from app.repositories import system_settings as settings_repo
+    from app.services import maintenance_service
+
+    files_root = settings.data_dir / "files"
+
+    async with SessionLocal() as session:
+        retention = await settings_repo.get_effective_int(
+            session, "stats.download_log_retention_days", 180
+        )
+        history_limit = await settings_repo.get_effective_int(
+            session, "version.history_limit", 10
+        )
+
+        if task == "all":
+            result = await maintenance_service.run_all(
+                session,
+                files_root=files_root,
+                download_log_retention_days=retention,
+                recycle_bin_retention_days=30,
+                version_history_limit=history_limit,
+                dry_run=dry_run,
+            )
+            payload = result.as_dict()
+            errors = list(result.errors)
+        else:
+            payload = {}
+            errors = []
+            try:
+                if task == "download-logs":
+                    payload["download_logs_purged"] = await maintenance_service.purge_download_logs(
+                        session, retention_days=retention
+                    )
+                elif task == "sessions":
+                    payload["sessions_purged"] = await maintenance_service.purge_sessions(session)
+                elif task == "orphans":
+                    trashed, deleted = await maintenance_service.cleanup_orphan_files(
+                        session, files_root=files_root, dry_run=dry_run
+                    )
+                    payload["orphan_files_trashed"] = trashed
+                    payload["trash_files_deleted"] = deleted
+                elif task == "acl":
+                    payload["dangling_acl_purged"] = await maintenance_service.cleanup_dangling_acl(
+                        session
+                    )
+                elif task == "tags":
+                    payload["tags_recounted"] = await maintenance_service.recompute_tag_counts(
+                        session
+                    )
+                elif task == "recycle-bin":
+                    payload["recycle_bin_purged"] = await maintenance_service.purge_recycle_bin(
+                        session, retention_days=30
+                    )
+                elif task == "gc-versions":
+                    payload["versions_gc"] = await maintenance_service.gc_versions(
+                        session, keep=history_limit
+                    )
+                else:
+                    _fail(
+                        "未知任务："
+                        f"{task}（可选 all/download-logs/sessions/orphans/acl/tags/"
+                        "recycle-bin/gc-versions）"
+                    )
+            except Exception as exc:  # 单项失败也要给出清晰结论
+                errors.append(f"{task}: {type(exc).__name__}: {exc}")
+
+    await _dispose()
+
+    if json_out:
+        typer.echo(json.dumps({"result": payload, "errors": errors}, ensure_ascii=False))
+    else:
+        _ok("维护任务完成" + ("（dry-run）" if dry_run else ""))
+        for key, value in payload.items():
+            if isinstance(value, list):
+                typer.echo(f"  {key}: {len(value)} 项 {value[:10]}")
+            else:
+                typer.echo(f"  {key}: {value}")
+        for err in errors:
+            typer.echo(f"  [失败] {err}", err=True)
+    if errors:
+        raise typer.Exit(code=1)
+
+
 @cli.command("gc-versions")
 def gc_versions_cmd(
     apply: bool = typer.Option(False, "--apply", help="真正执行；不加则只报告"),

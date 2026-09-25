@@ -82,7 +82,7 @@ PYEOF
 # ---------------------------------------------------------------------------
 section "0. 准备全新数据库并启动真实服务"
 # ---------------------------------------------------------------------------
-cd "${BACKEND_DIR}"
+cd "${BACKEND_DIR}" || exit 1
 "${PY}" -m alembic upgrade head 2>&1 | tail -2
 "${PY}" -m app.cli seed-demo 2>&1 | tail -2
 
@@ -429,7 +429,7 @@ note "argon2/password_hash 命中 = $(grep -c -E '\$argon2|\$2b\$|password_hash'
 
 # ---------------------------------------------------------------------------
 section "验收 21：转移工具负责人 → 双方配额重算 + transfer_owner 审批留痕"
-read -r TR_TOOL TR_SLUG <<< "$(publish_tool "${CREATOR_TOKEN}" 证据转移工具)"
+read -r TR_TOOL _TR_SLUG <<< "$(publish_tool "${CREATOR_TOKEN}" 证据转移工具)"
 BEFORE_OLD="$(sqlval "SELECT COALESCE(SUM(v.file_size),0) FROM tool_versions v JOIN tools t ON t.id=v.tool_id WHERE t.owner_id=${CREATOR_ID}")"
 BEFORE_NEW="$(sqlval "SELECT COALESCE(SUM(v.file_size),0) FROM tool_versions v JOIN tools t ON t.id=v.tool_id WHERE t.owner_id=${CREATOR2_ID}")"
 TRANSFER="$(api POST "/api/v1/admin/tools/${TR_TOOL}/transfer" "{\"new_owner_id\":${CREATOR2_ID},\"reason\":\"离职交接\"}" "${ADMIN_TOKEN}")"

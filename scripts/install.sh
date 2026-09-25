@@ -10,23 +10,69 @@
 # 依据: docs/05《部署与运维方案》§5.0~§5.9 / §5.12
 # 落位: docs/05 §4.2 的「发布包内路径 → 目标机路径」对应表
 #
-# M1 范围：单机、单架构、能装起来。双架构 wheelhouse 的构建与校验属于 M4。
-# ============================================================
+# ---------------------------------------------------------------------------
+# 生产用法（openEuler，root，systemd）就是上面那三行，不需要任何额外变量。
+#
+# 演练/沙箱用法（非 root、无 systemd 的机器上验证安装链路）：
+#     SELTOOL_SKIP_SYSTEMD=1 \
+#     SELTOOL_PREFIX=$PWD/sandbox/opt \
+#     SELTOOL_ETC_DIR=$PWD/sandbox/etc \
+#     SELTOOL_DATA_DIR=$PWD/sandbox/var \
+#     SELTOOL_LOG_DIR=$PWD/sandbox/log \
+#     ./install.sh
+#   此时跳过 useradd / chown / systemctl，改用 nohup 直接拉起 uvicorn，
+#   其余步骤（发布包校验 → 离线 wheelhouse 安装 → 迁移 → 就绪探针）**完全一致**。
+#   这不是生产路径，只是让「安装链路」在没有 openEuler 的机器上也能被真正跑一遍。
+# ---------------------------------------------------------------------------
 set -euo pipefail
 
 SELTOOL_VERSION="$(cat "$(dirname "$0")/VERSION")"
 RELEASE_DIR="$(cd "$(dirname "$0")" && pwd)"
-VENV=/opt/selftool/venv
-APP_LINK=/opt/selftool/app/current
-ENV_FILE=/etc/selftool/selftool.env
-DATA_DIR=/var/lib/selftool
-LOG_DIR=/var/log/selftool
+
+# ---------- 路径（可用环境变量覆盖，默认与 docs/05 §4.2 一致）----------
+PREFIX="${SELTOOL_PREFIX:-/opt/selftool}"
+DATA_DIR="${SELTOOL_DATA_DIR:-/var/lib/selftool}"
+ETC_DIR="${SELTOOL_ETC_DIR:-/etc/selftool}"
+LOG_DIR="${SELTOOL_LOG_DIR:-/var/log/selftool}"
+
+VENV="$PREFIX/venv"
+APP_LINK="$PREFIX/app/current"
+ENV_FILE="$ETC_DIR/selftool.env"
+SKIP_SYSTEMD="${SELTOOL_SKIP_SYSTEMD:-0}"
+PID_FILE="$DATA_DIR/selftool.pid"
 
 log()  { printf '\n\033[1;32m==> %s\033[0m\n' "$*"; }
 warn() { printf '\n\033[1;33m[warn] %s\033[0m\n' "$*"; }
 die()  { printf '\n\033[1;31m[error] %s\033[0m\n' "$*" >&2; exit 1; }
 
-[ "$(id -u)" -eq 0 ] || die "请以 root 执行"
+# ---------- 校验和工具（GNU coreutils 优先，BSD/macOS 回退）----------
+if command -v sha256sum >/dev/null 2>&1; then
+    SHA256_BIN="sha256sum"
+elif command -v shasum >/dev/null 2>&1; then
+    SHA256_BIN="shasum -a 256"
+else
+    die "缺少 sha256sum / shasum，无法校验发布包"
+fi
+verify_sums() {  # verify_sums <目录>
+    ( cd "$1" && $SHA256_BIN -c SHA256SUMS --quiet 2>/dev/null \
+        || $SHA256_BIN -c SHA256SUMS >/dev/null )
+}
+
+# ---------- sed -i 的 GNU/BSD 差异 ----------
+sed_i() {  # sed_i <表达式> <文件>
+    if sed --version >/dev/null 2>&1; then
+        sed -i "$1" "$2"
+    else
+        sed -i '' "$1" "$2"   # BSD sed 需要显式空后缀
+    fi
+}
+
+if [ "$SKIP_SYSTEMD" = "1" ]; then
+    warn "SELTOOL_SKIP_SYSTEMD=1 —— 演练模式：跳过 useradd / chown / systemctl"
+    warn "这不是生产路径。生产安装请以 root 直接执行 ./install.sh"
+else
+    [ "$(id -u)" -eq 0 ] || die "请以 root 执行（或在演练时设 SELTOOL_SKIP_SYSTEMD=1）"
+fi
 
 # ------------------------------------------------------------
 log "1/10 环境自检"
@@ -38,48 +84,66 @@ fi
 
 # ------------------------------------------------------------
 log "2/10 校验发布包"
-( cd "$RELEASE_DIR" && sha256sum -c SHA256SUMS --quiet ) || die "发布包校验失败"
+verify_sums "$RELEASE_DIR" || die "发布包校验失败（SHA256SUMS）"
 
-case "$(uname -m)" in
-    x86_64)  WHEELHOUSE="$RELEASE_DIR/wheelhouse-x86_64" ;;
-    aarch64) WHEELHOUSE="$RELEASE_DIR/wheelhouse-aarch64" ;;
-    *) die "不支持的架构: $(uname -m)" ;;
+ARCH="$(uname -m)"
+case "$ARCH" in
+    x86_64|amd64)   WHEELHOUSE="$RELEASE_DIR/wheelhouse-x86_64" ;;
+    aarch64|arm64)  WHEELHOUSE="$RELEASE_DIR/wheelhouse-aarch64" ;;
+    *) die "不支持的架构: $ARCH" ;;
 esac
 
+# 演练时可显式指定 wheelhouse（生产不需要，走上面的按架构自动选择）
+[ -n "${SELTOOL_WHEELHOUSE:-}" ] && WHEELHOUSE="$SELTOOL_WHEELHOUSE"
+
 if [ -d "$WHEELHOUSE" ] && [ -n "$(ls -A "$WHEELHOUSE" 2>/dev/null || true)" ]; then
-    ( cd "$WHEELHOUSE" && sha256sum -c SHA256SUMS --quiet ) || die "wheelhouse 校验失败"
+    # wheelhouse 的清单文件名是 MANIFEST.sha256（build-wheelhouse.sh 产出）；
+    # 若手工放了 SHA256SUMS 也认，两种都支持。
+    if [ -f "$WHEELHOUSE/MANIFEST.sha256" ]; then
+        ( cd "$WHEELHOUSE" && $SHA256_BIN -c MANIFEST.sha256 --quiet 2>/dev/null \
+            || $SHA256_BIN -c MANIFEST.sha256 >/dev/null ) || die "wheelhouse 校验失败"
+    elif [ -f "$WHEELHOUSE/SHA256SUMS" ]; then
+        verify_sums "$WHEELHOUSE" || die "wheelhouse 校验失败"
+    fi
     OFFLINE_FLAGS=(--no-index "--find-links=$WHEELHOUSE")
     log "    使用离线 wheelhouse: $WHEELHOUSE"
 else
-    # M1 允许发布包里不带 wheelhouse（双架构 wheel 是 M4 的交付物）。
-    # 此时退化为联网安装：需要目标机能访问公网或内网 PyPI 源。
     WHEELHOUSE=""
     OFFLINE_FLAGS=()
     warn "发布包内没有 wheelhouse，将改为从 PyPI 在线安装依赖"
-    warn "完全离线的环境请先在构建机上执行 make-release.sh 生成 wheelhouse"
+    warn "完全离线的环境请先在构建机上执行 scripts/build-wheelhouse.sh"
 fi
 
 # ------------------------------------------------------------
 log "3/10 创建系统用户与目录"
-# 系统用户：无登录 shell。它的唯一用途是运行服务。
-id selftool >/dev/null 2>&1 || useradd \
-    --system \
-    --shell /sbin/nologin \
-    --home-dir "$DATA_DIR" \
-    --comment "selftool service account" \
-    selftool
-
-install -d -m 0750 -o selftool -g selftool \
-    "$DATA_DIR" \
-    "$DATA_DIR/files" \
-    "$DATA_DIR/files/uploads" \
-    "$DATA_DIR/files/images" \
-    "$DATA_DIR/backups"
-install -d -m 0750 -o root -g selftool /etc/selftool
-install -d -m 0750 -o selftool -g selftool "$LOG_DIR"
-install -d -m 0755 -o root -g root /opt/selftool/app /opt/selftool/scripts /opt/selftool/releases
-cp -a "$RELEASE_DIR/scripts/." /opt/selftool/scripts/
-chmod +x /opt/selftool/scripts/*.sh
+if [ "$SKIP_SYSTEMD" != "1" ]; then
+    # 系统用户：无登录 shell。它的唯一用途是运行服务。
+    id selftool >/dev/null 2>&1 || useradd \
+        --system \
+        --shell /sbin/nologin \
+        --home-dir "$DATA_DIR" \
+        --comment "selftool service account" \
+        selftool
+    install -d -m 0750 -o selftool -g selftool \
+        "$DATA_DIR" \
+        "$DATA_DIR/files" \
+        "$DATA_DIR/files/uploads" \
+        "$DATA_DIR/files/images" \
+        "$DATA_DIR/backups"
+    install -d -m 0750 -o root -g selftool "$ETC_DIR"
+    install -d -m 0750 -o selftool -g selftool "$LOG_DIR"
+else
+    install -d -m 0750 \
+        "$DATA_DIR" \
+        "$DATA_DIR/files" \
+        "$DATA_DIR/files/uploads" \
+        "$DATA_DIR/files/images" \
+        "$DATA_DIR/backups"
+    install -d -m 0750 "$ETC_DIR" "$LOG_DIR"
+fi
+install -d -m 0755 "$PREFIX/app" "$PREFIX/scripts" "$PREFIX/releases"
+cp -a "$RELEASE_DIR/scripts/." "$PREFIX/scripts/"
+chmod +x "$PREFIX/scripts/"*.sh
 
 # ------------------------------------------------------------
 log "4/10 建立代码软链（升级/回滚靠切换它）"
@@ -88,17 +152,29 @@ ls -l "$APP_LINK"
 
 # ------------------------------------------------------------
 log "5/10 创建虚拟环境"
-command -v python3.11 >/dev/null 2>&1 || die "未找到 python3.11，请先安装（docs/05 §2.3）"
-[ -x "$VENV/bin/python" ] || python3.11 -m venv "$VENV"
+PY311="${SELTOOL_PYTHON311:-}"
+if [ -z "$PY311" ]; then
+    if command -v python3.11 >/dev/null 2>&1; then
+        PY311="python3.11"
+    else
+        die "未找到 python3.11，请先安装（docs/05 §2.3），或用 SELTOOL_PYTHON311 指定绝对路径"
+    fi
+fi
+[ -x "$VENV/bin/python" ] || "$PY311" -m venv "$VENV"
+# 升级工具链。离线时若 wheelhouse 里没有 bootstrap 包（老版本发布包），
+# 只告警不终止：venv 自带的 pip/setuptools 足够完成后面的 wheel 安装。
 if [ -n "$WHEELHOUSE" ]; then
-    "$VENV/bin/python" -m pip install --quiet --no-index "--find-links=$WHEELHOUSE" \
-        --upgrade pip setuptools wheel
+    if ! "$VENV/bin/python" -m pip install --quiet --no-index "--find-links=$WHEELHOUSE" \
+            --upgrade pip setuptools wheel; then
+        warn "wheelhouse 里缺少 pip/setuptools/wheel，跳过工具链升级（用 venv 自带版本继续）"
+        warn "建议用 scripts/build-wheelhouse.sh 重新构建包含 bootstrap 包的 wheelhouse"
+    fi
 else
     "$VENV/bin/python" -m pip install --quiet --upgrade pip setuptools wheel
 fi
 
 # ------------------------------------------------------------
-log "6/10 安装依赖"
+log "6/10 安装依赖（离线）"
 LOCK="$RELEASE_DIR/requirements/requirements.lock.txt"
 [ -f "$LOCK" ] || die "缺少依赖锁定清单: $LOCK"
 "$VENV/bin/python" -m pip install "${OFFLINE_FLAGS[@]}" --requirement "$LOCK"
@@ -108,15 +184,26 @@ log "7/10 环境变量文件"
 if [ -f "$ENV_FILE" ]; then
     warn "$ENV_FILE 已存在，保留现有配置（不覆盖 SECRET_KEY）"
 else
-    install -m 0640 -o root -g selftool "$RELEASE_DIR/deploy/selftool.env.example" "$ENV_FILE"
+    if [ "$SKIP_SYSTEMD" != "1" ]; then
+        install -m 0640 -o root -g selftool "$RELEASE_DIR/deploy/selftool.env.example" "$ENV_FILE"
+    else
+        install -m 0640 "$RELEASE_DIR/deploy/selftool.env.example" "$ENV_FILE"
+    fi
     SECRET="$(openssl rand -hex 32)"
-    sed -i "s|^SECRET_KEY=.*|SECRET_KEY=${SECRET}|" "$ENV_FILE"
-    sed -i "s|^SELTOOL_VERSION=.*|SELTOOL_VERSION=${SELTOOL_VERSION}|" "$ENV_FILE"
-    warn "已生成 $ENV_FILE，请检查 DATABASE_URL / SELTOOL_PUBLIC_BASE_URL / COOKIE_SECURE 后继续"
+    sed_i "s|^SECRET_KEY=.*|SECRET_KEY=${SECRET}|" "$ENV_FILE"
+    sed_i "s|^SELTOOL_VERSION=.*|SELTOOL_VERSION=${SELTOOL_VERSION}|" "$ENV_FILE"
+    # 自定义前缀时把示例里的绝对路径改到实际位置，否则迁移会写到 /var/lib
+    if [ "$DATA_DIR" != "/var/lib/selftool" ]; then
+        sed_i "s|^DATA_DIR=.*|DATA_DIR=${DATA_DIR}|" "$ENV_FILE"
+        sed_i "s|^DATABASE_URL=.*|DATABASE_URL=sqlite+aiosqlite:///${DATA_DIR}/selftool.db|" "$ENV_FILE"
+    fi
+    warn "已生成 ${ENV_FILE}，请检查 DATABASE_URL / SELTOOL_PUBLIC_BASE_URL / COOKIE_SECURE 后继续"
 fi
 
-# 数据库目录必须由 selftool 可写，否则首次迁移会失败
-chown -R selftool:selftool "$DATA_DIR"
+# 数据库目录必须由服务账号可写，否则首次迁移会失败
+if [ "$SKIP_SYSTEMD" != "1" ]; then
+    chown -R selftool:selftool "$DATA_DIR"
+fi
 
 # ------------------------------------------------------------
 log "8/10 数据库迁移（必须在服务启动之前执行，docs/02 §6.3）"
@@ -131,20 +218,50 @@ log "8/10 数据库迁移（必须在服务启动之前执行，docs/02 §6.3）
 
 # ------------------------------------------------------------
 log "9/10 安装 systemd 单元与日志轮转"
-install -m 0644 "$RELEASE_DIR/deploy/systemd/selftool.slice"   /etc/systemd/system/
-install -m 0644 "$RELEASE_DIR/deploy/systemd/selftool.service" /etc/systemd/system/
-[ -f "$RELEASE_DIR/deploy/logrotate/selftool" ] && \
-    install -m 0644 "$RELEASE_DIR/deploy/logrotate/selftool" /etc/logrotate.d/selftool
-systemctl daemon-reload
-systemctl enable selftool.service
-systemctl restart selftool.service
+if [ "$SKIP_SYSTEMD" != "1" ]; then
+    for unit in selftool.slice selftool.service selftool-backup.service \
+                selftool-backup.timer selftool-maintenance.service selftool-maintenance.timer; do
+        if [ -f "$RELEASE_DIR/deploy/systemd/$unit" ]; then
+            install -m 0644 "$RELEASE_DIR/deploy/systemd/$unit" /etc/systemd/system/
+        fi
+    done
+    if [ -f "$RELEASE_DIR/deploy/logrotate/selftool" ]; then
+        install -m 0644 "$RELEASE_DIR/deploy/logrotate/selftool" /etc/logrotate.d/selftool
+    fi
+    systemctl daemon-reload
+    systemctl enable selftool.service
+    systemctl restart selftool.service
+else
+    # 演练模式：没有 systemd，用 nohup 直接拉起同一个 uvicorn 命令（参数与 unit 一致）
+    set -a; . "$ENV_FILE"; set +a
+    : > "$LOG_DIR/selftool-stdout.log"
+    (
+        cd "$APP_LINK"
+        nohup "$VENV/bin/uvicorn" app.main:app \
+            --host "${SELTOOL_HOST:-127.0.0.1}" \
+            --port "${SELTOOL_PORT:-8000}" \
+            --workers 1 \
+            --proxy-headers \
+            --forwarded-allow-ips 127.0.0.1 \
+            --timeout-graceful-shutdown 45 \
+            >> "$LOG_DIR/selftool-stdout.log" 2>&1 &
+        echo $! > "$PID_FILE"
+    )
+    echo "  已启动 uvicorn（PID $(cat "$PID_FILE")），日志 $LOG_DIR/selftool-stdout.log"
+    echo "  停止：kill \$(cat $PID_FILE)"
+fi
 
 # ------------------------------------------------------------
 log "10/10 启动后验证"
-if "$RELEASE_DIR/scripts/wait-healthy.sh" --url "http://127.0.0.1:${SELTOOL_PORT:-8000}/readyz" --timeout 90; then
+if "$RELEASE_DIR/scripts/wait-healthy.sh" \
+        --url "http://127.0.0.1:${SELTOOL_PORT:-8000}/readyz" --timeout 90; then
     echo "服务已就绪"
 else
-    die "服务 90 秒内未通过 /readyz，请查看 journalctl -u selftool -n 100 --no-pager"
+    if [ "$SKIP_SYSTEMD" = "1" ]; then
+        echo "--- 最近 40 行应用日志 ---" >&2
+        tail -n 40 "$LOG_DIR/selftool-stdout.log" >&2 || true
+    fi
+    die "服务 90 秒内未通过 /readyz"
 fi
 
 cat <<EOF
@@ -164,8 +281,8 @@ cat <<EOF
    nginx -t && systemctl reload nginx
 
 3) 验证
-   curl -sS http://127.0.0.1:8000/healthz
-   curl -sS http://127.0.0.1:8000/readyz
-   curl -sS http://127.0.0.1:8000/api/v1/meta
+   curl -sS http://127.0.0.1:${SELTOOL_PORT:-8000}/healthz
+   curl -sS http://127.0.0.1:${SELTOOL_PORT:-8000}/readyz
+   curl -sS http://127.0.0.1:${SELTOOL_PORT:-8000}/api/v1/meta
 ============================================================
 EOF

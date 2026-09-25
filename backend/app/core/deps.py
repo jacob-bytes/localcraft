@@ -24,6 +24,8 @@ from app.core.errors import (
     ForbiddenError,
     PasswordChangeRequiredError,
     ScopeMissingError,
+    TokenExpiredError,
+    TokenRevokedError,
     UnauthenticatedError,
 )
 from app.core.permissions import ALL_PERMISSIONS, PERM_DOWNLOAD, permissions_for_roles
@@ -114,19 +116,27 @@ async def _principal_from_api_token(
         select(ApiToken).where(ApiToken.token_hash == hash_api_token(token))
     )
     row = result.scalar_one_or_none()
+    # 错误码划分（契约 §16.4 的裁定）：
+    #   UNAUTHENTICATED —— 只用于「没带凭证 / 凭证格式非法 / 查无此凭证」
+    #   TOKEN_REVOKED   —— 凭证曾经有效但已失效（被吊销、创建者被禁用）
+    #   TOKEN_EXPIRED   —— 凭证过期
+    # 同一个语义（凭证失效）必须在 refresh 路径与 API Token 路径上返回同一个 code，
+    # 否则前端的 ErrorCode 分支会漏掉一条。
     if row is None:
         raise UnauthenticatedError("API Token 无效")
     if row.revoked_at is not None:
-        raise UnauthenticatedError("API Token 已被吊销")
+        raise TokenRevokedError("API Token 已被吊销")
     expires_at = ensure_utc(row.expires_at)
     if expires_at is not None and expires_at <= utcnow():
-        raise UnauthenticatedError("API Token 已过期")
+        raise TokenExpiredError("API Token 已过期")
 
     creator: User | None = row.creator
     if creator is None:  # pragma: no cover - 外键保证不会发生
-        raise UnauthenticatedError("API Token 的创建者不存在")
+        raise TokenRevokedError("API Token 的创建者不存在")
     if creator.status != UserStatus.ACTIVE.value:
-        raise AccountDisabledError()
+        # 创建者被禁用 → 其签发的全部 Token 一并失效（FR-IAM-05）。
+        # 消息保留说明性文字，但 code 与「Token 被吊销」保持一致。
+        raise TokenRevokedError("API Token 的创建者已被禁用")
 
     # FR-API-05：记录 last_used_at / last_used_ip。
     # 走内存聚合批量落库（禁止逐请求 UPDATE —— SQLite 单写者，会打死写锁）。

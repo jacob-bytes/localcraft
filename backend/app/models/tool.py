@@ -202,7 +202,7 @@ class ToolVersion(Base):
     `is_current` 与 `tools.current_version_id` 是同一事实的两份表示，
     一致性由**唯一部分索引**强制（迁移 0001 里手写 DDL）：
         CREATE UNIQUE INDEX uq_tool_versions_current ON tool_versions(tool_id)
-        WHERE is_current = 1
+        WHERE is_current IS TRUE
     """
 
     __tablename__ = "tool_versions"
@@ -243,7 +243,7 @@ class ToolVersion(Base):
     #: 截断的那一刻就丢了）。这与 `is_current` 那类「可从别处推导」的冗余字段
     #: 性质不同 —— 详见 contracts/CONTRACT.md §15.3。
     skill_tree_truncated: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default="0"
+        Boolean, nullable=False, default=False, server_default="false"
     )
     skill_parse_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     uploaded_by_id: Mapped[int] = mapped_column(

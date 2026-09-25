@@ -72,9 +72,14 @@ async def test_malformed_authorization_header_treated_as_anonymous(client) -> No
 
 
 async def test_garbage_jwt_is_rejected(client) -> None:
+    """签名/结构不对属于「凭证格式非法」→ UNAUTHENTICATED（不是 TOKEN_REVOKED）。
+
+    M4 自查发现：`security.decode_access_token` 的 docstring 一直写的是
+    UNAUTHENTICATED，但代码抛的是 TOKEN_REVOKED —— 已按 docstring 修正并在此钉死。
+    """
     response = await client.get(ME, headers=auth("not.a.jwt"))
     assert response.status_code == 401
-    assert response.json()["code"] in {"TOKEN_REVOKED", "UNAUTHENTICATED"}
+    assert response.json()["code"] == "UNAUTHENTICATED"
 
 
 async def test_expired_access_token_returns_token_expired(client) -> None:
@@ -166,10 +171,16 @@ async def test_admin_all_scope_expands(client, seeded) -> None:
 
 
 async def test_api_token_of_disabled_creator_is_rejected(client) -> None:
+    """M4 验收 2：Token 创建者被禁用 → `TOKEN_REVOKED`。
+
+    与「refresh 路径发现用户被禁用」返回同一个 code：凭证已失效。
+    （JWT 路径上的「用户被禁用」仍是 ACCOUNT_DISABLED —— 那是账号状态，
+      不是凭证状态，两者刻意区分。）
+    """
     token = await _make_api_token("disabled", ["tools:read"])
     response = await client.get(TOOLS, headers=auth(token))
-    assert response.status_code == 403
-    assert response.json()["code"] == "ACCOUNT_DISABLED"
+    assert response.status_code == 401
+    assert response.json()["code"] == "TOKEN_REVOKED"
 
 
 async def test_api_token_of_downgraded_creator_loses_permissions(client, seeded) -> None:

@@ -46,7 +46,10 @@ def upgrade() -> None:
                 "skill_tree_truncated",
                 sa.Boolean(),
                 nullable=False,
-                server_default=sa.text("0"),
+                # 用 `false` 而不是 `0`：PostgreSQL 不接受把 integer 默认值赋给
+                # boolean 列（DatatypeMismatch）。SQLite 3.23+ 同样支持 TRUE/FALSE
+                # 字面量，所以这一处写 `false` 两边都对 —— M4 的 PG 演练实测。
+                server_default=sa.text("false"),
             )
         )
 

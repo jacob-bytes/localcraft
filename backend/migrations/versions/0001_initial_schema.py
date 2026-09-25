@@ -405,9 +405,13 @@ def upgrade() -> None:
     # 不支持 `postgresql_where` / `sqlite_where` 之外的部分索引谓词写法，
     # 而这里要的是跨库一致的原生语法。这也是 docs/02 §3.11 的明确要求：
     # 「Alembic 里用 op.execute() 手写这段 DDL」。
+    # 谓词必须写 `IS TRUE` 而不是 `= 1`：
+    # PostgreSQL 的 boolean 与 integer 之间**没有**隐式比较运算符，
+    # `WHERE is_current = 1` 会直接报 UndefinedFunction（M4 的 PG 演练实测）。
+    # `IS TRUE` 在 SQLite 上也成立（SQLite 里 true 就是 1），跨库一致。
     op.execute(
         "CREATE UNIQUE INDEX uq_tool_versions_current "
-        "ON tool_versions(tool_id) WHERE is_current = 1"
+        "ON tool_versions(tool_id) WHERE is_current IS TRUE"
     )
 
     # ------------------------------------------------------------------

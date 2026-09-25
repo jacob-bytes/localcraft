@@ -12,8 +12,11 @@ ok()   { echo "[ OK ]   $*"; }
 warn() { echo "[ WARN ] $*"; }
 err()  { echo "[ FAIL ] $*"; FAIL=1; }
 
+# `date -Is` 是 GNU 扩展，macOS/BSD 的 date 不认。用可移植写法。
+now_iso() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
+
 echo "=== selftool 前置条件自检 ==="
-echo "时间: $(date -Is)"
+echo "时间: $(now_iso)"
 echo
 
 # 1) 发行版
@@ -27,7 +30,7 @@ fi
 ARCH="$(uname -m)"
 case "$ARCH" in
     x86_64|aarch64) ok "CPU 架构: $ARCH" ;;
-    *) err "不支持的 CPU 架构: $ARCH（仅支持 x86_64 / aarch64）" ;;
+    *) err "不支持的 CPU 架构: ${ARCH}（仅支持 x86_64 / aarch64）" ;;
 esac
 
 # 3) glibc
@@ -35,9 +38,9 @@ GLIBC="$(ldd --version 2>/dev/null | head -n1 | grep -oE '[0-9]+\.[0-9]+$')"
 if [ -n "$GLIBC" ]; then
     MAJ="${GLIBC%%.*}"; MIN="${GLIBC##*.}"
     if [ "$MAJ" -gt 2 ] || { [ "$MAJ" -eq 2 ] && [ "$MIN" -ge 28 ]; }; then
-        ok "glibc $GLIBC（>= 2.28，可安装 manylinux_2_28 及更早标签的 wheel）"
+        ok "glibc ${GLIBC}（>= 2.28，可安装 manylinux_2_28 及更早标签的 wheel）"
     elif [ "$MAJ" -eq 2 ] && [ "$MIN" -ge 17 ]; then
-        warn "glibc $GLIBC，仅可安装 manylinux2014 及更早标签的 wheel"
+        warn "glibc ${GLIBC}，仅可安装 manylinux2014 及更早标签的 wheel"
     else
         err "glibc $GLIBC 过旧，无法满足本项目要求"
     fi
@@ -50,7 +53,7 @@ if command -v python3.11 >/dev/null 2>&1; then
     PYVER="$(python3.11 -c 'import sys;print("%d.%d.%d"%sys.version_info[:3])')"
     case "$PYVER" in
         3.11.*) ok "python3.11 可用: $PYVER" ;;
-        *)      err "python3.11 版本异常: $PYVER（要求 3.11.x）" ;;
+        *)      err "python3.11 版本异常: ${PYVER}（要求 3.11.x）" ;;
     esac
     python3.11 -c 'import venv, ssl, sqlite3, ctypes' 2>/dev/null \
         && ok "标准库模块 venv/ssl/sqlite3/ctypes 均可导入" \
@@ -99,7 +102,7 @@ fi
 
 # 10) SELinux / 时钟
 if command -v getenforce >/dev/null 2>&1; then ok "SELinux: $(getenforce)"; fi
-ok "系统时间: $(date -Is)"
+ok "系统时间: $(now_iso)"
 
 echo
 if [ "$FAIL" -eq 0 ]; then
