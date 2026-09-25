@@ -274,6 +274,27 @@ bat ps1 jar war bin iso img
 **测试**：断言 `docs/01` §8 列出的每个扩展名都在默认白名单内（用一条测试钉死两者一致，
 防止再次漂移）。
 
+### J-11. 种子缺少 approver 账号，与 mock 不一致（监控方预览时发现）
+
+**实测**：`seed-demo` 的 6 个账号角色是 `admin=superadmin`、`newbie/viewer/zhangsan/lisi/wangwu`，
+其中 **`wangwu` 是 `user`**。
+
+但 `contracts/CONTRACT.md` §14.8 明确要求「把同名的 3 个账号补进后端 `seed-demo`，
+使 mock 与真实环境一致」，而**前端 mock 里的 `wangwu` 是 `approver` + `user`**
+（§17.7 接受该设定，理由：需要 approver 视角的测试）。
+
+**后果**：
+
+- 真实环境下**没有可登录的审批员账号**，`approver` 的角色菜单渲染与权限边界无法验证
+  （用 `admin` 能看到全部页面，但看不到「approver 不该看到某些菜单」这一行为）
+- mock 与真实种子不一致 —— 属 §17.9 那类「倒挂」，会掩盖差异
+
+**裁定：给 `wangwu` 加上 `approver` 角色**（保留 `user`），与 mock 对齐。
+这是 1 行 seed 改动。
+
+**测试**：断言 `seed-demo` 后存在至少一个 `approver` 角色的账号，
+且该账号登录后能访问 `/admin/approvals`、不能访问 `/admin/users`。
+
 ---
 
 ## M6 验收清单（监控方会逐条核验）
@@ -301,6 +322,7 @@ bat ps1 jar war bin iso img
 | 19 | viewer 看 `file` 详情 | `current_version.can_download == 顶层 can_download == False` |
 | 20 | 四种身份的 `can_download` 一致性 | 每个身份都满足 `current_version.can_download == 顶层` |
 | 21 | 扩展名默认白名单 | 覆盖 `docs/01` §8 列出的全部类型（含 `.xlsx`/`.csv`/`.jpeg`） |
+| 22 | 种子含 `approver` 账号 | 该账号能访问 `/admin/approvals`、不能访问 `/admin/users` |
 
 ---
 
