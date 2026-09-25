@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -34,6 +35,18 @@ PYTHON = Path(sys.executable)
 runner = CliRunner()
 
 
+def _plain(text: str) -> str:
+    """去掉 ANSI 转义，并把折行/缩进展开成单行。
+
+    Typer 用 Rich 渲染 help 面板，而 Rich 会**按终端宽度折行**、并按是否
+    支持颜色决定要不要插转义序列 —— 这两点都随环境变化
+    （CI 无 TTY、开发机终端宽度不同）。断言 help 内容之前先归一化，
+    否则测试的成败会取决于终端几何，而不是 CLI 本身。
+    """
+    no_ansi = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text)
+    return re.sub(r"\s+", " ", no_ansi)
+
+
 def _cli_env(db_path: Path, data_dir: Path) -> dict[str, str]:
     env = dict(os.environ)
     env.update(
@@ -43,6 +56,10 @@ def _cli_env(db_path: Path, data_dir: Path) -> dict[str, str]:
             "SECRET_KEY": "cli-test-secret-key-0123456789abcdef",
             "LOG_LEVEL": "ERROR",
             "API_DOCS_ENABLED": "false",
+            # 固定终端几何与颜色：help 面板由 Rich 按宽度折行，
+            # 不固定就会出现「本机过、CI 挂」而差异只是宽度不同。
+            "COLUMNS": "200",
+            "NO_COLOR": "1",
         }
     )
     return env
@@ -217,9 +234,29 @@ def test_create_superadmin_from_stdin(cli_db) -> None:
     )
     assert rows == [("opsboss", 1, "superadmin")], "新建超管必须强制首次改密"
 
-    # 不允许明文口令参数进入 shell 历史：`--password` 这个选项根本不存在
+    # `--password` 明文选项必须不存在。
+    #
+    # 这一条才是真正的不变量：它检查 CLI **拒绝**明文口令参数。
+    # 注意上面已经用 `--password-stdin` 真实建出了一个超管并校验了库里的行，
+    # 所以「`--password-stdin` 存在」这件事本身**已被更强的证据覆盖**了 ——
+    # 原先额外去断言 help 文本里出现该字符串，是在检查 Rich 的排版，
+    # 而排版随终端几何与颜色支持变化（CI 上就因此挂过一次）。
+    # 保留为「弱断言 + 归一化」：只要求选项名出现在 help 里，
+    # 不要求它落在某一行、某一种样式下。
     help_result = _run(["app.cli", "create-superadmin", "--help"], env)
-    assert "--password-stdin" in help_result.stdout
+    help_text = _plain(help_result.stdout)
+    if "--password-stdin" not in help_text:
+        # 把足以复现渲染差异的信息一次性带出来，避免再来一轮盲猜。
+        raise AssertionError(
+            "help 里没找到 --password-stdin。"
+            f"\n  returncode={help_result.returncode}"
+            f"\n  stdout 长度={len(help_result.stdout)}  stderr 长度={len(help_result.stderr)}"
+            f"\n  COLUMNS={env.get('COLUMNS')!r} NO_COLOR={env.get('NO_COLOR')!r}"
+            f" LINES={env.get('LINES')!r} TERM={env.get('TERM')!r}"
+            f"\n  归一化后（前 2000 字符）：\n{help_text[:2000]}"
+            f"\n  原始 repr（前 600 字符）：\n{help_result.stdout[:600]!r}"
+        )
+
     plain = _run(
         ["app.cli", "create-superadmin", "--username", "x", "--password", "Plain12345!"],
         env,
