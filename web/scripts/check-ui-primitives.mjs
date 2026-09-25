@@ -47,6 +47,12 @@ const PRIMITIVE_FILES = [
   "dropdown-menu",
   "popover",
   "tooltip",
+  // M3 新增/收编：表格、开关、页签、文本域、单选组
+  "table",
+  "switch",
+  "tabs",
+  "textarea",
+  "radio-group",
 ];
 
 const INTRINSIC_TAG =

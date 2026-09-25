@@ -1,10 +1,19 @@
 import { useQuery } from "@tanstack/react-query";
 import {
+  ArrowLeftRight,
   ClipboardList,
+  FolderTree,
+  Gauge,
   History as HistoryIcon,
+  KeyRound,
   Menu,
   ShieldCheck,
   SlidersHorizontal,
+  Tags as TagsIcon,
+  Trash2,
+  Users as UsersIcon,
+  UsersRound,
+  Wrench,
   type LucideIcon,
 } from "lucide-react";
 import * as React from "react";
@@ -28,25 +37,37 @@ import { cn } from "@/lib/utils";
  * 管理台外壳（docs/04 §5.2）。AppShell 已经渲染了 TopNav，这里只负责
  * 「左侧竖向菜单 + 右侧内容区」，页面本身再由 `<Outlet/>` 接管。
  *
- * M2 只有四项（CONTRACT §6.1：`/admin/*` 的其余部分全部是 M3），
- * 所以这里**不渲染任何 M3 菜单项**，占位也不行 —— 不制造死链。
- * 审批管理员只看到审批队列与审批历史；白名单与系统设置是超管专属，
- * 对 approver **隐藏**而不是禁用（docs/01 §3.2 权限矩阵）。
+ * 菜单按角色**过滤**而不是「渲染出来再禁用」：禁用态的菜单项会泄露功能边界
+ * （docs/01 §3.2 权限矩阵 + docs/04 §5.2 的分组说明）。
+ *   - approver：概览 / 审批队列 / 审批历史 / 全站工具 / 分类 / 标签
+ *   - superadmin：再加 用户 / 用户组 / 免审白名单 / API Token / 系统设置 / 导入导出 / 回收站
+ * 前端守卫只是体验优化，服务端才是权威（docs/04 §4）。
  */
 
 interface AdminMenuItem {
   to: string;
   label: string;
   icon: LucideIcon;
-  /** 只对超管可见（免审白名单 / 系统设置）。 */
+  /** 只对超管可见（其余全部是 M3 的超管专属功能）。 */
   superadminOnly?: boolean;
+  /** 精确匹配才高亮（否则 `/admin/approvals` 会同时点亮 `/admin/approvals/history`）。 */
+  end?: boolean;
 }
 
 const MENU_ITEMS: readonly AdminMenuItem[] = [
-  { to: "/admin/approvals", label: "审批队列", icon: ClipboardList },
+  { to: "/admin", label: "概览", icon: Gauge, end: true },
+  { to: "/admin/approvals", label: "审批队列", icon: ClipboardList, end: true },
   { to: "/admin/approvals/history", label: "审批历史", icon: HistoryIcon },
+  { to: "/admin/tools", label: "全站工具", icon: Wrench },
+  { to: "/admin/categories", label: "分类", icon: FolderTree },
+  { to: "/admin/tags", label: "标签", icon: TagsIcon },
+  { to: "/admin/users", label: "用户", icon: UsersIcon, superadminOnly: true },
+  { to: "/admin/groups", label: "用户组", icon: UsersRound, superadminOnly: true },
   { to: "/admin/whitelist", label: "免审白名单", icon: ShieldCheck, superadminOnly: true },
+  { to: "/admin/tokens", label: "API Token", icon: KeyRound, superadminOnly: true },
   { to: "/admin/settings", label: "系统设置", icon: SlidersHorizontal, superadminOnly: true },
+  { to: "/admin/import-export", label: "导入导出", icon: ArrowLeftRight, superadminOnly: true },
+  { to: "/admin/recycle-bin", label: "回收站", icon: Trash2, superadminOnly: true },
 ];
 
 /** Tolerates the odd `null` role entry so a malformed session cannot crash the shell. */
@@ -125,7 +146,9 @@ function AdminNav({
     <nav data-testid="admin-nav" aria-label="管理台" className="flex flex-col gap-1 text-sm">
       {items.map((item, index) => {
         // 分隔线把「审批」与「超管专属」两组隔开（docs/04 §5.2）。
-        const showSeparator = item.superadminOnly === true && index > 0;
+        const previous = items[index - 1];
+        const showSeparator =
+          item.superadminOnly === true && previous !== undefined && previous.superadminOnly !== true;
         return (
           <React.Fragment key={item.to}>
             {showSeparator ? <div className="my-2 border-t" role="presentation" /> : null}
@@ -152,6 +175,7 @@ function AdminNavLink({
   return (
     <NavLink
       to={item.to}
+      end={item.end}
       onClick={onNavigate}
       className={({ isActive }) =>
         cn(

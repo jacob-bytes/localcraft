@@ -257,6 +257,8 @@
 | GET | `/api/v1/admin/settings` | 系统设置 | superadmin |
 | PUT | `/api/v1/admin/settings` | 批量更新设置 | superadmin |
 | GET | `/api/v1/admin/tools` | 全站工具列表（含所有状态） | approver |
+| POST | `/api/v1/admin/tools` | **管理侧代创建工具**（可指定 `owner_id`），供脚本批量导入 | superadmin |
+| POST | `/api/v1/admin/tools/{id}/versions` | **管理侧代上传版本**（委托与 `/me/tools/{id}/versions` 同一 service） | superadmin |
 | POST | `/api/v1/admin/tools/{id}/transfer` | 转移负责人 | superadmin |
 | POST | `/api/v1/admin/tools/{id}/restore` | 从回收站还原 | superadmin |
 | DELETE | `/api/v1/admin/tools/{id}/purge` | 彻底清除 | superadmin |
@@ -268,7 +270,11 @@
 | POST | `/api/v1/admin/import/tools` | 批量导入工具元数据 | superadmin |
 | GET | `/api/v1/admin/export/tools` | 导出工具 JSON | superadmin |
 
-合计约 **85** 个接口。
+合计 **92 个操作 / 74 条路径**。
+
+> **计数口径（M3 前端 checkpoint 补入，2025-03）**：本节早先写作「约 85 个接口」是过期数字，
+> 且漏列了管理侧代创建的两个接口 —— 这导致「`docs/03` §2.5 清单」与「冻结的 92 操作」无法同时成立，
+> 使守卫测试出现自相矛盾的断言。现已补齐。**权威来源是 `backend/openapi.json`**（`contracts/CONTRACT.md` §15.6）。
 
 ---
 
@@ -663,7 +669,11 @@ Skill 的 `readme_md` 正文与完整文件树**不在此接口返回**（可能
 
 ### 3.8 `GET /api/v1/admin/approvals`
 
-**查询参数**：`status`、`tool_type`、`owner`、`page`、`page_size`、`sort`（默认 `created_at`，正序，先提交先处理）。
+**查询参数**：`status`、`tool_type`、`owner`、`page`、`page_size`。
+
+**排序是固定的**：按提交时间正序（先提交先处理），**没有 `sort` 参数**（`openapi.json` 可核）。
+本节早先版本写了一个 `sort` 参数，那是笔误 —— 队列顺序由「先提交先处理」这条业务规则决定，
+不应由客户端改。若将来要支持自定义排序，需走契约变更流程。
 
 **`status` 的取值（M2 checkpoint 补入，2025-03）**：
 
@@ -823,6 +833,7 @@ Skill 的 `readme_md` 正文与完整文件树**不在此接口返回**（可能
 ```json
 {
   "name": "CI 发布脚本",
+  "note": "供 GitLab CI 的发布流水线使用",
   "scopes": ["tools:read", "tools:write", "approvals:write"],
   "expires_at": "2026-03-14T00:00:00Z"
 }
@@ -915,11 +926,24 @@ Skill 的 `readme_md` 正文与完整文件树**不在此接口返回**（可能
 
 **CSV 格式**：
 
+**导入格式**（`password` 可留空，留空则系统生成并回显一次）：
+
 ```csv
 username,display_name,email,roles,password
 lisi,李四,lisi@example.com,user,
 wangwu,王五,,user;approver,
 ```
+
+**导出格式与之不同**（M3 前端 checkpoint 核实，2025-03）—— 导出**不含 `password`**，改为包含 `status`：
+
+```csv
+username,display_name,email,roles,status
+lisi,李四,lisi@example.com,user,active
+```
+
+本节早先只给了一个 CSV 示例，把导入与导出的列混为一谈。权威定义在 `backend/app/services/import_export_service.py` 的 `USER_CSV_FIELDS`。
+
+**导入忽略 `status` 列，导出不含 `password` 列** —— 这是刻意的：导出绝不包含凭据。
 
 **响应** `200`：
 
@@ -961,6 +985,22 @@ wangwu,王五,,user;approver,
 票据为 HMAC-SHA256 签名，载荷 `{tool_id, version_id, user_id, exp}`，密钥来自 `SECRET_KEY` 派生的子密钥。有效期 60 秒，**一次性不强制**（允许多次使用，但在有效期内），因为浏览器可能发起 Range 请求或重试。
 
 ---
+
+> **关于响应示例的维护方式（M3 前端 checkpoint 裁定，2025-03）**
+>
+> 本文档早先逐字段复写每个响应，结果持续与实现漂移（本轮就发现 5 处：`version_seq`、
+> `note`、Token 的 8 vs 15 个字段、CSV 列、`sort` 参数）。**从本轮起改为**：
+>
+> - **`backend/openapi.json` 是响应形状的唯一权威**（`contracts/CONTRACT.md` §15.6）
+> - 本文档只负责**语义、业务规则、错误码与边界条件**；示例仅用于说明意图，不保证字段完备
+> - 前端类型由 `web/src/api/types.ts` 镜像 openapi，并由 `web/scripts/check-api-types.mjs` 守卫生效
+> - 发现示例与 openapi 不一致时，**以 openapi 为准**，并报告文档需要修订
+>
+> **已知例外**：以下 6 个端点的响应在 openapi 里仍是 `additionalProperties: true`（无字段定义），
+> 形状目前只存在于 `types.ts`。已在 M5 任务书中要求补 `response_model`：
+> `GET /admin/groups`、`GET /admin/groups/{id}/members`、`DELETE /admin/groups/{id}`、
+> `DELETE /admin/groups/{id}/members/{user_id}`、`POST /admin/users/{id}/revoke-sessions`、
+> `GET /admin/tokens`。
 
 ## 4. 错误码总表
 

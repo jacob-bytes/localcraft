@@ -7,7 +7,7 @@ import { ImageUploader, type PendingImage } from "@/components/me/ImageUploader"
 import { TagInput } from "@/components/me/TagInput";
 import { MarkdownEditor, ToolTypeRadioGroup } from "@/components/me/ToolFormParts";
 import { TypeSpecificSection, type UploadedFile } from "@/components/me/ToolTypeFields";
-import { RadioGroup, RadioGroupItem } from "@/components/me/RadioGroup";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   FormControl,
   FormDescription,

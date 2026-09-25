@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { ApiError, getErrorMessage } from "@/api/client";
 import {
   createTool,
+  fetchMyVersions,
   myToolDetailQueryKey,
   myVersionsQueryKey,
   replaceAcl,
@@ -34,6 +35,8 @@ import {
   type VersionContentDraft,
 } from "@/components/me/toolFormSchema";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Form } from "@/components/ui/form";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -68,6 +71,18 @@ function latestSavedAt(): Date | null {
 interface ApiErrorState {
   code: string;
   message: string;
+}
+
+/**
+ * 默认版本号：新工具 `1.0.0`；已有当前版本时下一个 patch。
+ * 用户可改（CONTRACT §17.3），这里只是预填值。
+ */
+function defaultVersionLabel(tool: ToolDetail | null): string {
+  const current = tool?.current_version?.version ?? null;
+  if (!current) return "1.0.0";
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(current);
+  if (!match) return current;
+  return `${match[1] ?? "1"}.${match[2] ?? "0"}.${Number.parseInt(match[3] ?? "0", 10) + 1}`;
 }
 
 export interface ToolFormProps {
@@ -130,6 +145,12 @@ function ToolFormInner({
   });
 
   const [toolId, setToolId] = React.useState<number | null>(tool?.id ?? null);
+  /**
+   * 版本号（CONTRACT §17.3）：FR-VER-01 是 P0 且要求「手填」，所以首版也是可编辑的。
+   * 预填默认值（新工具 `1.0.0`，已有版本时下一个 patch），失焦/提交时做唯一性校验。
+   */
+  const [versionLabel, setVersionLabel] = React.useState<string>(() => defaultVersionLabel(tool));
+  const [versionError, setVersionError] = React.useState<string | null>(null);
   /** 最近一次上传是否因 Skill 包解析失败而失败（跨 await 传递，见 uploadContent）。 */
   const skillParseErrorRef = React.useRef<{ code: string; message: string } | null>(null);
   const [aclEntries, setAclEntries] = React.useState<AclDraftEntry[]>(initialAcl);
@@ -140,6 +161,17 @@ function ToolFormInner({
       ? { ...emptyVersionContent(), promptContent: tool.prompt?.content ?? "" }
       : emptyVersionContent(),
   );
+  const existingVersionsQuery = useQuery({
+    queryKey: myVersionsQueryKey(toolId ?? 0),
+    queryFn: ({ signal }) => fetchMyVersions(toolId ?? 0, signal),
+    enabled: toolId !== null,
+    staleTime: 30_000,
+  });
+  const existingVersionLabels = React.useMemo(
+    () => new Set((existingVersionsQuery.data ?? []).map((item) => item.version)),
+    [existingVersionsQuery.data],
+  );
+
   const [uploadedFile, setUploadedFile] = React.useState<UploadedFile | null>(() => {
     // Surface the version already on the server so the editor does not look
     // empty and 提交审批 stays meaningful without a re-upload. A *draft* has no
@@ -377,6 +409,11 @@ function ToolFormInner({
       if (error instanceof DOMException && error.name === "AbortError") return null;
       // A Skill package that fails to parse is a warning, not a dead end:
       // the draft stays saveable (FR-TOOL-06).
+      if (error instanceof ApiError && error.is("VERSION_EXISTS")) {
+        // 与服务端保持同一句话（VersionUploadDialog 也是这条文案）
+        setVersionError(`版本 ${versionLabel.trim()} 已存在，请换一个版本号`);
+        return null;
+      }
       if (error instanceof ApiError && isSkillParseError(error.code)) {
         setSkillError({ code: error.code, message: error.message });
         // Remember it for the caller: after `await`, the state update is not
@@ -404,6 +441,16 @@ function ToolFormInner({
     }
 
     const values = form.getValues();
+    // 只有「本次要上传版本内容」时才需要版本号（纯元信息保存不涉及版本）
+    if (hasNewVersionContent(values)) {
+      const versionIssue = validateVersionLabel(versionLabel);
+      if (versionIssue) {
+        setVersionError(versionIssue);
+        document.getElementById("tool-field-version")?.focus();
+        return;
+      }
+      setVersionError(null);
+    }
     setFormError(null);
     setBusy(onSubmit ? "submit" : "draft");
 
@@ -448,7 +495,7 @@ function ToolFormInner({
           onSubmitted();
           return;
         }
-        const result = await uploadContent(id, nextVersionLabel(), true);
+        const result = await uploadContent(id, versionLabel.trim(), true);
         if (!result) return;
         toast.success(
           `新版本 ${result.version} 已提交审批。当前版本 ${
@@ -460,7 +507,7 @@ function ToolFormInner({
       }
 
       if (hasNewVersionContent(values)) {
-        const result = await uploadContent(id, nextVersionLabel(), false);
+        const result = await uploadContent(id, versionLabel.trim(), false);
         if (result) toast.success("草稿已保存，版本内容已上传");
         else toast.success("草稿已保存");
       } else {
@@ -507,7 +554,7 @@ function ToolFormInner({
     setPendingImages([]);
 
     if (hasNewVersionContent(values)) {
-      const uploaded = await uploadContent(id, nextVersionLabel(), onSubmit);
+      const uploaded = await uploadContent(id, versionLabel.trim(), onSubmit);
       if (uploaded) {
         setSavedAt(new Date());
         await invalidate(id);
@@ -585,12 +632,25 @@ function ToolFormInner({
     }
   }
 
-  function nextVersionLabel(): string {
-    const current = tool?.current_version?.version ?? null;
-    if (!current) return "1.0.0";
-    const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(current);
-    if (!match) return current;
-    return `${match[1] ?? "1"}.${match[2] ?? "0"}.${Number.parseInt(match[3] ?? "0", 10) + 1}`;
+  /**
+   * 版本号校验：非空 + 同工具内唯一。
+   *
+   * 客户端先按已拉取的版本清单给出即时反馈，服务端的 `VERSION_EXISTS` 仍然兜底
+   * （`uploadContent` 的 catch 会把它映射到同一个内联提示）。
+   */
+  function validateVersionLabel(label: string): string | null {
+    const trimmed = label.trim();
+    if (trimmed === "") return "请填写版本号";
+    if (trimmed.length > 64) return "版本号不能超过 64 个字符";
+    // 已经上传过、并且没有再传新内容的那个版本不算冲突
+    if (existingVersionLabels.has(trimmed) && trimmed !== uploadedFile?.version) {
+      return `版本 ${trimmed} 已存在，请换一个版本号`;
+    }
+    return null;
+  }
+
+  function handleVersionBlur() {
+    setVersionError(validateVersionLabel(versionLabel));
   }
 
   /**
@@ -815,6 +875,43 @@ function ToolFormInner({
             <AlertDescription>请检查下方标红的字段后重新提交。</AlertDescription>
           </Alert>
         ) : null}
+
+        {/* 版本号（FR-VER-01：SemVer 字符串，手填 —— CONTRACT §17.3） */}
+        <div className="space-y-1.5 rounded-xl border bg-card p-4">
+          <Label htmlFor="tool-field-version" className="text-sm font-medium">
+            版本号 *
+          </Label>
+          <Input
+            id="tool-field-version"
+            value={versionLabel}
+            onChange={(event) => {
+              setVersionLabel(event.target.value);
+              if (versionError) setVersionError(null);
+            }}
+            onBlur={handleVersionBlur}
+            disabled={locked}
+            maxLength={64}
+            autoComplete="off"
+            spellCheck={false}
+            className="font-mono"
+            aria-invalid={versionError !== null}
+            aria-describedby={versionError ? "tool-field-version-error" : "tool-field-version-hint"}
+          />
+          {versionError ? (
+            <p
+              id="tool-field-version-error"
+              role="alert"
+              data-testid="version-error"
+              className="text-xs text-destructive"
+            >
+              {versionError}
+            </p>
+          ) : (
+            <p id="tool-field-version-hint" className="text-xs text-muted-foreground">
+              建议语义化版本，如 1.2.0；同一工具内不可重复
+            </p>
+          )}
+        </div>
 
         <MetadataSections
           form={form}

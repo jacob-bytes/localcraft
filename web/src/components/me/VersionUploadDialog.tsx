@@ -17,7 +17,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
-import { Textarea } from "@/components/me/Textarea";
+import { Textarea } from "@/components/ui/textarea";
 import { formatFileSize } from "@/lib/format";
 import { cn } from "@/lib/utils";
 

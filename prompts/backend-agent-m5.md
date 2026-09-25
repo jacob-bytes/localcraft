@@ -220,6 +220,38 @@
 `docs/08` 需写明：**一旦发布了 tar.gz 或有人跑过某条迁移，该迁移文件即冻结，只能新增迁移修正，
 不得回改**。并说明本次 M4 为何是例外（项目尚未有任何生产部署，且改动在 SQLite 上语义等价）。
 
+### J. 前端 M3 checkpoint 追加的两项（监控方补记，2025-03）
+
+这两项由前端 M3 的联调报告提出，属于**响应字段/元数据完善，不新增接口**，92 操作数不变。
+
+**J1. `GET /admin/groups` 的删除影响面要带 `slug`**
+
+`group_service.py` 的 `details.tools` 目前只含 `{id, name}`。`docs/04` §6.14 要求
+「影响面工具可点击跳转」，但前端拿不到 `slug` 就无法生成详情页链接，只能渲染纯文本。
+
+**要**：在 `details.tools[]` 中增加 `slug`（附加字段，非破坏性）。
+补测试：`GROUP_IN_USE` 的 `details.tools[].slug` 非空且能用于 `GET /tools/{slug}`。
+
+**J2. 补齐 6 个端点的 `response_model`**
+
+`contracts/CONTRACT.md` §15.6 宣布「`openapi.json` 是响应形状的权威来源」，
+但以下 6 个端点的响应在 openapi 里仍是 `additionalProperties: true`，**没有字段定义** ——
+形状目前只存在于前端的 `types.ts` 里，这让「形状权威」这句话对这 6 个端点名不副实：
+
+```
+GET    /api/v1/admin/groups
+GET    /api/v1/admin/groups/{group_id}/members
+DELETE /api/v1/admin/groups/{group_id}
+DELETE /api/v1/admin/groups/{group_id}/members/{user_id}
+POST   /api/v1/admin/users/{user_id}/revoke-sessions
+GET    /api/v1/admin/tokens
+```
+
+**要**：为它们补显式的 Pydantic 响应模型，并重新导出 `openapi.json`。
+补测试：断言这 6 个端点在 openapi 里有非空的 `properties`（不是 `additionalProperties: true`）。
+
+> 这会改变 `openapi.json`，前端需要同步 `types.ts` —— 属预期影响，不是破坏性变更。
+
 ### I. 全量回归
 
 - 补 A~E 涉及的所有测试
@@ -261,6 +293,8 @@
 | 25 | 接口面 | 恰为 92 |
 | 26 | 整体覆盖率 | ≥ 90% |
 | 27 | `ruff` / `shellcheck` | 全过 |
+| 28 | `GROUP_IN_USE` 的 `details.tools[]` | 含 `slug` 且可用于跳转 |
+| 29 | 上述 6 个端点的 openapi 响应 | 有显式 `properties`，不再是 `additionalProperties: true` |
 
 ---
 

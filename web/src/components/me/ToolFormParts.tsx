@@ -3,11 +3,11 @@ import * as React from "react";
 
 import type { ToolType } from "@/api/types";
 import { Markdown } from "@/components/common/Markdown";
-import { Textarea } from "@/components/me/Textarea";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
-import { RadioGroup, RadioGroupItem } from "@/components/me/RadioGroup";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/me/Tabs";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 /** 四种类型的中文说明（docs/01 FR-TOOL-02, docs/04 §6.7 类型专属区）。 */
 const TYPE_OPTIONS: ReadonlyArray<{

@@ -143,6 +143,11 @@ test.describe("真实后端联调（mock 之外的路径）", () => {
     await signIn(page, ADMIN.username, ADMIN.password);
     await expect(page).toHaveURL(/\/$/);
     await expect(page.getByTestId("top-nav")).toBeVisible();
+
+    // CONTRACT §17.12：断言必须等**数据就绪**，不能依赖 top-nav 这种 render 阶段
+    // 就出现的元素 —— React Query 的 /tools 请求在 render 之后才发出，冷启动后端
+    // 首次请求较慢时先前的断言会跑在请求之前（间歇性失败）。
+    await expect(page.getByTestId("tool-card").first()).toBeVisible();
     expect(auth.current(), "应能抓到 Authorization 头").toBeTruthy();
 
     // 真实 cookie：Path 必须是 /api/v1/auth（mock 用的是 /，只有真实后端能验）
@@ -505,6 +510,139 @@ test.describe("真实后端联调（mock 之外的路径）", () => {
         .map((image) => image.currentSrc || image.src),
     );
     expect(brokenImages, "图片失败必须降级为占位块，不能留破图").toEqual([]);
+  });
+
+  test("I. 真实设置写入：非法值整体回滚、合法项不受影响（验收 #15）", async ({ page }) => {
+    const auth = captureAuthHeader(page);
+    await signIn(page, ADMIN.username, ADMIN.password);
+    await expect(page.getByTestId("tool-card").first()).toBeVisible();
+
+    const before = await api(page, `${API}/admin/settings`, auth.current());
+    expect(before.status).toBe(200);
+    const items = (before.body as unknown as { items: Array<{ key: string; value: unknown }> }).items;
+    const target = items.find((item) => item.key === "portal.page_size");
+    const other = items.find((item) => item.key === "approval.version_reapproval");
+    expect(target, "种子应包含 portal.page_size").toBeTruthy();
+    expect(other, "种子应包含 approval.version_reapproval").toBeTruthy();
+
+    // 一个明显非法的值（page_size 有 min/max 约束）
+    const failed = await api(page, `${API}/admin/settings`, auth.current(), {
+      method: "PUT",
+      body: {
+        items: [
+          { key: "portal.page_size", value: -5 },
+          { key: "approval.version_reapproval", value: !other?.value },
+        ],
+      },
+    });
+    expect(failed.status, "非法值应被拒绝").toBe(400);
+    const failedBody = failed.body as unknown as { code: string; details: Record<string, unknown> | null };
+    expect(failedBody.code).toBe("SETTING_INVALID");
+    expect(
+      JSON.stringify(failedBody.details ?? {}),
+      "details 应指出出错的 key",
+    ).toContain("portal.page_size");
+
+    // 整体回滚：合法项也必须保持原值
+    const after = await api(page, `${API}/admin/settings`, auth.current());
+    const afterItems = (after.body as unknown as { items: Array<{ key: string; value: unknown }> })
+      .items;
+    expect(afterItems.find((item) => item.key === "portal.page_size")?.value).toBe(
+      target?.value,
+    );
+    expect(afterItems.find((item) => item.key === "approval.version_reapproval")?.value).toBe(
+      other?.value,
+    );
+  });
+
+  test("J. 真实导出 CSV：BOM + 中文不乱码（验收 #20）", async ({ page }) => {
+    const auth = captureAuthHeader(page);
+    await signIn(page, ADMIN.username, ADMIN.password);
+    await expect(page.getByTestId("tool-card").first()).toBeVisible();
+
+    const probe = await page.evaluate(async ([url, token]) => {
+      const response = await fetch(url as string, {
+        headers: { Authorization: token as string },
+      });
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      const head = Array.from(bytes.slice(0, 3));
+      const text = new TextDecoder("utf-8").decode(bytes);
+      return {
+        status: response.status,
+        contentType: response.headers.get("content-type") ?? "",
+        disposition: response.headers.get("content-disposition") ?? "",
+        head,
+        hasChineseHeader: text.includes("用户名") || text.includes("display_name"),
+      };
+    }, [`${API}/admin/export/users`, auth.current()] as const);
+
+    expect(probe.status).toBe(200);
+    expect(probe.contentType).toContain("text/csv");
+    expect(probe.disposition).toContain("attachment");
+    // CONTRACT §16.1 验收 20：前 3 字节必须是 UTF-8 BOM，否则 Excel 打开中文乱码
+    expect(probe.head).toEqual([0xef, 0xbb, 0xbf]);
+    expect(probe.hasChineseHeader).toBe(true);
+  });
+
+  test("K. 真实 Token 生命周期：明文只出现一次 + 吊销后失效（§16.4）", async ({ page }) => {
+    const auth = captureAuthHeader(page);
+    await signIn(page, ADMIN.username, ADMIN.password);
+    await expect(page.getByTestId("tool-card").first()).toBeVisible();
+
+    /**
+     * 登录后的会话 JWT 必须**当场存下来**：`captureAuthHeader` 记录的是「最后一个」
+     * Authorization 头，而下面会用它自己签发的 API Token 直接打 `/tools`
+     * —— 那个请求也会被监听到，之后 `auth.current()` 就变成了只有 `tools:read`
+     * 的 Token，再拿去调 `/admin/tokens/{id}/revoke` 必然 403 SCOPE_MISSING。
+     */
+    const sessionAuth = auth.current();
+    expect(sessionAuth).toMatch(/^Bearer /);
+
+    const created = await api(page, `${API}/admin/tokens`, sessionAuth, {
+      method: "POST",
+      body: { name: `E2E Token ${Date.now().toString(36)}`, scopes: ["tools:read"] },
+    });
+    expect(created.status).toBe(201);
+    const token = created.body as unknown as { id: number; token: string; token_prefix: string };
+    expect(token.token.startsWith("st_")).toBe(true);
+    expect(token.token_prefix.length).toBeGreaterThan(3);
+
+    try {
+      // 列表接口永不返回明文
+      const list = await api(page, `${API}/admin/tokens`, sessionAuth);
+      const listText = JSON.stringify(list.body);
+      expect(listText.includes(token.token), "列表接口不应泄露明文").toBe(false);
+
+      // 明文可用
+      const call = await page.evaluate(async (raw) => {
+        const response = await fetch("/api/v1/tools?page=1&page_size=1", {
+          headers: { Authorization: `Bearer ${raw}` },
+        });
+        return { status: response.status, contentType: response.headers.get("content-type") ?? "" };
+      }, token.token);
+      expect(call.status).toBe(200);
+
+      // 吊销后立即失效
+      const revoked = await api(page, `${API}/admin/tokens/${token.id}/revoke`, sessionAuth, {
+        method: "POST",
+      });
+      expect(revoked.status).toBe(200);
+      const afterRevoke = await page.evaluate(async (raw) => {
+        const response = await fetch("/api/v1/tools?page=1&page_size=1", {
+          headers: { Authorization: `Bearer ${raw}` },
+        });
+        const body = (await response.json().catch(() => null)) as { code?: string } | null;
+        return { status: response.status, code: body?.code ?? null };
+      }, token.token);
+      expect(afterRevoke.status).toBe(401);
+      // CONTRACT §16.4：这里**应为** TOKEN_REVOKED，后端 M4 才修 —— 记下来但不作为失败
+      test.info().annotations.push({
+        type: afterRevoke.code === "TOKEN_REVOKED" ? "ok" : "gap",
+        description: `吊销后 code=${afterRevoke.code}（§16.4 要求 TOKEN_REVOKED，M4 修）`,
+      });
+    } finally {
+      await api(page, `${API}/admin/tokens/${token.id}`, sessionAuth, { method: "DELETE" });
+    }
   });
 
   test("H. 生产拓扑：后端托管 dist、无 mock worker（验收 #30）", async ({ page }) => {

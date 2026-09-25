@@ -17,6 +17,20 @@ export interface TagInputProps {
   disabled?: boolean;
   /** `id` of the visible text input, so `FormLabel htmlFor` can point at it. */
   inputId?: string;
+  /**
+   * 最多可选几项。默认 8（工具标签 `ToolCreateRequest.tags` 的服务端上限）；
+   * 系统设置的 `list` 型设置项（如 `upload.allowed_extensions`）契约里没有条数
+   * 上限（`SETTING_SPECS` 无该项、`validate_setting_value` 对 list 只校验元素类型），
+   * 调用方传 `null` 表示不设上限。
+   */
+  max?: number | null;
+  /**
+   * 单项最大长度。默认 64（工具标签上限）；同样允许 `null` = 不设上限，
+   * 因为 list 型设置项的契约里没有长度约束。
+   */
+  maxItemLength?: number | null;
+  /** 文案里的量词（如「标签」/「扩展名」），默认「标签」。 */
+  itemNoun?: string;
   "aria-describedby"?: string;
 }
 
@@ -33,6 +47,9 @@ export function TagInput({
   onChange,
   disabled = false,
   inputId,
+  max = MAX_TAGS,
+  maxItemLength = MAX_TAG_LENGTH,
+  itemNoun = "标签",
   "aria-describedby": ariaDescribedBy,
 }: TagInputProps) {
   const [draft, setDraft] = React.useState("");
@@ -51,7 +68,14 @@ export function TagInput({
     enabled: open || debounced.length > 0,
   });
 
-  const full = value.length >= MAX_TAGS;
+  const full = max !== null && value.length >= max;
+  const placeholder = full && max !== null ? `最多 ${max} 个${itemNoun}` : `输入${itemNoun}后按回车`;
+  const limitText = [
+    max === null ? "数量不限" : `最多 ${max} 个${itemNoun}`,
+    maxItemLength === null ? null : `每个不超过 ${maxItemLength} 字符`,
+  ]
+    .filter((part): part is string => part !== null)
+    .join("，");
   const lowered = value.map((tag) => tag.toLowerCase());
   const suggestions = (suggestionsQuery.data ?? [])
     .filter((tag) => !lowered.includes(tag.name.toLowerCase()))
@@ -60,7 +84,7 @@ export function TagInput({
   function add(raw: string) {
     const tag = raw.trim();
     if (!tag || full) return;
-    if (tag.length > MAX_TAG_LENGTH) return;
+    if (maxItemLength !== null && tag.length > maxItemLength) return;
     if (lowered.includes(tag.toLowerCase())) {
       setDraft("");
       return;
@@ -105,7 +129,7 @@ export function TagInput({
             aria-describedby={ariaDescribedBy}
             value={draft}
             disabled={disabled || full}
-            placeholder={full ? `最多 ${MAX_TAGS} 个标签` : "输入标签后按回车"}
+            placeholder={placeholder}
             onChange={(event) => {
               setDraft(event.target.value);
               setOpen(true);
@@ -165,7 +189,7 @@ export function TagInput({
       </div>
 
       <p className="text-xs text-muted-foreground">
-        最多 {MAX_TAGS} 个标签，每个不超过 {MAX_TAG_LENGTH} 字符（已选 {value.length} 个）
+        {limitText}（已选 {value.length} 个）
       </p>
     </div>
   );

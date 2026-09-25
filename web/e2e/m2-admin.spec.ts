@@ -228,8 +228,11 @@ test.describe("M2 · 审批台", () => {
     await page.goto("/admin/settings");
     await expect(page.getByTestId("settings-approval-mode")).toBeVisible();
 
-    // 24：切到「全部放行」需要先确认
-    await page.getByText("全部放行", { exact: false }).first().click();
+    // 24：切到「全部放行」需要先确认。
+    // M3 起审批模式是 Radix Select（元信息驱动的控件），关闭态不渲染选项文案，
+    // 必须先点触发器再选 option。
+    await page.getByTestId("settings-approval-mode").click();
+    await page.getByRole("option", { name: /全部放行/ }).click();
     const warning = page.getByRole("alertdialog");
     await expect(warning).toBeVisible();
     await warning.getByRole("button").last().click();
@@ -287,12 +290,28 @@ test.describe("M2 · 审批台", () => {
 
     await page.goto("/admin/approvals");
     await expect(page.getByTestId("admin-layout")).toBeVisible();
-    await expect(page.getByRole("link", { name: /审批队列/ })).toBeVisible();
-    await expect(page.getByRole("link", { name: /免审白名单/ })).toHaveCount(0);
-    await expect(page.getByRole("link", { name: /系统设置/ })).toHaveCount(0);
+
+    // M3 起菜单按角色过滤（docs/04 §5.2）：approver 看得到的三项 + 审批两项 + 分类/标签
+    for (const label of ["概览", "审批队列", "审批历史", "全站工具", "分类", "标签"]) {
+      await expect(page.getByRole("link", { name: new RegExp(label) })).toBeVisible();
+    }
+    // 超管专属项**不渲染**（不是禁用）——禁用态会泄露功能边界
+    for (const label of [
+      "免审白名单",
+      "系统设置",
+      "用户",
+      "用户组",
+      "API Token",
+      "导入导出",
+      "回收站",
+    ]) {
+      await expect(page.getByRole("link", { name: new RegExp(`^${label}$`) })).toHaveCount(0);
+    }
 
     // 直接输 URL 也会被 RequireRole 拦成 403 页
     await page.goto("/admin/settings");
+    await expect(page.getByText("没有访问权限")).toBeVisible();
+    await page.goto("/admin/users");
     await expect(page.getByText("没有访问权限")).toBeVisible();
     expect(errors).toEqual([]);
   });

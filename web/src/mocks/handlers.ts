@@ -3,18 +3,51 @@ import { delay, http, HttpResponse } from "msw";
 import type {
   AclEntry,
   AclResponse,
+  AdminCategoryCreateRequest,
+  AdminCategoryOut,
+  AdminCategoryUpdateRequest,
+  AdminOverviewResponse,
+  AdminRoleReplaceRequest,
+  AdminTagListResponse,
+  AdminTagOut,
+  AdminToolCreateRequest,
+  AdminToolItem,
+  AdminToolListResponse,
+  AdminUserCreateRequest,
+  AdminUserCreateResponse,
+  AdminUserItem,
+  AdminUserListResponse,
+  AdminUserUpdateRequest,
+  ApiScope,
+  ApiTokenCreateRequest,
+  ApiTokenCreateResponse,
+  ApiTokenListResponse,
+  ApiTokenOut,
   ApprovalQueueItem,
   ApprovalRecord,
   ApproveResponse,
   ApprovalHistoryParams,
   AuthProviderResponse,
   BatchApproveResponse,
+  CategoryInUseDetail,
+  CategoryOrderRequest,
   CurrentVersionBrief,
   DownloadLogItem,
   DownloadTicket,
   ErrorDetails,
   FieldError,
+  GeneratedPassword,
+  GroupCreateRequest,
+  GroupInUseDetail,
+  GroupListResponse,
+  GroupMemberAddResponse,
+  GroupMemberListResponse,
+  GroupMemberOut,
+  GroupOut,
+  GroupUpdateRequest,
   ImagePatchRequest,
+  ImportOnConflict,
+  ImportResultResponse,
   LoginField,
   Meta,
   MyToolListItem,
@@ -22,27 +55,43 @@ import type {
   PendingVersionBrief,
   Profile,
   PromptDetailInfo,
+  PurgeToolResponse,
+  ResetPasswordRequest,
+  ResetPasswordResponse,
+  RevokeSessionsResponse,
+  RoleOut,
   SettingItem,
   SettingListResponse,
   SettingWarning,
   SkillDetailInfo,
   SkillPreview,
   SkillVersionInfo,
+  StatusCount,
   StatusResponse,
+  StorageOwnerItem,
+  StorageStatsResponse,
   SubmitResponse,
   SupersededVersionBrief,
+  TagCleanupResponse,
+  TagMergeResponse,
+  TokenPair,
   ToolDetail,
   ToolFacets,
   ToolImage,
+  ToolImportItem,
+  ToolImportRequest,
   ToolListItem,
   ToolPermissions,
+  ToolRankItem,
+  ToolRankResponse,
   ToolSort,
   ToolStats,
   ToolStatus,
   ToolType,
-  TokenPair,
+  TransferOwnerResponse,
   Usage,
   User,
+  UserStatus,
   VersionDetail,
   VersionSummary,
   VersionUploadResponse,
@@ -55,6 +104,7 @@ import {
   buildInitialToolRecords,
   buildInitialWhitelist,
   buildExtraSubmissionRecords,
+  buildRecycleBinRecords,
   buildSkillFileTree,
   countByCategory,
   countByType,
@@ -66,10 +116,12 @@ import {
   LONG_TOOL_NAME,
   MOCK_CATEGORIES,
   MOCK_GROUPS,
+  MOCK_ROLES,
   MOCK_SETTINGS,
   MOCK_SKILL_MANIFEST,
   MOCK_SKILL_README,
   MOCK_TAGS,
+  MOCK_TOKENS,
   MOCK_TOOLS,
   MOCK_USERS,
   MOCK_VERSION_HISTORY_LIMIT,
@@ -77,8 +129,13 @@ import {
   toolSeedToListItem,
   waitingHoursFor,
   type MockApprovalRecord,
+  type MockCategoryRecord,
   type MockDownloadLog,
+  type MockGroup,
+  type MockGroupMember,
   type MockSettingRecord,
+  type MockTagRecord,
+  type MockTokenRecord,
   type MockToolRecord,
   type MockUser,
   type MockVersion,
@@ -208,6 +265,7 @@ const lockedUntil = new Map<string, number>();
 const toolRecords: MockToolRecord[] = [
   ...buildInitialToolRecords(),
   ...buildExtraSubmissionRecords(),
+  ...buildRecycleBinRecords(),
 ];
 const toolBySlug = new Map<string, MockToolRecord>(
   toolRecords.map((record) => [record.seed.slug, record]),
@@ -229,6 +287,22 @@ let nextToolId = 400;
 let nextApprovalRecordId = 10_000;
 let nextDownloadLogId = 11_000;
 let nextImageId = 20_000;
+let nextUserId = 100;
+let nextGroupId = 100;
+let nextCategoryId = 100;
+let nextTagId = 1_000;
+let nextTokenId = 100;
+
+/* -------------------------------------------------------------------------- */
+/* M3 state (in memory, seeded deterministically)                             */
+/* -------------------------------------------------------------------------- */
+
+/** Tag registry — mutable: rename / merge / cleanup all write here. */
+const tags: MockTagRecord[] = MOCK_TAGS;
+/** Groups — mutable: create / edit / member add/remove all write here. */
+const groups: MockGroup[] = MOCK_GROUPS;
+/** API Tokens — never store nor return the plaintext (FR-ADMIN-10). */
+const tokens: MockTokenRecord[] = MOCK_TOKENS.map((item) => ({ ...item }));
 
 /** ticket → { tool_id, version_id, user_id, expires_at } */
 const downloadTickets = new Map<
@@ -536,6 +610,7 @@ function skillInfoFor(record: MockToolRecord, version: MockVersion): SkillVersio
   return {
     manifest: { ...MOCK_SKILL_MANIFEST, name: record.seed.slug, version: version.version },
     file_tree_summary: skillTreeSummary(tree),
+    file_tree_truncated: false,
     parse_error: null,
   };
 }
@@ -1193,6 +1268,511 @@ function imageSvg(label: string, categorySlug: string | null, width: number, hei
 /** Find the tool behind an image id (seeded covers or uploaded images). */
 function findImageOwner(imageId: number): MockToolRecord | undefined {
   return toolRecords.find((record) => record.images.some((image) => image.id === imageId));
+}
+
+/* -------------------------------------------------------------------------- */
+/* M3 helpers                                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `/admin/*` guards mirror `app/api/v1/admin/_guards.py`:
+ *   - read + taxonomy endpoints: approver **or** superadmin
+ *   - users / groups / tokens / settings / import-export / recycle-bin / all-tool
+ *     mutations: superadmin only
+ * An absent/invalid bearer token always answers `401 TOKEN_EXPIRED` first.
+ */
+function requireApprover(request: Request): MockUser | Response {
+  const user = authenticate(request);
+  if (!user) return tokenExpired();
+  if (!isApprover(user)) return forbidden("只有审批人或超级管理员可以访问管理接口");
+  return user;
+}
+
+function requireSuperadmin(request: Request): MockUser | Response {
+  const user = authenticate(request);
+  if (!user) return tokenExpired();
+  if (!user.roles.includes("superadmin")) return forbidden("只有超级管理员可以访问该接口");
+  return user;
+}
+
+/** `St` + 8 + `!7` = 12 chars, always satisfying the 3-of-4 class rule. */
+const PASSWORD_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+const TOKEN_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+function randomChars(length: number, alphabet: string): string {
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  let out = "";
+  for (const byte of bytes) out += alphabet[byte % alphabet.length] ?? alphabet[0] ?? "x";
+  return out;
+}
+
+/** One-time initial password (`generate_password` in `admin_user_service.py`). */
+function generatePassword(): string {
+  return `St${randomChars(8, PASSWORD_ALPHABET)}!7`;
+}
+
+/** `st_` + 32 chars; the prefix is the first 8 chars (FR-API-02). */
+function generateApiToken(): { token: string; prefix: string } {
+  const token = `st_${randomChars(32, TOKEN_ALPHABET)}`;
+  return { token, prefix: token.slice(0, 8) };
+}
+
+/** Mirrors `password_strength_errors` (length 10 + 3 of 4 classes). */
+function passwordStrengthErrors(password: string, username: string): FieldError[] {
+  const fields: FieldError[] = [];
+  if (password.length < 10) {
+    fields.push({ field: "password", message: "密码长度不能少于 10 位" });
+  }
+  let classes = 0;
+  if (/[A-Z]/.test(password)) classes += 1;
+  if (/[a-z]/.test(password)) classes += 1;
+  if (/[0-9]/.test(password)) classes += 1;
+  if (/[^A-Za-z0-9]/.test(password)) classes += 1;
+  if (classes < 3) {
+    fields.push({
+      field: "password",
+      message: "密码需至少包含大写字母、小写字母、数字、符号中的 3 类",
+    });
+  }
+  if (username && password.trim().toLowerCase() === username.trim().toLowerCase()) {
+    fields.push({ field: "password", message: "密码不能与用户名相同" });
+  }
+  return fields;
+}
+
+const USERNAME_PATTERN = /^[A-Za-z0-9_.-]{1,64}$/;
+
+function userStatusOf(value: unknown): UserStatus | null {
+  return value === "active" || value === "disabled" ? value : null;
+}
+
+function toolTypeOf(value: unknown): ToolType | null {
+  return value === "file" || value === "webapp" || value === "skill" || value === "prompt"
+    ? value
+    : null;
+}
+
+function roleOf(value: unknown): RoleCodeValue | null {
+  return value === "viewer" || value === "user" || value === "approver" || value === "superadmin"
+    ? value
+    : null;
+}
+
+function roleCodesOf(values: readonly string[]): RoleCodeValue[] {
+  return values
+    .map((value) => roleOf(value))
+    .filter((role): role is RoleCodeValue => role !== null);
+}
+
+type RoleCodeValue = RoleOut["code"];
+
+function toAdminUserItem(user: MockUser): AdminUserItem {
+  const toolCount = toolRecords.filter(
+    (record) => !record.deleted_at && findUser(record.seed.owner_username)?.id === user.id,
+  ).length;
+  const usedBytes = usageFor(user).used_bytes;
+  return {
+    id: user.id,
+    username: user.username,
+    display_name: user.display_name,
+    email: user.email,
+    status: user.status,
+    auth_source: user.auth_source,
+    roles: [...user.roles],
+    must_change_password: user.must_change_password,
+    failed_login_count: user.failed_login_count,
+    locked_until: user.locked_until,
+    last_login_at: user.last_login_at,
+    last_login_ip: user.last_login_ip,
+    tool_count: toolCount,
+    used_bytes: usedBytes,
+    active_token_count: activeTokenCountFor(user.id),
+    created_at: user.created_at,
+    updated_at: user.updated_at,
+  };
+}
+
+function activeTokenCountFor(userId: number): number {
+  const now = Date.now();
+  return tokens.filter(
+    (token) =>
+      token.created_by_id === userId &&
+      token.revoked_at === null &&
+      (token.expires_at === null || Date.parse(token.expires_at) > now),
+  ).length;
+}
+
+function activeSuperadminCount(): number {
+  return MOCK_USERS.filter(
+    (user) => user.status === "active" && user.roles.includes("superadmin"),
+  ).length;
+}
+
+function isLastActiveSuperadmin(user: MockUser): boolean {
+  if (!user.roles.includes("superadmin") || user.status !== "active") return false;
+  return activeSuperadminCount() <= 1;
+}
+
+/** Revoke every refresh session + access token of one user; returns the count. */
+function revokeUserSessions(user: MockUser): number {
+  const next: SessionMap = {};
+  let revoked = 0;
+  for (const [token, owner] of Object.entries(sessions)) {
+    if (owner === user.username) {
+      revoked += 1;
+      continue;
+    }
+    next[token] = owner;
+  }
+  saveSessions(next);
+  for (const [token, entry] of [...accessTokens.entries()]) {
+    if (entry.username === user.username) accessTokens.delete(token);
+  }
+  return revoked;
+}
+
+/** Revoke every active API Token created by a user (disable / revoke flows). */
+function revokeUserTokens(userId: number): number {
+  let revoked = 0;
+  for (const token of tokens) {
+    if (token.created_by_id === userId && token.revoked_at === null) {
+      token.revoked_at = nowIso();
+      revoked += 1;
+    }
+  }
+  return revoked;
+}
+
+function toGroupOut(group: MockGroup): GroupOut {
+  return {
+    id: group.id,
+    name: group.name,
+    description: group.description,
+    is_active: group.is_active,
+    member_count: group.members.length,
+    acl_reference_count: aclReferencesToGroup(group.id).length,
+    created_at: group.created_at,
+    updated_at: group.updated_at,
+  };
+}
+
+/** Tools whose ACL references this group (backend counts deleted tools too). */
+function aclReferencesToGroup(groupId: number): MockToolRecord[] {
+  return toolRecords.filter((record) =>
+    record.acl.some((entry) => entry.subject_type === "group" && entry.subject_id === groupId),
+  );
+}
+
+function toGroupMemberOut(member: MockGroupMember): GroupMemberOut | null {
+  const user = findMockUserById(member.user_id);
+  if (!user) return null;
+  const adder = member.added_by_id ? findMockUserById(member.added_by_id) : undefined;
+  return {
+    user_id: user.id,
+    username: user.username,
+    display_name: user.display_name,
+    email: user.email,
+    status: user.status,
+    added_at: member.added_at,
+    added_by_name: adder?.display_name ?? null,
+  };
+}
+
+function toAdminCategoryOut(category: MockCategoryRecord): AdminCategoryOut {
+  const toolCount = toolRecords.filter(
+    (record) => !record.deleted_at && record.seed.category_slug === category.slug,
+  ).length;
+  return {
+    id: category.id,
+    slug: category.slug,
+    name: category.name,
+    description: category.description,
+    icon: category.icon,
+    sort_order: category.sort_order,
+    is_active: category.is_active,
+    tool_count: toolCount,
+    created_at: category.created_at,
+    updated_at: category.updated_at,
+  };
+}
+
+const TAG_SEED_CREATED_AT = "2024-10-01T02:00:00Z";
+
+function toAdminTagOut(tag: MockTagRecord): AdminTagOut {
+  return {
+    id: tag.id,
+    name: tag.name,
+    display_name: tag.display_name,
+    usage_count: tag.usage_count,
+    created_at: tag.created_at ?? TAG_SEED_CREATED_AT,
+  };
+}
+
+/** `normalize_tag_name`: NFKC + trim + lower (docs/02 §3.7, FR-TAX-03). */
+function normalizeTagName(name: string): string {
+  return name.normalize("NFKC").trim().toLowerCase();
+}
+
+/** Full recount from the tool records — the backend does the same (docs/02 §3.7). */
+function recomputeTagUsage(): void {
+  const byName = new Map(tags.map((tag) => [tag.name, tag]));
+  const counts = new Map<number, number>();
+  for (const record of toolRecords) {
+    for (const raw of record.seed.tags) {
+      const tag = byName.get(normalizeTagName(raw));
+      if (!tag) continue;
+      counts.set(tag.id, (counts.get(tag.id) ?? 0) + 1);
+    }
+  }
+  for (const tag of tags) tag.usage_count = counts.get(tag.id) ?? 0;
+}
+
+function getOrCreateTag(rawName: string): MockTagRecord | null {
+  const display = rawName.trim();
+  const name = normalizeTagName(display);
+  if (!name) return null;
+  const existing = tags.find((tag) => tag.name === name);
+  if (existing) return existing;
+  const tag: MockTagRecord = {
+    id: nextTagId++,
+    name,
+    display_name: display,
+    usage_count: 0,
+    created_at: nowIso(),
+  };
+  tags.push(tag);
+  return tag;
+}
+
+function toApiTokenOut(token: MockTokenRecord): ApiTokenOut {
+  const creator = token.created_by_id ? findMockUserById(token.created_by_id) : undefined;
+  const expiresAt = token.expires_at ? Date.parse(token.expires_at) : null;
+  return {
+    id: token.id,
+    name: token.name,
+    token_prefix: token.token_prefix,
+    scopes: [...token.scopes],
+    note: token.note,
+    created_by_id: token.created_by_id,
+    created_by_name: creator?.display_name ?? null,
+    created_at: token.created_at,
+    expires_at: token.expires_at,
+    revoked_at: token.revoked_at,
+    last_used_at: token.last_used_at,
+    last_used_ip: token.last_used_ip,
+    is_active: token.revoked_at === null && (expiresAt === null || expiresAt > Date.now()),
+  };
+}
+
+function toAdminToolItem(record: MockToolRecord): AdminToolItem {
+  const owner = findUser(record.seed.owner_username);
+  const category = MOCK_CATEGORIES.find((item) => item.slug === record.seed.category_slug);
+  const current = currentVersionOf(record);
+  return {
+    id: record.seed.id,
+    slug: record.seed.slug,
+    name: record.seed.name,
+    summary: record.seed.summary,
+    tool_type: record.seed.tool_type,
+    visibility: record.acl_visibility,
+    status: record.status,
+    category: category
+      ? { id: category.id, slug: category.slug, name: category.name, icon: category.icon }
+      : null,
+    tags: [...record.seed.tags],
+    cover_url: coverUrlFor(record),
+    owner: owner
+      ? { id: owner.id, username: owner.username, display_name: owner.display_name }
+      : null,
+    current_version: current?.version ?? null,
+    download_count: record.seed.download_count,
+    view_count: record.seed.view_count,
+    version_seq: record.version_seq,
+    reject_reason: record.reject_reason,
+    offline_reason: record.offline_reason,
+    published_at: record.seed.published_at || null,
+    created_at: record.created_at,
+    updated_at: record.seed.updated_at || null,
+    deleted_at: record.deleted_at,
+  };
+}
+
+function settingInt(key: string, fallback: number): number {
+  const value = settings.find((item) => item.key === key)?.value;
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function overviewNumbers(): AdminOverviewResponse {
+  const statusOrder: ToolStatus[] = [
+    "draft",
+    "pending",
+    "approved",
+    "rejected",
+    "pending_update",
+    "offline",
+  ];
+  const live = toolRecords.filter((record) => !record.deleted_at);
+  const toolsByStatus: StatusCount[] = statusOrder.map((status) => ({
+    status,
+    count: live.filter((record) => record.status === status).length,
+  }));
+  const quotaBytes = settingInt("quota.total_mb", 51_200) * 1024 * 1024;
+  const usedBytes = toolRecords
+    .flatMap((record) => record.versions)
+    .reduce((total, version) => total + (version.file_size ?? 0), 0);
+  const weekAgo = Date.now() - 7 * 24 * 3600 * 1000;
+  return {
+    tool_count: live.length,
+    pending_count: live.filter(isQueued).length,
+    tools_by_status: toolsByStatus,
+    user_count: MOCK_USERS.length,
+    active_user_count: MOCK_USERS.filter((user) => user.status === "active").length,
+    disabled_user_count: MOCK_USERS.filter((user) => user.status === "disabled").length,
+    category_count: MOCK_CATEGORIES.length,
+    tag_count: tags.length,
+    group_count: groups.length,
+    active_token_count: activeTokenCount(),
+    recycle_bin_count: toolRecords.filter((record) => record.deleted_at !== null).length,
+    download_count: live.reduce((total, record) => total + record.seed.download_count, 0),
+    view_count: live.reduce((total, record) => total + record.seed.view_count, 0),
+    downloads_last_7_days: downloadLogs.filter(
+      (log) => Date.parse(log.created_at) >= weekAgo,
+    ).length,
+    used_bytes: usedBytes,
+    quota_bytes: quotaBytes,
+    used_percent: quotaBytes ? Math.round((usedBytes / quotaBytes) * 10_000) / 100 : 0,
+  };
+}
+
+function activeTokenCount(): number {
+  const now = Date.now();
+  return tokens.filter(
+    (token) =>
+      token.revoked_at === null &&
+      (token.expires_at === null || Date.parse(token.expires_at) > now),
+  ).length;
+}
+
+function toolMatchesAdminQuery(record: MockToolRecord, keyword: string): boolean {
+  const needle = keyword.trim().toLowerCase();
+  if (!needle) return true;
+  return (
+    record.seed.name.toLowerCase().includes(needle) ||
+    record.seed.summary.toLowerCase().includes(needle)
+  );
+}
+
+/** Union of the permission points of the given role codes (docs/01 §3.1). */
+function permissionsForRoles(roles: readonly string[]): string[] {
+  const granted = new Set<string>();
+  for (const role of roles) {
+    const record = MOCK_ROLES.find((item) => item.code === role);
+    if (!record) continue;
+    for (const permission of record.permissions) granted.add(permission);
+  }
+  return [...granted];
+}
+
+/** Mirrors `validate_setting_value` (type → enum → range), returning the reason. */
+function validateSettingValue(setting: MockSettingRecord, value: unknown): string | null {
+  if (setting.value_type === "bool") {
+    if (typeof value !== "boolean") return "必须是布尔值";
+  } else if (setting.value_type === "int") {
+    // `typeof true === "boolean"`, so booleans never reach the numeric branch.
+    if (typeof value !== "number" || !Number.isInteger(value)) return "必须是整数";
+    if (setting.min !== null && value < setting.min) return `不能小于 ${setting.min}`;
+    if (setting.max !== null && value > setting.max) return `不能大于 ${setting.max}`;
+  } else if (setting.value_type === "string") {
+    if (typeof value !== "string") return "必须是字符串";
+  } else if (setting.value_type === "list") {
+    if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
+      return "必须是字符串数组";
+    }
+  }
+  if (setting.options && !setting.options.includes(String(value))) {
+    return `只能是 ${setting.options.join(" / ")} 之一`;
+  }
+  return null;
+}
+
+/** `slugify` in `admin_taxonomy_service.py`: ASCII only, `-` separated, max 64. */
+function slugifyCategory(name: string): string {
+  const ascii = [...name.normalize("NFKD")]
+    .filter((char) => {
+      const code = char.codePointAt(0) ?? 0;
+      return code >= 0x20 && code <= 0x7e;
+    })
+    .join("");
+  return ascii
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-")
+    .toLowerCase()
+    .slice(0, 64);
+}
+
+const IMPORT_ON_CONFLICTS = ["skip", "update", "fail"] as const;
+
+function normalizeOnConflict(value: string): ImportOnConflict | null {
+  return (IMPORT_ON_CONFLICTS as readonly string[]).includes(value)
+    ? (value as ImportOnConflict)
+    : null;
+}
+
+/**
+ * Minimal RFC 4180 reader (quotes + escaped quotes + CRLF). The backend uses
+ * `csv.DictReader`, and the M3 e2e writes plain CSV, so this covers both.
+ */
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  const input = text.replace(/^\ufeff/, "");
+  let row: string[] = [];
+  let cell = "";
+  let inQuotes = false;
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index] ?? "";
+    if (inQuotes) {
+      if (char === '"') {
+        if (input[index + 1] === '"') {
+          cell += '"';
+          index += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        cell += char;
+      }
+      continue;
+    }
+    if (char === '"') {
+      inQuotes = true;
+      continue;
+    }
+    if (char === ",") {
+      row.push(cell);
+      cell = "";
+      continue;
+    }
+    if (char === "\n") {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = "";
+      continue;
+    }
+    if (char === "\r") continue;
+    cell += char;
+  }
+  if (cell !== "" || row.length > 0) {
+    row.push(cell);
+    rows.push(row);
+  }
+  return rows;
+}
+
+function csvCell(value: string): string {
+  return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -2190,6 +2770,7 @@ export const handlers = [
         ? {
             manifest: { ...MOCK_SKILL_MANIFEST, name: record.seed.slug, version: version.version },
             file_tree_summary: skillTreeSummary(buildSkillFileTree(record.seed.name)),
+            file_tree_truncated: false,
             parse_error: null,
           }
         : null;
@@ -2781,42 +3362,23 @@ export const handlers = [
     }
 
     // Atomic: validate the whole batch before mutating anything (docs/03 §3.13).
+    // Any invalid item → 400 SETTING_INVALID with `details.key` and **zero writes**
+    // (验收 23：合法项也不能被写进去). Mirrors `validate_setting_value`.
     for (const item of items) {
       const setting = settings.find((entry) => entry.key === item.key);
       if (!setting) {
         return errorResponse(400, "SETTING_INVALID", `未知的设置项：${item.key}`, {
-          field: "key",
-          value: item.key,
+          key: item.key,
         });
       }
-      if (setting.value_type === "bool" && typeof item.value !== "boolean") {
-        return errorResponse(400, "SETTING_INVALID", `${item.key} 需要布尔值`, {
-          field: item.key,
-          value: item.value,
-        });
-      }
-      if (setting.value_type === "int" && typeof item.value !== "number") {
-        return errorResponse(400, "SETTING_INVALID", `${item.key} 需要整数`, {
-          field: item.key,
-          value: item.value,
-        });
-      }
-      if (setting.options && !setting.options.includes(String(item.value))) {
-        return errorResponse(400, "SETTING_INVALID", `${item.key} 的取值不在允许范围内`, {
-          field: item.key,
-          value: item.value,
-          options: setting.options,
-        });
-      }
-      if (
-        setting.value_type === "string" &&
-        !setting.options &&
-        typeof item.value !== "string"
-      ) {
-        return errorResponse(400, "SETTING_INVALID", `${item.key} 需要字符串`, {
-          field: item.key,
-          value: item.value,
-        });
+      const reason = validateSettingValue(setting, item.value);
+      if (reason) {
+        return errorResponse(
+          400,
+          "SETTING_INVALID",
+          `设置项 ${item.key} 的值非法：${reason}`,
+          { key: item.key },
+        );
       }
     }
 
@@ -2842,6 +3404,1582 @@ export const handlers = [
       }
     }
     return HttpResponse.json(settingListResponse(warnings));
+  }),
+
+  /* ---- M3: admin overview & stats ---- */
+  http.get(`${API}/admin/overview`, async ({ request }) => {
+    await delay(80);
+    const actor = requireApprover(request);
+    if (actor instanceof Response) return actor;
+    return HttpResponse.json(overviewNumbers());
+  }),
+
+  http.get(`${API}/admin/stats/tools`, async ({ request }) => {
+    await delay(80);
+    const actor = requireApprover(request);
+    if (actor instanceof Response) return actor;
+    const params = new URL(request.url).searchParams;
+    const limit = Math.min(
+      100,
+      Math.max(1, Number.parseInt(params.get("limit") ?? "20", 10) || 20),
+    );
+    const includeDeleted = params.get("include_deleted") === "true";
+    const candidates = toolRecords
+      .filter((record) => includeDeleted || !record.deleted_at)
+      .sort(
+        (a, b) => b.seed.download_count - a.seed.download_count || a.seed.id - b.seed.id,
+      );
+    const items: ToolRankItem[] = candidates.slice(0, limit).map((record) => {
+      const owner = findUser(record.seed.owner_username);
+      return {
+        tool_id: record.seed.id,
+        slug: record.seed.slug,
+        name: record.seed.name,
+        tool_type: record.seed.tool_type,
+        status: record.status,
+        owner_name: owner?.display_name ?? null,
+        download_count: record.seed.download_count,
+        view_count: record.seed.view_count,
+      };
+    });
+    const body: ToolRankResponse = { items, total: toolRecords.length };
+    return HttpResponse.json(body);
+  }),
+
+  http.get(`${API}/admin/stats/storage`, async ({ request }) => {
+    await delay(80);
+    // 后端该端点用 `admin_all_guard`：虽然是读接口，但只有超管能看全站配额明细。
+    const actor = requireSuperadmin(request);
+    if (actor instanceof Response) return actor;
+    const params = new URL(request.url).searchParams;
+    const limit = Math.min(
+      200,
+      Math.max(1, Number.parseInt(params.get("limit") ?? "20", 10) || 20),
+    );
+    const offset = Math.max(0, Number.parseInt(params.get("offset") ?? "0", 10) || 0);
+    const perUserBytes = settingInt("quota.per_user_mb", 2048) * 1024 * 1024;
+    const totalQuotaBytes = settingInt("quota.total_mb", 51_200) * 1024 * 1024;
+
+    const byOwner = new Map<number, { used: number; tools: Set<number>; versions: number }>();
+    for (const record of toolRecords) {
+      if (record.deleted_at) continue;
+      const owner = findUser(record.seed.owner_username);
+      if (!owner) continue;
+      const entry =
+        byOwner.get(owner.id) ?? { used: 0, tools: new Set<number>(), versions: 0 };
+      entry.tools.add(record.seed.id);
+      entry.versions += record.versions.length;
+      entry.used += record.versions.reduce(
+        (total, version) => total + (version.file_size ?? 0),
+        0,
+      );
+      byOwner.set(owner.id, entry);
+    }
+    const ranked = [...byOwner.entries()].sort((a, b) => b[1].used - a[1].used);
+    const items: StorageOwnerItem[] = ranked.slice(offset, offset + limit).map(([ownerId, entry]) => {
+      const owner = findMockUserById(ownerId);
+      return {
+        owner_id: ownerId,
+        username: owner?.username ?? `user-${ownerId}`,
+        display_name: owner?.display_name ?? `用户 ${ownerId}`,
+        used_bytes: entry.used,
+        quota_bytes: perUserBytes,
+        used_percent: perUserBytes
+          ? Math.round((entry.used / perUserBytes) * 10_000) / 100
+          : 0,
+        tool_count: entry.tools.size,
+        version_count: entry.versions,
+      };
+    });
+
+    const totalUsed = toolRecords
+      .flatMap((record) => record.versions)
+      .reduce((total, version) => total + (version.file_size ?? 0), 0);
+    const body: StorageStatsResponse = {
+      items,
+      total: ranked.length,
+      page: Math.floor(offset / limit) + 1,
+      page_size: limit,
+      total_used_bytes: totalUsed,
+      total_quota_bytes: totalQuotaBytes,
+      used_percent: totalQuotaBytes
+        ? Math.round((totalUsed / totalQuotaBytes) * 10_000) / 100
+        : 0,
+      file_count: toolRecords.reduce((total, record) => total + record.versions.length, 0),
+      // 后端 `stats_service.storage_stats` 目前恒为默认值 0（孤儿文件扫描是 P1）。
+      orphan_file_count: 0,
+    };
+    return HttpResponse.json(body);
+  }),
+
+  http.get(`${API}/admin/roles`, async ({ request }) => {
+    await delay(60);
+    const actor = requireApprover(request);
+    if (actor instanceof Response) return actor;
+    const body: RoleOut[] = MOCK_ROLES.map((role) => ({
+      id: role.id,
+      code: role.code,
+      name: role.name,
+      description: role.description,
+      permissions: [...role.permissions],
+      is_builtin: true,
+      user_count: MOCK_USERS.filter((user) => user.roles.includes(role.code)).length,
+    }));
+    return HttpResponse.json(body);
+  }),
+
+  /* ---- M3: users ---- */
+  http.get(`${API}/admin/users`, async ({ request }) => {
+    await delay(80);
+    const actor = requireSuperadmin(request);
+    if (actor instanceof Response) return actor;
+    const params = new URL(request.url).searchParams;
+    const q = (params.get("q") ?? "").trim().toLowerCase();
+    const roleFilters = params.getAll("role");
+    const statusFilter = params.get("status");
+    const { page, pageSize } = pageOf(request);
+
+    const filtered = MOCK_USERS.filter((user) => !q || user.username.toLowerCase().includes(q) || user.display_name.toLowerCase().includes(q))
+      .filter(
+        (user) => roleFilters.length === 0 || user.roles.some((role) => roleFilters.includes(role)),
+      )
+      .filter((user) => !statusFilter || user.status === statusFilter)
+      .sort((a, b) => a.id - b.id)
+      .map(toAdminUserItem);
+    const body: AdminUserListResponse = paginate(filtered, page, pageSize);
+    return HttpResponse.json(body);
+  }),
+
+  http.post(`${API}/admin/users`, async ({ request }) => {
+    await delay(120);
+    const actor = requireSuperadmin(request);
+    if (actor instanceof Response) return actor;
+    const body = (await request.json().catch(() => ({}))) as Partial<AdminUserCreateRequest>;
+    const username = (body.username ?? "").trim();
+    const displayName = (body.display_name ?? "").trim();
+    const roles = body.roles ?? ["user"];
+    const fields: FieldError[] = [];
+    if (!USERNAME_PATTERN.test(username)) {
+      fields.push({
+        field: "username",
+        message: "用户名只能包含字母、数字、下划线、点、连字符",
+      });
+    } else if (findUser(username)) {
+      fields.push({ field: "username", message: `用户名 ${username} 已被占用` });
+    }
+    if (!displayName || displayName.length > 128) {
+      fields.push({ field: "display_name", message: "显示名必填且不超过 128 个字符" });
+    }
+    const unknownRoles = roles.filter((role) => roleOf(role) === null);
+    if (unknownRoles.length > 0 || roles.length === 0) {
+      fields.push({ field: "roles", message: `未知角色：${unknownRoles.join(", ")}` });
+    }
+    const rawPassword = (body.password ?? "").trim();
+    if (rawPassword) fields.push(...passwordStrengthErrors(rawPassword, username));
+    if (fields.length > 0) return validationError(fields);
+
+    const generated = rawPassword ? null : generatePassword();
+    const now = nowIso();
+    const user: MockUser = {
+      id: nextUserId++,
+      username: username.toLowerCase(),
+      password: rawPassword || generated || generatePassword(),
+      display_name: displayName,
+      email: (body.email ?? "").trim() || null,
+      roles: [...roles],
+      permissions: [],
+      must_change_password: body.must_change_password ?? true,
+      auth_source: "local",
+      status: "active",
+      last_login_at: null,
+      failed_login_count: 0,
+      locked_until: null,
+      last_login_ip: null,
+      created_at: now,
+      updated_at: now,
+    };
+    user.permissions = permissionsForRoles(user.roles);
+    MOCK_USERS.push(user);
+    const response: AdminUserCreateResponse = {
+      user: toAdminUserItem(user),
+      generated_password: generated,
+    };
+    return HttpResponse.json(response, { status: 201 });
+  }),
+
+  http.get(`${API}/admin/users/:userId`, async ({ request, params }) => {
+    await delay(60);
+    const actor = requireSuperadmin(request);
+    if (actor instanceof Response) return actor;
+    const user = findMockUserById(Number(params.userId));
+    if (!user) return notFound("用户不存在");
+    return HttpResponse.json(toAdminUserItem(user));
+  }),
+
+  http.patch(`${API}/admin/users/:userId`, async ({ request, params }) => {
+    await delay(100);
+    const actor = requireSuperadmin(request);
+    if (actor instanceof Response) return actor;
+    const user = findMockUserById(Number(params.userId));
+    if (!user) return notFound("用户不存在");
+    const body = (await request.json().catch(() => ({}))) as AdminUserUpdateRequest;
+
+    if (body.display_name !== undefined && body.display_name !== null) {
+      const value = body.display_name.trim();
+      if (!value || value.length > 128) {
+        return validationError([
+          { field: "display_name", message: "显示名必填且不超过 128 个字符" },
+        ]);
+      }
+      user.display_name = value;
+    }
+    // 后端 `AdminUserUpdateRequest.email` 为 Optional：显式 null 与缺省同义（不修改）。
+    if (body.email !== undefined && body.email !== null) {
+      const value = body.email.trim();
+      if (value.length > 255 || (value && !value.includes("@"))) {
+        return validationError([{ field: "email", message: "邮箱格式不正确" }]);
+      }
+      user.email = value || null;
+    }
+    if (body.status !== undefined && body.status !== null) {
+      const nextStatus = userStatusOf(body.status);
+      if (!nextStatus) {
+        return validationError([{ field: "status", message: "状态只能是 active 或 disabled" }]);
+      }
+      if (nextStatus !== user.status) {
+        if (nextStatus === "disabled") {
+          if (user.id === actor.id) {
+            return errorResponse(400, "VALIDATION_ERROR", "不能禁用自己的账号（防止自我锁死）", {
+              user_id: user.id,
+              reason: "self_disable",
+            });
+          }
+          if (isLastActiveSuperadmin(user)) {
+            return errorResponse(409, "LAST_SUPERADMIN", "不能禁用或降级最后一个启用的超级管理员", {
+              active_superadmin_count: activeSuperadminCount(),
+              user_id: user.id,
+            });
+          }
+          user.status = "disabled";
+          user.locked_until = null;
+          revokeUserSessions(user);
+          revokeUserTokens(user.id);
+        } else {
+          user.status = "active";
+        }
+      }
+    }
+    user.updated_at = nowIso();
+    return HttpResponse.json(toAdminUserItem(user));
+  }),
+
+  http.put(`${API}/admin/users/:userId/roles`, async ({ request, params }) => {
+    await delay(100);
+    const actor = requireSuperadmin(request);
+    if (actor instanceof Response) return actor;
+    const user = findMockUserById(Number(params.userId));
+    if (!user) return notFound("用户不存在");
+    const body = (await request.json().catch(() => ({}))) as Partial<AdminRoleReplaceRequest>;
+    const roles = body.roles ?? [];
+    if (roles.length === 0 || roles.length > 4) {
+      return validationError([{ field: "roles", message: "角色数量需在 1~4 之间" }]);
+    }
+    const unknownRoles = roles.filter((role) => roleOf(role) === null);
+    if (unknownRoles.length > 0) {
+      return validationError([{ field: "roles", message: `未知角色：${unknownRoles.join(", ")}` }]);
+    }
+
+    const losesSuperadmin =
+      user.roles.includes("superadmin") && !roles.includes("superadmin");
+    if (losesSuperadmin) {
+      if (user.id === actor.id) {
+        return errorResponse(
+          400,
+          "VALIDATION_ERROR",
+          "不能降级自己的超级管理员角色（防止自我锁死）",
+          { user_id: user.id, reason: "self_demote" },
+        );
+      }
+      if (isLastActiveSuperadmin(user)) {
+        return errorResponse(409, "LAST_SUPERADMIN", "不能禁用或降级最后一个启用的超级管理员", {
+          active_superadmin_count: activeSuperadminCount(),
+          user_id: user.id,
+        });
+      }
+    }
+
+    user.roles = [...roles];
+    user.permissions = permissionsForRoles(roles);
+    user.updated_at = nowIso();
+    return HttpResponse.json(toAdminUserItem(user));
+  }),
+
+  http.post(`${API}/admin/users/:userId/reset-password`, async ({ request, params }) => {
+    await delay(120);
+    const actor = requireSuperadmin(request);
+    if (actor instanceof Response) return actor;
+    const user = findMockUserById(Number(params.userId));
+    if (!user) return notFound("用户不存在");
+    const body = (await request.json().catch(() => ({}))) as ResetPasswordRequest;
+    const rawPassword = (body.password ?? "").trim();
+    if (rawPassword) {
+      const errors = passwordStrengthErrors(rawPassword, user.username);
+      if (errors.length > 0) return validationError(errors);
+    }
+    const generated = rawPassword ? null : generatePassword();
+    user.password = rawPassword || generated || generatePassword();
+    saveCredentialOverride(user.username, {
+      password: user.password,
+      must_change_password: true,
+    });
+    user.must_change_password = true;
+    user.failed_login_count = 0;
+    user.locked_until = null;
+    user.updated_at = nowIso();
+    const revoked = revokeUserSessions(user);
+    const response: ResetPasswordResponse = {
+      user_id: user.id,
+      generated_password: generated,
+      must_change_password: true,
+      revoked_sessions: revoked,
+    };
+    return HttpResponse.json(response);
+  }),
+
+  http.post(`${API}/admin/users/:userId/revoke-sessions`, async ({ request, params }) => {
+    await delay(80);
+    const actor = requireSuperadmin(request);
+    if (actor instanceof Response) return actor;
+    const user = findMockUserById(Number(params.userId));
+    if (!user) return notFound("用户不存在");
+    const revoked = revokeUserSessions(user);
+    const response: RevokeSessionsResponse = { status: "ok", revoked_sessions: revoked };
+    return HttpResponse.json(response);
+  }),
+
+  /* ---- M3: groups ---- */
+  http.get(`${API}/admin/groups`, async ({ request }) => {
+    await delay(80);
+    const actor = requireSuperadmin(request);
+    if (actor instanceof Response) return actor;
+    const params = new URL(request.url).searchParams;
+    const q = (params.get("q") ?? "").trim().toLowerCase();
+    const { page, pageSize } = pageOf(request);
+    const filtered = groups
+      .filter((group) => !q || group.name.toLowerCase().includes(q))
+      .sort((a, b) => a.name.localeCompare(b.name, "zh-Hans-CN"))
+      .map(toGroupOut);
+    const body: GroupListResponse = paginate(filtered, page, pageSize);
+    return HttpResponse.json(body);
+  }),
+
+  http.post(`${API}/admin/groups`, async ({ request }) => {
+    await delay(100);
+    const actor = requireSuperadmin(request);
+    if (actor instanceof Response) return actor;
+    const body = (await request.json().catch(() => ({}))) as GroupCreateRequest;
+    const name = (body.name ?? "").trim();
+    if (!name || name.length > 128) {
+      return validationError([{ field: "name", message: "组名必填且不超过 128 个字符" }]);
+    }
+    if (groups.some((group) => group.name === name)) {
+      return errorResponse(400, "DUPLICATE_ENTRY", `组名已存在：${name}`, {
+        field: "name",
+        value: name,
+      });
+    }
+    const now = nowIso();
+    const group: MockGroup = {
+      id: nextGroupId++,
+      name,
+      description: body.description ?? null,
+      is_active: body.is_active ?? true,
+      created_at: now,
+      updated_at: now,
+      members: [],
+    };
+    groups.push(group);
+    return HttpResponse.json(toGroupOut(group), { status: 201 });
+  }),
+
+  http.patch(`${API}/admin/groups/:groupId`, async ({ request, params }) => {
+    await delay(100);
+    const actor = requireSuperadmin(request);
+    if (actor instanceof Response) return actor;
+    const group = groups.find((item) => item.id === Number(params.groupId));
+    if (!group) return notFound("用户组不存在");
+    const body = (await request.json().catch(() => ({}))) as GroupUpdateRequest;
+    if (body.name !== undefined && body.name !== null) {
+      const name = body.name.trim();
+      if (!name || name.length > 128) {
+        return validationError([{ field: "name", message: "组名必填且不超过 128 个字符" }]);
+      }
+      if (groups.some((item) => item.id !== group.id && item.name === name)) {
+        return errorResponse(400, "DUPLICATE_ENTRY", `组名已存在：${name}`, {
+          field: "name",
+          value: name,
+        });
+      }
+      group.name = name;
+    }
+    if (body.description !== undefined && body.description !== null) {
+      group.description = body.description;
+    }
+    if (body.is_active !== undefined && body.is_active !== null) {
+      group.is_active = body.is_active;
+    }
+    group.updated_at = nowIso();
+    return HttpResponse.json(toGroupOut(group));
+  }),
+
+  http.delete(`${API}/admin/groups/:groupId`, async ({ request, params }) => {
+    await delay(100);
+    const actor = requireSuperadmin(request);
+    if (actor instanceof Response) return actor;
+    const groupId = Number(params.groupId);
+    const group = groups.find((item) => item.id === groupId);
+    if (!group) return notFound("用户组不存在");
+    const referenced = aclReferencesToGroup(groupId);
+    const force = new URL(request.url).searchParams.get("force") === "true";
+    if (referenced.length > 0 && !force) {
+      const details: GroupInUseDetail = {
+        group_id: group.id,
+        group_name: group.name,
+        tool_count: referenced.length,
+        tools: referenced.map((record) => ({
+          id: record.seed.id,
+          slug: record.seed.slug,
+          name: record.seed.name,
+        })),
+      };
+      return errorResponse(
+        409,
+        "GROUP_IN_USE",
+        `用户组「${group.name}」仍被 ${referenced.length} 个工具的可见性授权引用`,
+        { ...details },
+      );
+    }
+    // force=true 时清理引用它的 ACL 条目，避免悬空授权（FR-GRP-04）。
+    for (const record of referenced) {
+      record.acl = record.acl.filter(
+        (entry) => !(entry.subject_type === "group" && entry.subject_id === groupId),
+      );
+    }
+    groups.splice(groups.indexOf(group), 1);
+    return HttpResponse.json({ status: "ok", cleaned_acl_entries: referenced.length });
+  }),
+
+  http.get(`${API}/admin/groups/:groupId/members`, async ({ request, params }) => {
+    await delay(80);
+    const actor = requireSuperadmin(request);
+    if (actor instanceof Response) return actor;
+    const group = groups.find((item) => item.id === Number(params.groupId));
+    if (!group) return notFound("用户组不存在");
+    const params2 = new URL(request.url).searchParams;
+    const q = (params2.get("q") ?? "").trim().toLowerCase();
+    const { page, pageSize } = pageOf(request);
+    const filtered = [...group.members]
+      .sort((a, b) => b.added_at.localeCompare(a.added_at))
+      .map(toGroupMemberOut)
+      .filter((member): member is GroupMemberOut => member !== null)
+      .filter(
+        (member) =>
+          !q ||
+          member.username.toLowerCase().includes(q) ||
+          member.display_name.toLowerCase().includes(q),
+      );
+    const body: GroupMemberListResponse = paginate(filtered, page, pageSize);
+    return HttpResponse.json(body);
+  }),
+
+  http.post(`${API}/admin/groups/:groupId/members`, async ({ request, params }) => {
+    await delay(100);
+    const actor = requireSuperadmin(request);
+    if (actor instanceof Response) return actor;
+    const group = groups.find((item) => item.id === Number(params.groupId));
+    if (!group) return notFound("用户组不存在");
+    const body = (await request.json().catch(() => ({}))) as { user_ids?: number[] };
+    const userIds = body.user_ids ?? [];
+    if (userIds.length === 0) {
+      return validationError([{ field: "user_ids", message: "至少选择一个用户" }]);
+    }
+    const existing = new Set(group.members.map((member) => member.user_id));
+    const notFoundIds: number[] = [];
+    let added = 0;
+    let alreadyMembers = 0;
+    for (const userId of userIds) {
+      if (existing.has(userId)) {
+        alreadyMembers += 1;
+        continue;
+      }
+      if (!findMockUserById(userId)) {
+        notFoundIds.push(userId);
+        continue;
+      }
+      group.members.push({ user_id: userId, added_at: nowIso(), added_by_id: actor.id });
+      existing.add(userId);
+      added += 1;
+    }
+    group.updated_at = nowIso();
+    const response: GroupMemberAddResponse = {
+      added,
+      already_members: alreadyMembers,
+      not_found: notFoundIds,
+    };
+    return HttpResponse.json(response);
+  }),
+
+  http.delete(`${API}/admin/groups/:groupId/members/:userId`, async ({ request, params }) => {
+    await delay(80);
+    const actor = requireSuperadmin(request);
+    if (actor instanceof Response) return actor;
+    const group = groups.find((item) => item.id === Number(params.groupId));
+    if (!group) return notFound("用户组不存在");
+    const userId = Number(params.userId);
+    const index = group.members.findIndex((member) => member.user_id === userId);
+    if (index < 0) return notFound("该用户不在组内");
+    group.members.splice(index, 1);
+    group.updated_at = nowIso();
+    return HttpResponse.json({ status: "ok" } satisfies StatusResponse);
+  }),
+
+  /* ---- M3: categories ---- */
+  http.get(`${API}/admin/categories`, async ({ request }) => {
+    await delay(60);
+    const actor = requireApprover(request);
+    if (actor instanceof Response) return actor;
+    const body: AdminCategoryOut[] = [...MOCK_CATEGORIES]
+      .sort((a, b) => a.sort_order - b.sort_order || a.id - b.id)
+      .map(toAdminCategoryOut);
+    return HttpResponse.json(body);
+  }),
+
+  http.post(`${API}/admin/categories`, async ({ request }) => {
+    await delay(100);
+    const actor = requireApprover(request);
+    if (actor instanceof Response) return actor;
+    const body = (await request.json().catch(() => ({}))) as AdminCategoryCreateRequest;
+    const name = (body.name ?? "").trim();
+    if (!name || name.length > 64) {
+      return validationError([{ field: "name", message: "分类名必填且不超过 64 个字符" }]);
+    }
+    const slug =
+      (body.slug ?? "").trim() || slugifyCategory(name) || `cat-${nextCategoryId}`;
+    if (MOCK_CATEGORIES.some((category) => category.name === name)) {
+      return errorResponse(400, "DUPLICATE_ENTRY", `分类名已存在：${name}`, { field: "name" });
+    }
+    if (MOCK_CATEGORIES.some((category) => category.slug === slug)) {
+      return errorResponse(400, "DUPLICATE_ENTRY", `分类 slug 已存在：${slug}`, {
+        field: "slug",
+      });
+    }
+    const now = nowIso();
+    const category: MockCategoryRecord = {
+      id: nextCategoryId++,
+      slug,
+      name,
+      description: body.description ?? null,
+      icon: body.icon ?? null,
+      sort_order: body.sort_order ?? 0,
+      is_active: body.is_active ?? true,
+      tool_count: 0,
+      created_at: now,
+      updated_at: now,
+    };
+    MOCK_CATEGORIES.push(category);
+    return HttpResponse.json(toAdminCategoryOut(category), { status: 201 });
+  }),
+
+  http.patch(`${API}/admin/categories/:categoryId`, async ({ request, params }) => {
+    await delay(100);
+    const actor = requireApprover(request);
+    if (actor instanceof Response) return actor;
+    const category = MOCK_CATEGORIES.find((item) => item.id === Number(params.categoryId));
+    if (!category) return notFound("分类不存在");
+    const body = (await request.json().catch(() => ({}))) as AdminCategoryUpdateRequest;
+    if (body.name !== undefined && body.name !== null) {
+      const name = body.name.trim();
+      if (!name || name.length > 64) {
+        return validationError([{ field: "name", message: "分类名必填且不超过 64 个字符" }]);
+      }
+      if (MOCK_CATEGORIES.some((item) => item.id !== category.id && item.name === name)) {
+        return errorResponse(400, "DUPLICATE_ENTRY", `分类名已存在：${name}`, {
+          field: "name",
+        });
+      }
+      category.name = name;
+    }
+    if (body.slug !== undefined && body.slug !== null) {
+      const slug = body.slug.trim();
+      if (!slug) {
+        return validationError([{ field: "slug", message: "slug 不能为空" }]);
+      }
+      if (MOCK_CATEGORIES.some((item) => item.id !== category.id && item.slug === slug)) {
+        return errorResponse(400, "DUPLICATE_ENTRY", `分类 slug 已存在：${slug}`, {
+          field: "slug",
+        });
+      }
+      // 工具按 slug 关联：跟着改，避免分类悬空。
+      for (const record of toolRecords) {
+        if (record.seed.category_slug === category.slug) record.seed.category_slug = slug;
+      }
+      category.slug = slug;
+    }
+    if (body.description !== undefined && body.description !== null) {
+      category.description = body.description;
+    }
+    if (body.icon !== undefined && body.icon !== null) {
+      category.icon = body.icon;
+    }
+    if (body.sort_order !== undefined && body.sort_order !== null) {
+      category.sort_order = body.sort_order;
+    }
+    if (body.is_active !== undefined && body.is_active !== null) {
+      category.is_active = body.is_active;
+    }
+    category.updated_at = nowIso();
+    return HttpResponse.json(toAdminCategoryOut(category));
+  }),
+
+  http.delete(`${API}/admin/categories/:categoryId`, async ({ request, params }) => {
+    await delay(100);
+    const actor = requireApprover(request);
+    if (actor instanceof Response) return actor;
+    const category = MOCK_CATEGORIES.find((item) => item.id === Number(params.categoryId));
+    if (!category) return notFound("分类不存在");
+    const toolCount = toolRecords.filter(
+      (record) => !record.deleted_at && record.seed.category_slug === category.slug,
+    ).length;
+    if (toolCount > 0) {
+      const details: CategoryInUseDetail = { category_id: category.id, tool_count: toolCount };
+      return errorResponse(
+        409,
+        "CATEGORY_IN_USE",
+        `分类「${category.name}」仍被 ${toolCount} 个工具引用，无法删除`,
+        { ...details },
+      );
+    }
+    // 软删除：工具表有外键，禁止物理删除（FR-TAX-02）。
+    category.is_active = false;
+    category.updated_at = nowIso();
+    return HttpResponse.json({ status: "ok", soft_deleted: true });
+  }),
+
+  http.put(`${API}/admin/categories/order`, async ({ request }) => {
+    await delay(100);
+    const actor = requireApprover(request);
+    if (actor instanceof Response) return actor;
+    const body = (await request.json().catch(() => ({}))) as Partial<CategoryOrderRequest>;
+    const items = body.items ?? [];
+    if (items.length === 0) {
+      return validationError([{ field: "items", message: "至少提交一个分类" }]);
+    }
+    const missing = items
+      .map((item) => item.id)
+      .filter((id) => !MOCK_CATEGORIES.some((category) => category.id === id));
+    if (missing.length > 0) {
+      return notFound(`部分分类不存在：${missing.join(", ")}`);
+    }
+    for (const item of items) {
+      const category = MOCK_CATEGORIES.find((entry) => entry.id === item.id);
+      if (!category) continue;
+      category.sort_order = item.sort_order;
+      category.updated_at = nowIso();
+    }
+    const response: AdminCategoryOut[] = [...MOCK_CATEGORIES]
+      .sort((a, b) => a.sort_order - b.sort_order || a.id - b.id)
+      .map(toAdminCategoryOut);
+    return HttpResponse.json(response);
+  }),
+
+  /* ---- M3: tags ---- */
+  http.get(`${API}/admin/tags`, async ({ request }) => {
+    await delay(60);
+    const actor = requireApprover(request);
+    if (actor instanceof Response) return actor;
+    recomputeTagUsage();
+    const params = new URL(request.url).searchParams;
+    const q = (params.get("q") ?? "").trim();
+    const { page, pageSize } = pageOf(request);
+    const needle = normalizeTagName(q);
+    const filtered = [...tags]
+      .filter((tag) => !needle || tag.name.startsWith(needle))
+      .sort((a, b) => b.usage_count - a.usage_count || a.name.localeCompare(b.name))
+      .map(toAdminTagOut);
+    const body: AdminTagListResponse = paginate(filtered, page, pageSize);
+    return HttpResponse.json(body);
+  }),
+
+  http.patch(`${API}/admin/tags/:tagId`, async ({ request, params }) => {
+    await delay(100);
+    const actor = requireApprover(request);
+    if (actor instanceof Response) return actor;
+    const tag = tags.find((item) => item.id === Number(params.tagId));
+    if (!tag) return notFound("标签不存在");
+    const body = (await request.json().catch(() => ({}))) as { display_name?: string };
+    const displayName = (body.display_name ?? "").trim();
+    const newName = normalizeTagName(displayName);
+    if (!newName) {
+      return validationError([{ field: "display_name", message: "不能为空" }]);
+    }
+    if (tags.some((item) => item.id !== tag.id && item.name === newName)) {
+      return errorResponse(400, "DUPLICATE_ENTRY", `标签「${newName}」已存在，请改用合并`, {
+        field: "display_name",
+        value: newName,
+      });
+    }
+    // 工具的标签以归一化名存储，改名要同步过去，否则门户显示旧名。
+    const oldName = tag.name;
+    for (const record of toolRecords) {
+      record.seed.tags = record.seed.tags.map((raw) =>
+        normalizeTagName(raw) === oldName ? newName : raw,
+      );
+    }
+    tag.name = newName;
+    tag.display_name = displayName;
+    recomputeTagUsage();
+    return HttpResponse.json(toAdminTagOut(tag));
+  }),
+
+  http.post(`${API}/admin/tags/merge`, async ({ request }) => {
+    await delay(140);
+    const actor = requireApprover(request);
+    if (actor instanceof Response) return actor;
+    const body = (await request.json().catch(() => ({}))) as {
+      source_ids?: number[];
+      target_id?: number;
+    };
+    const targetId = body.target_id;
+    const sourceIds = body.source_ids ?? [];
+    if (sourceIds.length === 0 || typeof targetId !== "number") {
+      return validationError([
+        { field: "source_ids", message: "至少选择一个待合并标签" },
+      ]);
+    }
+    const target = tags.find((item) => item.id === targetId);
+    if (!target) {
+      return errorResponse(404, "NOT_FOUND", "目标标签不存在", { tag_id: targetId });
+    }
+    if (sourceIds.includes(targetId)) {
+      return errorResponse(400, "VALIDATION_ERROR", "目标标签不能同时出现在待合并列表里", {
+        target_id: targetId,
+      });
+    }
+    const sources = tags.filter((tag) => sourceIds.includes(tag.id));
+    const missing = sourceIds.filter((id) => !sources.some((tag) => tag.id === id));
+    if (missing.length > 0) {
+      return errorResponse(404, "NOT_FOUND", "部分标签不存在", { missing_ids: missing });
+    }
+
+    const sourceNames = new Set(sources.map((tag) => tag.name));
+    let moved = 0;
+    let deduplicated = 0;
+    const targetTools = new Set(
+      toolRecords
+        .filter((record) => record.seed.tags.some((raw) => normalizeTagName(raw) === target.name))
+        .map((record) => record.seed.id),
+    );
+    for (const record of toolRecords) {
+      const present = record.seed.tags.filter((raw) => sourceNames.has(normalizeTagName(raw)));
+      if (present.length === 0) continue;
+      if (targetTools.has(record.seed.id)) {
+        // 该工具原本同时带源标签与目标标签：去掉源标签即可（等价于去重）。
+        deduplicated += present.length;
+        record.seed.tags = record.seed.tags.filter(
+          (raw) => !sourceNames.has(normalizeTagName(raw)),
+        );
+      } else {
+        moved += present.length;
+        record.seed.tags = [
+          ...record.seed.tags.filter((raw) => !sourceNames.has(normalizeTagName(raw))),
+          target.name,
+        ];
+      }
+    }
+
+    const deletedTags = sources.map((tag) => tag.display_name);
+    const sourceIdSet = new Set(sources.map((tag) => tag.id));
+    for (let index = tags.length - 1; index >= 0; index -= 1) {
+      const tag = tags[index];
+      if (tag && sourceIdSet.has(tag.id)) tags.splice(index, 1);
+    }
+    recomputeTagUsage();
+    const response: TagMergeResponse = {
+      target_id: target.id,
+      target_name: target.name,
+      merged_tags: sources.length,
+      moved_references: moved,
+      deduplicated_references: deduplicated,
+      deleted_tags: deletedTags,
+    };
+    return HttpResponse.json(response);
+  }),
+
+  http.post(`${API}/admin/tags/cleanup`, async ({ request }) => {
+    await delay(100);
+    const actor = requireApprover(request);
+    if (actor instanceof Response) return actor;
+    recomputeTagUsage();
+    const orphans = tags.filter((tag) => tag.usage_count === 0);
+    const names = orphans.map((tag) => tag.display_name);
+    for (const orphan of orphans) {
+      const index = tags.indexOf(orphan);
+      if (index >= 0) tags.splice(index, 1);
+    }
+    const response: TagCleanupResponse = { deleted: names.length, tags: names };
+    return HttpResponse.json(response);
+  }),
+
+  /* ---- M3: API tokens ---- */
+  http.get(`${API}/admin/tokens`, async ({ request }) => {
+    await delay(80);
+    const actor = requireSuperadmin(request);
+    if (actor instanceof Response) return actor;
+    const params = new URL(request.url).searchParams;
+    const includeRevoked = params.get("include_revoked") !== "false";
+    const { page, pageSize } = pageOf(request);
+    const filtered = [...tokens]
+      .filter((token) => includeRevoked || token.revoked_at === null)
+      .sort(
+        (a, b) => b.created_at.localeCompare(a.created_at) || b.id - a.id,
+      )
+      .map(toApiTokenOut);
+    const body: ApiTokenListResponse = paginate(filtered, page, pageSize);
+    return HttpResponse.json(body);
+  }),
+
+  http.post(`${API}/admin/tokens`, async ({ request }) => {
+    await delay(120);
+    const actor = requireSuperadmin(request);
+    if (actor instanceof Response) return actor;
+    const body = (await request.json().catch(() => ({}))) as Partial<ApiTokenCreateRequest>;
+    const name = (body.name ?? "").trim();
+    const scopes = body.scopes ?? [];
+    if (!name) return validationError([{ field: "name", message: "名称必填" }]);
+    if (scopes.length === 0) {
+      return validationError([{ field: "scopes", message: "至少选择一个 Scope" }]);
+    }
+    const knownScopes: ApiScope[] = [
+      "tools:read",
+      "tools:write",
+      "approvals:write",
+      "users:write",
+      "groups:write",
+      "taxonomy:write",
+      "settings:write",
+      "admin:all",
+    ];
+    const unknownScopes = scopes.filter((scope) => !knownScopes.includes(scope));
+    if (unknownScopes.length > 0) {
+      return validationError([
+        { field: "scopes", message: `未知 Scope：${unknownScopes.join(", ")}` },
+      ]);
+    }
+    // Scope 必须是创建者权限的子集（docs/03 §3.12）。权限点用 `MOCK_ROLES`
+    // （即 `app/core/permissions.py` 的 frozenset），而不是 `/auth/me` 的展示用权限名。
+    const creatorPermissions = permissionsForRoles(actor.roles);
+    const exceeds = scopes.filter(
+      (scope) => scope === "admin:all" ? false : !creatorPermissions.includes(scope),
+    );
+    if (exceeds.length > 0) {
+      return errorResponse(
+        403,
+        "FORBIDDEN",
+        `不能签发超出自己权限的 Scope：${[...exceeds].sort().join(", ")}`,
+        { exceeds: [...exceeds].sort(), creator_permissions: [...creatorPermissions].sort() },
+      );
+    }
+
+    const explicitExpiry = Object.prototype.hasOwnProperty.call(body, "expires_at");
+    const expiresAt = explicitExpiry
+      ? body.expires_at ?? null
+      : new Date(Date.now() + 90 * 24 * 3600 * 1000).toISOString().replace(/\.\d{3}Z$/, "Z");
+    const { token, prefix } = generateApiToken();
+    const record: MockTokenRecord = {
+      id: nextTokenId++,
+      name,
+      token_prefix: prefix,
+      scopes: [...scopes],
+      note: body.note ?? null,
+      created_by_id: actor.id,
+      created_at: nowIso(),
+      expires_at: expiresAt,
+      revoked_at: null,
+      last_used_at: null,
+      last_used_ip: null,
+    };
+    tokens.push(record);
+    const response: ApiTokenCreateResponse = {
+      ...toApiTokenOut(record),
+      token,
+      warning: "请立即复制保存。此 Token 不会再次显示。",
+    };
+    return HttpResponse.json(response, { status: 201 });
+  }),
+
+  http.post(`${API}/admin/tokens/:tokenId/revoke`, async ({ request, params }) => {
+    await delay(80);
+    const actor = requireSuperadmin(request);
+    if (actor instanceof Response) return actor;
+    const token = tokens.find((item) => item.id === Number(params.tokenId));
+    if (!token) return notFound("Token 不存在");
+    if (token.revoked_at === null) token.revoked_at = nowIso();
+    return HttpResponse.json(toApiTokenOut(token));
+  }),
+
+  http.delete(`${API}/admin/tokens/:tokenId`, async ({ request, params }) => {
+    await delay(80);
+    const actor = requireSuperadmin(request);
+    if (actor instanceof Response) return actor;
+    const index = tokens.findIndex((item) => item.id === Number(params.tokenId));
+    if (index < 0) return notFound("Token 不存在");
+    tokens.splice(index, 1);
+    return HttpResponse.json({ status: "ok" } satisfies StatusResponse);
+  }),
+
+  /* ---- M3: all tools / recycle bin ---- */
+  http.get(`${API}/admin/tools`, async ({ request }) => {
+    await delay(100);
+    const actor = requireApprover(request);
+    if (actor instanceof Response) return actor;
+    const params = new URL(request.url).searchParams;
+    const q = params.get("q") ?? "";
+    const statuses = params.getAll("status");
+    const types = params.getAll("type");
+    const categories = params.getAll("category");
+    const visibilities = params.getAll("visibility");
+    const owner = (params.get("owner") ?? "").trim().toLowerCase();
+    const includeDeleted = params.get("include_deleted") === "true";
+    const dateFrom = params.get("date_from");
+    const dateTo = params.get("date_to");
+    const { page, pageSize } = pageOf(request);
+
+    const filtered = toolRecords
+      .filter((record) => includeDeleted || !record.deleted_at)
+      .filter((record) => statuses.length === 0 || statuses.includes(record.status))
+      .filter((record) => types.length === 0 || types.includes(record.seed.tool_type))
+      .filter(
+        (record) => categories.length === 0 || categories.includes(record.seed.category_slug),
+      )
+      .filter(
+        (record) => visibilities.length === 0 || visibilities.includes(record.acl_visibility),
+      )
+      .filter((record) => !owner || record.seed.owner_username.toLowerCase() === owner)
+      .filter((record) => toolMatchesAdminQuery(record, q))
+      .filter((record) => !dateFrom || record.created_at >= dateFrom)
+      .filter((record) => {
+        if (!dateTo) return true;
+        return record.created_at <= dateTo || record.created_at.slice(0, 10) <= dateTo.slice(0, 10);
+      })
+      .sort(
+        (a, b) =>
+          (b.seed.updated_at ?? "").localeCompare(a.seed.updated_at ?? "") ||
+          b.seed.id - a.seed.id,
+      )
+      .map(toAdminToolItem);
+    const body: AdminToolListResponse = paginate(filtered, page, pageSize);
+    return HttpResponse.json(body);
+  }),
+
+  http.post(`${API}/admin/tools`, async ({ request }) => {
+    await delay(140);
+    const actor = requireSuperadmin(request);
+    if (actor instanceof Response) return actor;
+    const body = (await request.json().catch(() => ({}))) as Partial<AdminToolCreateRequest>;
+    const name = (body.name ?? "").trim();
+    const summary = (body.summary ?? "").trim();
+    const toolType = toolTypeOf(body.tool_type);
+    const fields: FieldError[] = [];
+    if (!name || name.length > 128) {
+      fields.push({ field: "name", message: "名称必填且不超过 128 个字符" });
+    }
+    if (!summary || summary.length > 500) {
+      fields.push({ field: "summary", message: "简介必填且不超过 500 个字符" });
+    }
+    if (!toolType) fields.push({ field: "tool_type", message: "工具类型不合法" });
+    const owner = typeof body.owner_id === "number" ? findMockUserById(body.owner_id) : undefined;
+    if (!owner) {
+      return errorResponse(404, "NOT_FOUND", "指定的负责人不存在", {
+        owner_id: body.owner_id ?? null,
+      });
+    }
+    if (owner.status !== "active") {
+      return errorResponse(400, "VALIDATION_ERROR", "不能把工具指派给已禁用的用户", {
+        owner_id: owner.id,
+      });
+    }
+    const category =
+      body.category_id != null
+        ? MOCK_CATEGORIES.find((item) => item.id === body.category_id)
+        : undefined;
+    if (body.category_id != null && (!category || !category.is_active)) {
+      fields.push({ field: "category_id", message: "分类不存在或已停用" });
+    }
+    if (toolType === "webapp" && !/^https?:\/\//.test(body.webapp_url ?? "")) {
+      fields.push({ field: "webapp_url", message: "webapp 类型必须填写 URL" });
+    }
+    if ((body.tags ?? []).length > 8) {
+      fields.push({ field: "tags", message: "标签最多 8 个" });
+    }
+    if (fields.length > 0) return validationError(fields);
+
+    const publish = body.publish === true;
+    const record = makeNewRecord(owner, {
+      name,
+      summary,
+      description_md: body.description_md ?? "",
+      tool_type: toolType as ToolType,
+      category_slug: category?.slug ?? "dev-tools",
+      tags: (body.tags ?? []).map((tag) => normalizeTagName(tag)).filter(Boolean),
+      visibility: body.visibility ?? "public",
+      webapp_url: body.webapp_url ?? null,
+    });
+    record.status = publish ? "approved" : "draft";
+    record.version_seq = 1;
+    record.seed.published_at = publish ? nowIso() : "";
+    record.seed.updated_at = nowIso();
+    for (const raw of body.tags ?? []) getOrCreateTag(raw);
+    if (publish) {
+      appendApprovalRecord({
+        tool: record,
+        action: "approve",
+        from_status: "draft",
+        to_status: "approved",
+        actor,
+        note: "admin 代创建并直接发布",
+      });
+    }
+    return HttpResponse.json(toAdminToolItem(record), { status: 201 });
+  }),
+
+  http.get(`${API}/admin/recycle-bin`, async ({ request }) => {
+    await delay(80);
+    const actor = requireSuperadmin(request);
+    if (actor instanceof Response) return actor;
+    const { page, pageSize } = pageOf(request);
+    const deleted = toolRecords
+      .filter((record) => record.deleted_at !== null)
+      .sort(
+        (a, b) =>
+          (b.seed.updated_at ?? "").localeCompare(a.seed.updated_at ?? "") ||
+          b.seed.id - a.seed.id,
+      )
+      .map(toAdminToolItem);
+    const body: AdminToolListResponse = paginate(deleted, page, pageSize);
+    return HttpResponse.json(body);
+  }),
+
+  http.post(`${API}/admin/tools/:toolId/restore`, async ({ request, params }) => {
+    await delay(100);
+    const actor = requireSuperadmin(request);
+    if (actor instanceof Response) return actor;
+    const record = toolRecords.find((item) => item.seed.id === Number(params.toolId));
+    if (!record) return notFound("工具不存在");
+    if (record.deleted_at === null) {
+      return errorResponse(409, "STATE_CONFLICT", "该工具不在回收站中", {
+        tool_id: record.seed.id,
+      });
+    }
+    record.deleted_at = null;
+    record.seed.updated_at = nowIso();
+    return HttpResponse.json(toAdminToolItem(record));
+  }),
+
+  http.delete(`${API}/admin/tools/:toolId/purge`, async ({ request, params }) => {
+    await delay(140);
+    const actor = requireSuperadmin(request);
+    if (actor instanceof Response) return actor;
+    const toolId = Number(params.toolId);
+    const record = toolRecords.find((item) => item.seed.id === toolId);
+    if (!record) return notFound("工具不存在");
+    const purgedVersions = record.versions.length;
+    const purgedFiles =
+      record.versions.filter((version) => version.file_name !== null).length +
+      record.images.length * 2;
+    // 真删行：从内存里同时移除 record 与 slug 索引，列表/门户都看不到。
+    toolBySlug.delete(record.seed.slug);
+    const index = toolRecords.indexOf(record);
+    if (index >= 0) toolRecords.splice(index, 1);
+    for (let i = approvalRecords.length - 1; i >= 0; i -= 1) {
+      if (approvalRecords[i]?.tool_id === toolId) approvalRecords.splice(i, 1);
+    }
+    const response: PurgeToolResponse = {
+      tool_id: toolId,
+      purged_versions: purgedVersions,
+      purged_files: purgedFiles,
+    };
+    return HttpResponse.json(response);
+  }),
+
+  http.post(`${API}/admin/tools/:toolId/transfer`, async ({ request, params }) => {
+    await delay(140);
+    const actor = requireSuperadmin(request);
+    if (actor instanceof Response) return actor;
+    const record = toolRecords.find((item) => item.seed.id === Number(params.toolId));
+    if (!record || record.deleted_at) return notFound("工具不存在");
+    const body = (await request.json().catch(() => ({}))) as {
+      new_owner_id?: number;
+      reason?: string | null;
+    };
+    const newOwner =
+      typeof body.new_owner_id === "number" ? findMockUserById(body.new_owner_id) : undefined;
+    if (!newOwner) {
+      return errorResponse(404, "NOT_FOUND", "目标负责人不存在", {
+        new_owner_id: body.new_owner_id ?? null,
+      });
+    }
+    if (newOwner.status !== "active") {
+      return errorResponse(400, "VALIDATION_ERROR", "不能把工具转移给已禁用的用户", {
+        new_owner_id: newOwner.id,
+      });
+    }
+    const previousOwner = findUser(record.seed.owner_username);
+    if (previousOwner && previousOwner.id === newOwner.id) {
+      return errorResponse(409, "STATE_CONFLICT", "目标负责人与当前负责人相同", {
+        tool_id: record.seed.id,
+        owner_id: newOwner.id,
+      });
+    }
+
+    record.seed.owner_username = newOwner.username;
+    record.version_seq += 1;
+    record.seed.updated_at = nowIso();
+    const approval = appendApprovalRecord({
+      tool: record,
+      action: "transfer_owner",
+      from_status: record.status,
+      to_status: record.status,
+      version: currentVersionOf(record),
+      actor,
+      reason: body.reason ?? null,
+      note: `负责人由 ${previousOwner?.display_name ?? "未知"} 转移给 ${newOwner.display_name}`,
+    });
+    const response: TransferOwnerResponse = {
+      tool_id: record.seed.id,
+      previous_owner: previousOwner
+        ? {
+            id: previousOwner.id,
+            username: previousOwner.username,
+            display_name: previousOwner.display_name,
+          }
+        : null,
+      new_owner: {
+        id: newOwner.id,
+        username: newOwner.username,
+        display_name: newOwner.display_name,
+      },
+      previous_owner_used_bytes: previousOwner ? usageFor(previousOwner).used_bytes : 0,
+      new_owner_used_bytes: usageFor(newOwner).used_bytes,
+      approval_record_id: approval.id,
+    };
+    return HttpResponse.json(response);
+  }),
+
+  /**
+   * 后端该端点是**说明性端点**：直接 404 并指向 `/me/tools/{id}/versions`
+   * （`app/api/v1/admin/tools.py`）。前端不消费它，这里保持同样的 404。
+   */
+  http.post(`${API}/admin/tools/:toolId/versions`, async ({ request }) => {
+    await delay(60);
+    const actor = requireSuperadmin(request);
+    if (actor instanceof Response) return actor;
+    return errorResponse(
+      404,
+      "NOT_FOUND",
+      "请使用 /api/v1/me/tools/{id}/versions（管理侧代上传复用同一服务）",
+      { hint: "admin 代上传在 M4 收敛为同一路径" },
+    );
+  }),
+
+  /* ---- M3: import / export ---- */
+  http.post(`${API}/admin/import/users`, async ({ request }) => {
+    await delay(200);
+    const actor = requireSuperadmin(request);
+    if (actor instanceof Response) return actor;
+    const form = await request.formData();
+    const file = form.get("file");
+    const fileObj = typeof File !== "undefined" && file instanceof File ? file : null;
+    if (!fileObj) return validationError([{ field: "file", message: "请选择 CSV 文件" }]);
+    const dryRun = String(form.get("dry_run") ?? "false") === "true";
+    const onConflict = normalizeOnConflict(String(form.get("on_conflict") ?? "skip"));
+    const text = await fileObj.text();
+
+    const result: ImportResultResponse = {
+      dry_run: dryRun,
+      on_conflict: onConflict ?? String(form.get("on_conflict") ?? "skip"),
+      succeeded: 0,
+      failed: 0,
+      skipped: 0,
+      generated_passwords: [],
+      errors: [],
+    };
+    if (onConflict === null) {
+      result.failed = 1;
+      result.errors.push({
+        row: 0,
+        field: "on_conflict",
+        value: String(form.get("on_conflict") ?? ""),
+        message: "on_conflict 只能是 skip / update / fail",
+      });
+      return HttpResponse.json(result);
+    }
+
+    const rows = parseCsv(text);
+    if (rows.length === 0) {
+      result.failed = 1;
+      result.errors.push({ row: 0, field: "file", message: "CSV 缺少表头" });
+      return HttpResponse.json(result);
+    }
+    const header = rows[0] ?? [];
+    const headerIndex = new Map(header.map((column, index) => [column.trim(), index]));
+    const seen = new Set<string>();
+
+    for (let index = 1; index < rows.length; index += 1) {
+      const cells = rows[index] ?? [];
+      if (cells.every((cell) => cell.trim() === "")) continue;
+      const rowNumber = index + 1; // 表头是第 1 行
+      const value = (column: string): string => {
+        const position = headerIndex.get(column);
+        return position === undefined ? "" : (cells[position] ?? "").trim();
+      };
+      const usernameRaw = value("username");
+      const username = usernameRaw.normalize("NFKC").trim().toLowerCase();
+
+      if (!username) {
+        result.errors.push({ row: rowNumber, field: "username", message: "用户名不能为空" });
+        result.failed += 1;
+        continue;
+      }
+      if (seen.has(username)) {
+        result.errors.push({
+          row: rowNumber,
+          field: "username",
+          value: usernameRaw,
+          message: "文件内用户名重复",
+        });
+        result.failed += 1;
+        continue;
+      }
+      seen.add(username);
+      if (!/^[a-z0-9_.-]{1,64}$/.test(username)) {
+        result.errors.push({
+          row: rowNumber,
+          field: "username",
+          value: usernameRaw,
+          message: "用户名只能包含字母、数字、下划线、点、连字符",
+        });
+        result.failed += 1;
+        continue;
+      }
+
+      const displayName = value("display_name") || username;
+      const email = value("email") || null;
+      const roleCodes = (value("roles") || "user")
+        .split(";")
+        .map((code) => code.trim())
+        .filter(Boolean);
+      const unknownRoles = roleCodes.filter((code) => roleOf(code) === null);
+      if (unknownRoles.length > 0) {
+        result.errors.push({
+          row: rowNumber,
+          field: "roles",
+          value: unknownRoles.join(";"),
+          message: `未知角色：${unknownRoles.join(", ")}`,
+        });
+        result.failed += 1;
+        continue;
+      }
+      const password = value("password");
+      if (password) {
+        const strength = passwordStrengthErrors(password, username);
+        const first = strength[0];
+        if (first) {
+          result.errors.push({
+            row: rowNumber,
+            field: "password",
+            value: "***",
+            message: first.message,
+          });
+          result.failed += 1;
+          continue;
+        }
+      }
+
+      const existing = findUser(username);
+      if (existing) {
+        if (onConflict === "fail") {
+          result.errors.push({
+            row: rowNumber,
+            field: "username",
+            value: usernameRaw,
+            message: "用户已存在",
+          });
+          result.failed += 1;
+          continue;
+        }
+        if (onConflict === "skip") {
+          result.skipped += 1;
+          continue;
+        }
+        if (!dryRun) {
+          existing.display_name = displayName;
+          existing.email = email;
+          existing.roles = roleCodesOf(roleCodes);
+          existing.permissions = permissionsForRoles(roleCodes);
+          existing.updated_at = nowIso();
+        }
+        result.succeeded += 1;
+        continue;
+      }
+
+      let generated: string | null = null;
+      if (!password && !dryRun) generated = generatePassword();
+      if (!dryRun) {
+        const now = nowIso();
+        const user: MockUser = {
+          id: nextUserId++,
+          username,
+          password: password || generated || generatePassword(),
+          display_name: displayName,
+          email,
+          roles: roleCodesOf(roleCodes),
+          permissions: permissionsForRoles(roleCodes),
+          must_change_password: true,
+          auth_source: "local",
+          status: "active",
+          last_login_at: null,
+          failed_login_count: 0,
+          locked_until: null,
+          last_login_ip: null,
+          created_at: now,
+          updated_at: now,
+        };
+        MOCK_USERS.push(user);
+        if (generated) {
+          const entry: GeneratedPassword = { username, password: generated };
+          result.generated_passwords.push(entry);
+        }
+      }
+      result.succeeded += 1;
+    }
+    return HttpResponse.json(result);
+  }),
+
+  http.post(`${API}/admin/import/tools`, async ({ request }) => {
+    await delay(200);
+    const actor = requireSuperadmin(request);
+    if (actor instanceof Response) return actor;
+    const body = (await request.json().catch(() => ({}))) as Partial<ToolImportRequest>;
+    const items = body.items ?? [];
+    const dryRun = body.dry_run === true;
+    const onConflict = normalizeOnConflict(body.on_conflict ?? "skip");
+    const result: ImportResultResponse = {
+      dry_run: dryRun,
+      on_conflict: onConflict ?? String(body.on_conflict ?? "skip"),
+      succeeded: 0,
+      failed: 0,
+      skipped: 0,
+      generated_passwords: [],
+      errors: [],
+    };
+    if (onConflict === null || items.length === 0) {
+      result.failed = 1;
+      result.errors.push({
+        row: 0,
+        field: onConflict === null ? "on_conflict" : "items",
+        value: onConflict === null ? body.on_conflict ?? null : items.length,
+        message:
+          onConflict === null
+            ? "on_conflict 只能是 skip / update / fail"
+            : "items 不能为空",
+      });
+      return HttpResponse.json(result);
+    }
+
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index] as ToolImportItem;
+      const rowNumber = index + 1;
+      const name = (item.name ?? "").trim();
+      if (!name) {
+        result.errors.push({ row: rowNumber, field: "name", message: "名称不能为空" });
+        result.failed += 1;
+        continue;
+      }
+      const toolType = toolTypeOf(item.tool_type);
+      if (!toolType) {
+        result.errors.push({ row: rowNumber, field: "tool_type", message: "工具类型不合法" });
+        result.failed += 1;
+        continue;
+      }
+      if (toolType === "webapp" && !/^https?:\/\//.test(item.webapp_url ?? "")) {
+        result.errors.push({
+          row: rowNumber,
+          field: "webapp_url",
+          message: "webapp 类型必须填写 URL",
+        });
+        result.failed += 1;
+        continue;
+      }
+      const ownerUsername = (item.owner_username ?? "admin").trim().toLowerCase();
+      const owner = findUser(ownerUsername);
+      if (!owner) {
+        result.errors.push({
+          row: rowNumber,
+          field: "owner_username",
+          value: ownerUsername,
+          message: `用户不存在：${ownerUsername}`,
+        });
+        result.failed += 1;
+        continue;
+      }
+      const categorySlug = item.category_slug ?? null;
+      const category = categorySlug
+        ? MOCK_CATEGORIES.find((entry) => entry.slug === categorySlug)
+        : undefined;
+      if (categorySlug && !category) {
+        result.errors.push({
+          row: rowNumber,
+          field: "category_slug",
+          value: categorySlug,
+          message: `分类不存在：${categorySlug}`,
+        });
+        result.failed += 1;
+        continue;
+      }
+
+      const slug = (item.slug ?? "").trim();
+      const existing = slug ? toolBySlug.get(slug) : undefined;
+      if (existing) {
+        if (onConflict === "fail") {
+          result.errors.push({
+            row: rowNumber,
+            field: "slug",
+            value: slug,
+            message: "slug 已存在",
+          });
+          result.failed += 1;
+          continue;
+        }
+        if (onConflict === "skip") {
+          result.skipped += 1;
+          continue;
+        }
+        if (!dryRun) {
+          existing.seed.name = name;
+          existing.seed.summary = item.summary?.trim() || existing.seed.summary;
+          if (item.description_md) existing.seed.description_md = item.description_md;
+          if (category) existing.seed.category_slug = category.slug;
+          existing.seed.owner_username = owner.username;
+          existing.acl_visibility = item.visibility ?? existing.acl_visibility;
+          existing.seed.visibility = existing.acl_visibility;
+          existing.seed.updated_at = nowIso();
+        }
+        result.succeeded += 1;
+        continue;
+      }
+
+      if (!dryRun) {
+        const publish = item.publish !== false;
+        const record = makeNewRecord(owner, {
+          name,
+          summary: item.summary?.trim() || name,
+          description_md: item.description_md ?? "",
+          tool_type: toolType,
+          category_slug: category?.slug ?? "dev-tools",
+          tags: (item.tags ?? []).map((tag) => normalizeTagName(tag)).filter(Boolean),
+          visibility: item.visibility ?? "public",
+          webapp_url: item.webapp_url ?? null,
+        });
+        if (slug) {
+          toolBySlug.delete(record.seed.slug);
+          record.seed.slug = slug;
+          toolBySlug.set(slug, record);
+        }
+        record.status = publish ? "approved" : "draft";
+        record.version_seq = 1;
+        record.seed.published_at = publish ? nowIso() : "";
+        record.seed.updated_at = nowIso();
+        for (const raw of item.tags ?? []) getOrCreateTag(raw);
+      }
+      result.succeeded += 1;
+    }
+    return HttpResponse.json(result);
+  }),
+
+  http.get(`${API}/admin/export/users`, async ({ request }) => {
+    await delay(120);
+    const actor = requireSuperadmin(request);
+    if (actor instanceof Response) return actor;
+    const lines = ["username,display_name,email,roles,status"];
+    for (const user of MOCK_USERS) {
+      lines.push(
+        [
+          user.username,
+          user.display_name,
+          user.email ?? "",
+          user.roles.join(";"),
+          user.status,
+        ]
+          .map(csvCell)
+          .join(","),
+      );
+    }
+    // UTF-8 BOM + CRLF，与后端 `export_users_csv` 逐字对齐（验收 20）。
+    const csv = `\ufeff${lines.join("\r\n")}\r\n`;
+    return new HttpResponse(csv, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition":
+          "attachment; filename=\"users.csv\"; filename*=UTF-8''users.csv",
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "no-store",
+      },
+    });
+  }),
+
+  http.get(`${API}/admin/export/tools`, async ({ request }) => {
+    await delay(120);
+    const actor = requireSuperadmin(request);
+    if (actor instanceof Response) return actor;
+    const payload = toolRecords
+      .filter((record) => !record.deleted_at)
+      .sort((a, b) => a.seed.id - b.seed.id)
+      .map((record) => {
+        const owner = findUser(record.seed.owner_username);
+        const category = MOCK_CATEGORIES.find(
+          (item) => item.slug === record.seed.category_slug,
+        );
+        return {
+          id: record.seed.id,
+          slug: record.seed.slug,
+          name: record.seed.name,
+          summary: record.seed.summary,
+          description_md: record.seed.description_md,
+          tool_type: record.seed.tool_type,
+          visibility: record.acl_visibility,
+          status: record.status,
+          owner_username: owner?.username ?? null,
+          category_slug: category?.slug ?? null,
+          tags: [...record.seed.tags],
+          webapp_url: record.webapp_url,
+          download_count: record.seed.download_count,
+          view_count: record.seed.view_count,
+          published_at: record.seed.published_at || null,
+          created_at: record.created_at,
+          updated_at: record.seed.updated_at || null,
+        };
+      });
+    return new HttpResponse(JSON.stringify(payload), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "Content-Disposition":
+          "attachment; filename=\"tools.json\"; filename*=UTF-8''tools.json",
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "no-store",
+      },
+    });
   }),
 ];
 

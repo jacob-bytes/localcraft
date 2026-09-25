@@ -340,6 +340,11 @@ export interface SkillTreeSummary {
 export interface SkillVersionInfo {
   manifest: Record<string, unknown> | null;
   file_tree_summary: SkillTreeSummary | null;
+  /**
+   * 文件树是否被截断。CONTRACT §15.3：该值**无法从存储的数据推导**
+   * （真实总数在截断后即丢失），因此后端在解析时持久化。
+   */
+  file_tree_truncated: boolean;
   parse_error: string | null;
 }
 
@@ -873,4 +878,509 @@ export interface SettingListResponse {
 
 export interface SettingUpdateRequest {
   items: Array<{ key: string; value: unknown }>;
+}
+
+/* ========================================================================== */
+/* M3 —— 管理控制台（CONTRACT §6.1 / openapi.json 为形状权威，见 §15.6）        */
+/* ========================================================================== */
+
+/** 权限点（docs/03 §1.4 的 Scope 列表；后端 `ApiScope` StrEnum 的镜像）。 */
+export type ApiScope =
+  | "tools:read"
+  | "tools:write"
+  | "approvals:write"
+  | "users:write"
+  | "groups:write"
+  | "taxonomy:write"
+  | "settings:write"
+  | "admin:all";
+
+/** `GET /admin/roles`（docs/02 §3.2）。 */
+export interface RoleOut {
+  id: number;
+  code: Role;
+  name: string;
+  description: string | null;
+  permissions: string[];
+  is_builtin: boolean;
+  user_count: number;
+}
+
+/* -------------------------------------------------------------------------- */
+/* 用户管理（docs/04 §6.13）                                                    */
+/* -------------------------------------------------------------------------- */
+
+export interface AdminUserItem {
+  id: number;
+  username: string;
+  display_name: string;
+  email: string | null;
+  status: UserStatus;
+  auth_source: string;
+  roles: string[];
+  must_change_password: boolean;
+  failed_login_count: number;
+  /** 锁定到期时间；非 null 表示账号当前处于锁定中。 */
+  locked_until: string | null;
+  last_login_at: string | null;
+  last_login_ip: string | null;
+  tool_count: number;
+  used_bytes: number;
+  active_token_count: number;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export type AdminUserListResponse = Paginated<AdminUserItem>;
+
+export interface AdminUserListParams {
+  q?: string;
+  role?: Role[];
+  status?: UserStatus;
+  page?: number;
+  page_size?: number;
+}
+
+export interface AdminUserCreateRequest {
+  username: string;
+  display_name: string;
+  email?: string | null;
+  /** 留空则由服务端生成一次性初始密码。 */
+  password?: string | null;
+  roles: Role[];
+  must_change_password?: boolean;
+}
+
+export interface AdminUserCreateResponse {
+  user: AdminUserItem;
+  /** 一次性初始密码：只在创建响应里出现一次（docs/04 §6.13）。 */
+  generated_password: string | null;
+}
+
+export interface AdminUserUpdateRequest {
+  display_name?: string | null;
+  email?: string | null;
+  status?: UserStatus | null;
+}
+
+export interface AdminRoleReplaceRequest {
+  roles: Role[];
+}
+
+export interface ResetPasswordRequest {
+  /** 留空则由服务端生成。 */
+  password?: string | null;
+}
+
+export interface ResetPasswordResponse {
+  user_id: number;
+  generated_password: string | null;
+  must_change_password: boolean;
+  revoked_sessions: number;
+}
+
+export interface RevokeSessionsResponse {
+  status: string;
+  revoked_sessions: number;
+}
+
+/* -------------------------------------------------------------------------- */
+/* 用户组（docs/04 §6.14）                                                      */
+/* -------------------------------------------------------------------------- */
+
+export interface GroupOut {
+  id: number;
+  name: string;
+  description: string | null;
+  is_active: boolean;
+  member_count: number;
+  /** 被 ACL 引用的工具条数（>0 时删除会返回 409 GROUP_IN_USE）。 */
+  acl_reference_count: number;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export type GroupListResponse = Paginated<GroupOut>;
+
+export interface GroupCreateRequest {
+  name: string;
+  description?: string | null;
+  is_active?: boolean;
+}
+
+export interface GroupUpdateRequest {
+  name?: string | null;
+  description?: string | null;
+  is_active?: boolean | null;
+}
+
+export interface GroupMemberOut {
+  user_id: number;
+  username: string;
+  display_name: string;
+  email: string | null;
+  status: UserStatus;
+  added_at: string | null;
+  added_by_name: string | null;
+}
+
+export type GroupMemberListResponse = Paginated<GroupMemberOut>;
+
+export interface GroupMemberAddRequest {
+  user_ids: number[];
+}
+
+export interface GroupMemberAddResponse {
+  added: number;
+  already_members: number;
+  not_found: number[];
+}
+
+/** `409 GROUP_IN_USE` 的 `details`（后端 `GroupInUseDetail`）。 */
+export interface GroupInUseDetail {
+  group_id: number;
+  group_name: string;
+  tool_count: number;
+  /** 引用该组的工具（后端是 `list[dict]`，实际给 id/slug/name）。 */
+  tools: Array<{ id?: number; slug?: string; name?: string }>;
+}
+
+/* -------------------------------------------------------------------------- */
+/* 分类与标签管理（docs/04 §6.15 §6.16）                                        */
+/* -------------------------------------------------------------------------- */
+
+export interface AdminCategoryOut {
+  id: number;
+  slug: string;
+  name: string;
+  description: string | null;
+  icon: string | null;
+  sort_order: number;
+  is_active: boolean;
+  tool_count: number;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface AdminCategoryCreateRequest {
+  name: string;
+  slug?: string | null;
+  description?: string | null;
+  icon?: string | null;
+  sort_order?: number;
+  is_active?: boolean;
+}
+
+export interface AdminCategoryUpdateRequest {
+  name?: string | null;
+  slug?: string | null;
+  description?: string | null;
+  icon?: string | null;
+  sort_order?: number | null;
+  is_active?: boolean | null;
+}
+
+export interface CategoryOrderItem {
+  id: number;
+  sort_order: number;
+}
+
+export interface CategoryOrderRequest {
+  items: CategoryOrderItem[];
+}
+
+/** `409 CATEGORY_IN_USE` 的 `details`。 */
+export interface CategoryInUseDetail {
+  category_id?: number;
+  tool_count: number;
+}
+
+export interface AdminTagOut {
+  id: number;
+  /** 归一化名（小写、全角转半角）。 */
+  name: string;
+  display_name: string;
+  usage_count: number;
+  created_at: string | null;
+}
+
+export type AdminTagListResponse = Paginated<AdminTagOut>;
+
+export interface TagRenameRequest {
+  display_name: string;
+}
+
+export interface TagMergeRequest {
+  source_ids: number[];
+  target_id: number;
+}
+
+export interface TagMergeResponse {
+  target_id: number;
+  target_name: string;
+  merged_tags: number;
+  moved_references: number;
+  /** 同一工具原本同时带源标签与目标标签，合并后去重掉的引用数。 */
+  deduplicated_references: number;
+  deleted_tags: string[];
+}
+
+export interface TagCleanupResponse {
+  deleted: number;
+  tags: string[];
+}
+
+/* -------------------------------------------------------------------------- */
+/* API Token（docs/04 §6.18）                                                   */
+/* -------------------------------------------------------------------------- */
+
+export interface ApiTokenOut {
+  id: number;
+  name: string;
+  /** 形如 `st_9xK2mN`；**列表接口永不返回明文**（FR-ADMIN-10）。 */
+  token_prefix: string;
+  scopes: string[];
+  note: string | null;
+  created_by_id: number | null;
+  created_by_name: string | null;
+  created_at: string | null;
+  expires_at: string | null;
+  revoked_at: string | null;
+  last_used_at: string | null;
+  last_used_ip: string | null;
+  is_active: boolean;
+}
+
+export type ApiTokenListResponse = Paginated<ApiTokenOut>;
+
+export interface ApiTokenCreateRequest {
+  name: string;
+  scopes: ApiScope[];
+  expires_at?: string | null;
+  note?: string | null;
+}
+
+export interface ApiTokenCreateResponse extends ApiTokenOut {
+  /** **明文只在此处出现一次**（docs/04 §6.18）。 */
+  token: string;
+  warning: string;
+}
+
+/* -------------------------------------------------------------------------- */
+/* 概览与统计（docs/04 §6.9）                                                   */
+/* -------------------------------------------------------------------------- */
+
+export interface StatusCount {
+  status: string;
+  count: number;
+}
+
+export interface AdminOverviewResponse {
+  tool_count: number;
+  pending_count: number;
+  tools_by_status: StatusCount[];
+  user_count: number;
+  active_user_count: number;
+  disabled_user_count: number;
+  category_count: number;
+  tag_count: number;
+  group_count: number;
+  active_token_count: number;
+  recycle_bin_count: number;
+  download_count: number;
+  view_count: number;
+  downloads_last_7_days: number;
+  used_bytes: number;
+  quota_bytes: number;
+  used_percent: number;
+}
+
+export interface ToolRankItem {
+  tool_id: number;
+  slug: string;
+  name: string;
+  tool_type: ToolType;
+  status: ToolStatus;
+  owner_name: string | null;
+  download_count: number;
+  view_count: number;
+}
+
+export interface ToolRankResponse {
+  items: ToolRankItem[];
+  total: number;
+}
+
+export interface StorageOwnerItem {
+  owner_id: number;
+  username: string;
+  display_name: string;
+  used_bytes: number;
+  quota_bytes: number;
+  used_percent: number;
+  tool_count: number;
+  version_count: number;
+}
+
+export interface StorageStatsResponse {
+  items: StorageOwnerItem[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_used_bytes: number;
+  total_quota_bytes: number;
+  used_percent: number;
+  file_count: number;
+  orphan_file_count: number;
+}
+
+/* -------------------------------------------------------------------------- */
+/* 全站工具管理（docs/04 §6.12）                                                */
+/* -------------------------------------------------------------------------- */
+
+export interface AdminToolItem {
+  id: number;
+  slug: string;
+  name: string;
+  summary: string;
+  tool_type: ToolType;
+  visibility: Visibility;
+  status: ToolStatus;
+  category: ToolCategoryRef | null;
+  tags: string[];
+  cover_url: string | null;
+  owner: ToolOwner | null;
+  current_version: string | null;
+  download_count: number;
+  view_count: number;
+  version_seq: number;
+  reject_reason: string | null;
+  offline_reason: string | null;
+  published_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  /** 非 null 表示该工具在回收站里。 */
+  deleted_at: string | null;
+}
+
+export type AdminToolListResponse = Paginated<AdminToolItem>;
+
+export interface AdminToolListParams {
+  q?: string;
+  status?: ToolStatus[];
+  type?: ToolType[];
+  category?: string[];
+  visibility?: Visibility[];
+  owner?: string;
+  include_deleted?: boolean;
+  date_from?: string;
+  date_to?: string;
+  page?: number;
+  page_size?: number;
+}
+
+export interface AdminToolCreateRequest {
+  name: string;
+  summary: string;
+  owner_id: number;
+  tool_type: ToolType;
+  description_md?: string;
+  category_id?: number | null;
+  tags?: string[];
+  visibility?: Visibility;
+  webapp_url?: string | null;
+  /** `true` 时创建后直接发布（跳过草稿）。 */
+  publish?: boolean;
+}
+
+export interface TransferOwnerRequest {
+  new_owner_id: number;
+  reason?: string | null;
+}
+
+export interface TransferOwnerResponse {
+  tool_id: number;
+  previous_owner: ToolOwner | null;
+  new_owner: ToolOwner | null;
+  previous_owner_used_bytes: number;
+  new_owner_used_bytes: number;
+  approval_record_id: number | null;
+}
+
+export interface PurgeToolResponse {
+  tool_id: number;
+  purged_versions: number;
+  purged_files: number;
+}
+
+/** 回收站条目与全站工具同形（`AdminToolListResponse`），`deleted_at` 非 null。 */
+export type RecycleBinItem = AdminToolItem;
+
+/**
+ * 管理侧代上传版本：**后端该端点只返回 404 并指向 `/me/tools/{id}/versions`**
+ * （`app/api/v1/admin/tools.py` 的说明性端点）。前端不接它，仅保留类型完整性。
+ */
+export interface AdminVersionUploadResponse {
+  id: number;
+  tool_id: number;
+  version: string;
+  status: VersionStatus;
+  file_name: string | null;
+  file_size: number | null;
+  file_sha256: string | null;
+  tool_status: string;
+  created_at: string | null;
+}
+
+/* -------------------------------------------------------------------------- */
+/* 批量导入导出（docs/04 §6.20）                                                */
+/* -------------------------------------------------------------------------- */
+
+export interface ImportErrorItem {
+  row: number;
+  field: string | null;
+  value?: unknown;
+  message: string;
+}
+
+export interface GeneratedPassword {
+  username: string;
+  password: string;
+}
+
+export interface ImportResultResponse {
+  dry_run: boolean;
+  on_conflict: string;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  generated_passwords: GeneratedPassword[];
+  errors: ImportErrorItem[];
+}
+
+export type ImportOnConflict = "skip" | "update" | "fail";
+
+export interface ToolImportItem {
+  name: string;
+  summary?: string;
+  tool_type: ToolType;
+  description_md?: string;
+  category_slug?: string | null;
+  tags?: string[];
+  visibility?: Visibility;
+  owner_username?: string | null;
+  webapp_url?: string | null;
+  slug?: string | null;
+  publish?: boolean;
+}
+
+export interface ToolImportRequest {
+  items: ToolImportItem[];
+  dry_run?: boolean;
+  on_conflict?: ImportOnConflict;
+}
+
+export interface ExportScopeParams {
+  include_roles?: boolean;
+  status?: UserStatus;
 }

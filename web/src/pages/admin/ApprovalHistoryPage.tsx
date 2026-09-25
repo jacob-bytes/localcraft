@@ -1,6 +1,7 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Download, RotateCcw } from "lucide-react";
 import * as React from "react";
+import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 
 import {
@@ -68,18 +69,69 @@ function localToIso(value: string): string | undefined {
   return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
 }
 
+/** 会被写进 URL 的筛选键（其余查询参数原样保留）。 */
+const FILTER_KEYS = ["tool_id", "actor_id", "action", "date_from", "date_to"] as const;
+
+const ACTION_VALUES: readonly string[] = ACTION_OPTIONS.map((option) => option.value);
+
+/**
+ * URL → 筛选状态。非法值（`tool_id=abc`、坏掉的时间…）一律当作「不筛选」，
+ * 免得手改 URL 后输入框显示一个发不出去的怪值。
+ */
+function filtersFromSearchParams(searchParams: URLSearchParams): HistoryFilters {
+  const rawToolId = searchParams.get("tool_id") ?? "";
+  const rawActorId = searchParams.get("actor_id") ?? "";
+  const action = searchParams.get("action") ?? "";
+  const dateFrom = searchParams.get("date_from") ?? "";
+  const dateTo = searchParams.get("date_to") ?? "";
+  return {
+    toolId: toOptionalId(rawToolId) === undefined ? "" : rawToolId.trim(),
+    actorId: toOptionalId(rawActorId) === undefined ? "" : rawActorId.trim(),
+    action: ACTION_VALUES.includes(action) ? (action as ApprovalAction) : "",
+    dateFrom: localToIso(dateFrom) === undefined ? "" : dateFrom,
+    dateTo: localToIso(dateTo) === undefined ? "" : dateTo,
+  };
+}
+
 /**
  * `/admin/approvals/history` —— 审批历史（docs/04 §6.11，FR-APPR-12）。
  *
  * 筛选栏用数字 ID + 原生时间输入：M2 没有用户/工具检索接口，
  * `docs/03 §3.8` 只定义 `tool_id` / `actor_id` 数值筛选（契约缺口，见报告）。
+ *
+ * 筛选条件与 URL 查询串双向同步：`AdminToolTable` 的「审批历史」入口用
+ * `/admin/approvals/history?tool_id=N` 带参跳转，落页即按该工具过滤。
  */
 export default function ApprovalHistoryPage() {
-  const [draft, setDraft] = React.useState<HistoryFilters>(EMPTY_FILTERS);
-  const [applied, setApplied] = React.useState<HistoryFilters>(EMPTY_FILTERS);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  /**
+   * 筛选条件的事实来源是 URL：`/admin/tools` 会链到 `?tool_id=…`，
+   * 刷新 / 分享链接 / 浏览器后退都能还原当前视图（与 `AdminToolsPage` 一致）。
+   * `draft` 只是筛选栏输入框的草稿。
+   */
+  const applied = React.useMemo(() => filtersFromSearchParams(searchParams), [searchParams]);
+  const appliedSignature = [
+    applied.toolId,
+    applied.actorId,
+    applied.action,
+    applied.dateFrom,
+    applied.dateTo,
+  ].join("\u0000");
+
+  const [draft, setDraft] = React.useState<HistoryFilters>(applied);
   const [page, setPage] = React.useState(1);
   const [expandedIds, setExpandedIds] = React.useState<number[]>([]);
   const [exporting, setExporting] = React.useState(false);
+
+  // 外部改 URL（链接跳转、浏览器后退、「重置」）时同步草稿并回到第一页。
+  const [syncedSignature, setSyncedSignature] = React.useState(appliedSignature);
+  if (syncedSignature !== appliedSignature) {
+    setSyncedSignature(appliedSignature);
+    setDraft(applied);
+    setPage(1);
+    setExpandedIds([]);
+  }
 
   const params = React.useMemo(
     () => ({
@@ -104,16 +156,33 @@ export default function ApprovalHistoryPage() {
   const total = historyQuery.data?.total ?? 0;
   const pages = historyQuery.data?.pages ?? 1;
 
+  /** 把筛选条件写回 URL（空值 = 删除该参数）。 */
+  function writeFilters(filters: HistoryFilters) {
+    setSearchParams(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        for (const key of FILTER_KEYS) next.delete(key);
+        if (filters.toolId.trim() !== "") next.set("tool_id", filters.toolId.trim());
+        if (filters.actorId.trim() !== "") next.set("actor_id", filters.actorId.trim());
+        if (filters.action !== "") next.set("action", filters.action);
+        if (filters.dateFrom !== "") next.set("date_from", filters.dateFrom);
+        if (filters.dateTo !== "") next.set("date_to", filters.dateTo);
+        return next;
+      },
+      { replace: false },
+    );
+  }
+
   function applyFilters(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setApplied(draft);
+    writeFilters(draft);
     setPage(1);
     setExpandedIds([]);
   }
 
   function resetFilters() {
     setDraft(EMPTY_FILTERS);
-    setApplied(EMPTY_FILTERS);
+    writeFilters(EMPTY_FILTERS);
     setPage(1);
     setExpandedIds([]);
   }

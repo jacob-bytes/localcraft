@@ -95,7 +95,12 @@ export interface MockUser {
   auth_source: "local";
   status: "active" | "disabled";
   last_login_at: string | null;
+  /** M3 管理侧字段（`AdminUserItem` 需要，登录时会更新）。 */
+  failed_login_count: number;
+  locked_until: string | null;
+  last_login_ip: string | null;
   created_at: string;
+  updated_at: string;
 }
 
 const USER_PERMISSIONS: Record<Role, string[]> = {
@@ -143,7 +148,11 @@ function makeUser(
     auth_source: "local",
     status: "active",
     last_login_at,
+    failed_login_count: 0,
+    locked_until: null,
+    last_login_ip: last_login_at ? "10.20.30.40" : null,
     created_at: "2024-11-01T02:00:00Z",
+    updated_at: "2025-03-01T02:00:00Z",
   };
 }
 
@@ -160,12 +169,107 @@ export const MOCK_USERS: MockUser[] = [
 
 /**
  * Demo groups. The backend M2 seed has no groups yet, but the ACL editor offers
- * `subject_type: "group"`, so the mock accepts these two and rejects anything
- * else with `400 SUBJECT_NOT_FOUND` (docs/03 §3.11).
+ * `subject_type: "group"`, so the mock accepts these and rejects anything else
+ * with `400 SUBJECT_NOT_FOUND` (docs/03 §3.11).
+ *
+ * M3 grows them into full records (description / members / timestamps) so the
+ * admin group console is stateful. 运维值班组 is deliberately referenced by tool
+ * 108's ACL, which is what makes `DELETE /admin/groups/{id}` return
+ * `409 GROUP_IN_USE` (FR-GRP-04).
  */
-export const MOCK_GROUPS: Array<{ id: number; name: string }> = [
-  { id: 1, name: "研发一组" },
-  { id: 2, name: "运维值班组" },
+export interface MockGroupMember {
+  user_id: number;
+  added_at: string;
+  added_by_id: number | null;
+}
+
+export interface MockGroup {
+  id: number;
+  name: string;
+  description: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  members: MockGroupMember[];
+}
+
+export const MOCK_GROUPS: MockGroup[] = [
+  {
+    id: 1,
+    name: "研发一组",
+    description: "研发线核心工具维护者。",
+    is_active: true,
+    created_at: "2025-01-10T02:00:00Z",
+    updated_at: "2025-02-20T02:00:00Z",
+    members: [
+      { user_id: 3, added_at: "2025-01-11T02:00:00Z", added_by_id: 1 },
+      { user_id: 4, added_at: "2025-01-12T03:00:00Z", added_by_id: 1 },
+    ],
+  },
+  {
+    id: 2,
+    name: "运维值班组",
+    description: "负责线上巡检与应急响应的值班同学。",
+    is_active: true,
+    created_at: "2025-01-15T02:00:00Z",
+    updated_at: "2025-02-25T02:00:00Z",
+    members: [{ user_id: 5, added_at: "2025-01-16T02:00:00Z", added_by_id: 1 }],
+  },
+];
+
+/* -------------------------------------------------------------------------- */
+/* Roles (M3 `GET /admin/roles`)                                              */
+/* -------------------------------------------------------------------------- */
+
+export interface MockRoleRecord {
+  id: number;
+  code: Role;
+  name: string;
+  description: string;
+  /** 权限点来自 `app/core/permissions.py` 的 frozenset，不是数据库冗余列。 */
+  permissions: string[];
+}
+
+/** 四个内置角色，顺序与 `migrations/versions/0002_seed_roles_and_settings.py` 一致。 */
+export const MOCK_ROLES: MockRoleRecord[] = [
+  {
+    id: 1,
+    code: "superadmin",
+    name: "超级管理员",
+    description: "平台最高权限，管理用户、角色、系统设置、API Token",
+    permissions: [
+      "admin:all",
+      "approvals:write",
+      "download",
+      "groups:write",
+      "settings:write",
+      "taxonomy:write",
+      "tools:read",
+      "tools:write",
+      "users:write",
+    ],
+  },
+  {
+    id: 2,
+    code: "approver",
+    name: "审批管理员",
+    description: "审批工具上架、下架工具、管理分类标签、查看审批历史",
+    permissions: ["approvals:write", "download", "taxonomy:write", "tools:read", "tools:write"],
+  },
+  {
+    id: 3,
+    code: "user",
+    name: "普通用户",
+    description: "浏览、下载、上传自己的工具",
+    permissions: ["download", "tools:read", "tools:write"],
+  },
+  {
+    id: 4,
+    code: "viewer",
+    name: "只读访客",
+    description: "只能浏览 public 工具，不能下载受限内容、不能上传",
+    permissions: ["tools:read"],
+  },
 ];
 
 export function findMockUserById(id: number): MockUser | undefined {
@@ -176,7 +280,13 @@ export function findMockUserById(id: number): MockUser | undefined {
 /* Taxonomy                                                                   */
 /* -------------------------------------------------------------------------- */
 
-export const MOCK_CATEGORIES: Category[] = [
+export interface MockCategoryRecord extends Category {
+  created_at: string;
+  updated_at: string;
+}
+
+/** 4 categories with the backend's slugs (`backend/app/cli.py` DEMO_CATEGORIES). */
+export const MOCK_CATEGORIES: MockCategoryRecord[] = [
   {
     id: 1,
     slug: "dev-tools",
@@ -186,6 +296,8 @@ export const MOCK_CATEGORIES: Category[] = [
     sort_order: 10,
     is_active: true,
     tool_count: 0,
+    created_at: "2024-10-01T02:00:00Z",
+    updated_at: "2025-02-10T02:00:00Z",
   },
   {
     id: 2,
@@ -196,6 +308,8 @@ export const MOCK_CATEGORIES: Category[] = [
     sort_order: 20,
     is_active: true,
     tool_count: 0,
+    created_at: "2024-10-01T02:00:00Z",
+    updated_at: "2025-02-10T02:00:00Z",
   },
   {
     id: 3,
@@ -206,6 +320,8 @@ export const MOCK_CATEGORIES: Category[] = [
     sort_order: 30,
     is_active: true,
     tool_count: 0,
+    created_at: "2024-10-01T02:00:00Z",
+    updated_at: "2025-02-10T02:00:00Z",
   },
   {
     id: 4,
@@ -216,10 +332,25 @@ export const MOCK_CATEGORIES: Category[] = [
     sort_order: 40,
     is_active: true,
     tool_count: 0,
+    created_at: "2024-10-01T02:00:00Z",
+    updated_at: "2025-02-10T02:00:00Z",
   },
 ];
 
-export const MOCK_TAGS: Tag[] = [
+export interface MockTagRecord extends Tag {
+  /** 种子标签允许缺省；投影时回退到平台初始化时间。 */
+  created_at?: string;
+}
+
+/**
+ * Tag registry. `usage_count` is **recomputed from the tool records** in
+ * `handlers.ts` (the backend does the same full recount, docs/02 §3.7), so the
+ * numbers written here are only the anonymous-seed view.
+ *
+ * The last two entries deliberately have zero references so
+ * `POST /admin/tags/cleanup` has something to delete.
+ */
+export const MOCK_TAGS: MockTagRecord[] = [
   { id: 1, name: "python", display_name: "python", usage_count: 5 },
   { id: 2, name: "log", display_name: "log", usage_count: 4 },
   { id: 3, name: "ops", display_name: "ops", usage_count: 6 },
@@ -254,6 +385,9 @@ export const MOCK_TAGS: Tag[] = [
   { id: 32, name: "testcase", display_name: "testcase", usage_count: 2 },
   { id: 33, name: "refactor", display_name: "refactor", usage_count: 2 },
   { id: 34, name: "compliance", display_name: "compliance", usage_count: 1 },
+  // 零引用标签：`POST /admin/tags/cleanup` 的演示对象。
+  { id: 35, name: "legacy-spike", display_name: "legacy-spike", usage_count: 0 },
+  { id: 36, name: "已下线", display_name: "已下线", usage_count: 0 },
 ];
 
 /* -------------------------------------------------------------------------- */
@@ -1533,6 +1667,154 @@ export function buildExtraSubmissionRecords(): MockToolRecord[] {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Recycle bin seed (M3 `GET /admin/recycle-bin`)                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Soft-deleted tools. The backend only produces these through
+ * `DELETE /me/tools/{id}`, but the recycle-bin console needs a non-empty list
+ * on first paint, so two finished tools are seeded as already deleted. They are
+ * invisible to the portal (each query filters `deleted_at`), and restoring one
+ * puts it straight back into the portal / 全站工具 lists.
+ */
+const RECYCLE_BIN_SPECS: Array<{
+  id: number;
+  slug: string;
+  name: string;
+  summary: string;
+  tool_type: ToolType;
+  category_slug: string;
+  tags: string[];
+  owner_username: string;
+  version: string;
+  deleted_at: string;
+  offline_reason: string;
+}> = [
+  {
+    id: 301,
+    slug: "legacy-log-crawler",
+    name: "遗留日志采集器",
+    summary: "上一代日志采集脚本，已被统一采集平台取代。",
+    tool_type: "file",
+    category_slug: "ops-tools",
+    tags: ["log", "ops", "legacy-spike"],
+    owner_username: "lisi",
+    version: "0.9.4",
+    deleted_at: "2025-03-09T02:00:00Z",
+    offline_reason: "已被统一日志平台取代，保留 30 天后彻底清除。",
+  },
+  {
+    id: 302,
+    slug: "legacy-report-webapp",
+    name: "旧版报表工具",
+    summary: "老报表入口，数据口径已迁移到新平台。",
+    tool_type: "webapp",
+    category_slug: "dev-tools",
+    tags: ["internal", "legacy-spike"],
+    owner_username: "zhangsan",
+    version: "1.2.0",
+    deleted_at: "2025-03-11T06:30:00Z",
+    offline_reason: "报表口径迁移完成，旧入口下架回收。",
+  },
+];
+
+export function buildRecycleBinRecords(): MockToolRecord[] {
+  return RECYCLE_BIN_SPECS.map((spec) => {
+    const seed: ToolSeed = {
+      id: spec.id,
+      slug: spec.slug,
+      name: spec.name,
+      summary: spec.summary,
+      description_md: `## 用途\n\n${spec.summary}\n\n## 状态\n\n已进入回收站，等待还原或彻底清除。`,
+      tool_type: spec.tool_type,
+      visibility: "public",
+      category_slug: spec.category_slug,
+      tags: [...spec.tags],
+      cover: true,
+      owner_username: spec.owner_username,
+      current_version: spec.version,
+      file_size: spec.tool_type === "webapp" ? null : 1_284_000 + spec.id,
+      download_count: spec.id - 280,
+      view_count: (spec.id - 280) * 9,
+      published_at: "2024-11-20T02:00:00Z",
+      updated_at: spec.deleted_at,
+      webapp_url:
+        spec.tool_type === "webapp" ? `http://${spec.slug}.intra.example.com` : null,
+    };
+    const version = makeVersion(seed, spec.version, "approved", "2024-11-20T02:00:00Z", {
+      changelog: "末版，此后进入维护冻结。",
+      approvedAt: "2024-11-21T02:00:00Z",
+    });
+    return {
+      seed,
+      status: "offline" as const,
+      version_seq: 1,
+      created_at: "2024-11-20T02:00:00Z",
+      last_version_at: "2024-11-21T02:00:00Z",
+      reject_reason: null,
+      offline_reason: spec.offline_reason,
+      deleted_at: spec.deleted_at,
+      webapp_url: seed.webapp_url ?? null,
+      versions: [version],
+      images: [seedImage(seed, "cover", 0)],
+      acl_visibility: "public" as const,
+      acl: [],
+      submitted_at: null,
+      submission_type: null,
+      history_version_limit: MOCK_VERSION_HISTORY_LIMIT,
+    };
+  });
+}
+
+/* -------------------------------------------------------------------------- */
+/* API Token seed (M3 `GET /admin/tokens`)                                    */
+/* -------------------------------------------------------------------------- */
+
+export interface MockTokenRecord {
+  id: number;
+  name: string;
+  /** 前 8 位明文（`st_` + 6）；**明文本体从不落库/从不返回**（FR-ADMIN-10）。 */
+  token_prefix: string;
+  scopes: string[];
+  note: string | null;
+  created_by_id: number | null;
+  created_at: string;
+  expires_at: string | null;
+  revoked_at: string | null;
+  last_used_at: string | null;
+  last_used_ip: string | null;
+}
+
+export const MOCK_TOKENS: MockTokenRecord[] = [
+  {
+    id: 1,
+    name: "CI 发布流水线",
+    token_prefix: "st_9xK2mN",
+    scopes: ["tools:read"],
+    note: "仅用于流水线拉取已发布工具元数据。",
+    created_by_id: 1,
+    created_at: "2025-02-10T02:00:00Z",
+    expires_at: "2027-06-30T02:00:00Z",
+    revoked_at: null,
+    last_used_at: "2025-03-13T22:10:00Z",
+    last_used_ip: "10.20.31.55",
+  },
+  {
+    id: 2,
+    name: "临时巡检脚本",
+    token_prefix: "st_3pQ7wZ",
+    scopes: ["tools:read", "tools:write"],
+    note: "巡检脚本临时凭证，已用完吊销。",
+    created_by_id: 1,
+    created_at: "2025-01-20T02:00:00Z",
+    expires_at: null,
+    revoked_at: "2025-02-01T02:00:00Z",
+    last_used_at: "2025-01-31T09:00:00Z",
+    last_used_ip: "10.20.32.18",
+  },
+];
+
+/* -------------------------------------------------------------------------- */
 /* Approval history & whitelist seed                                          */
 /* -------------------------------------------------------------------------- */
 
@@ -1724,7 +2006,20 @@ export interface MockSettingRecord extends MockSettingSeed {
   updated_by_id: number | null;
 }
 
-/** The three keys the M2 approval settings page drives (`SETTING_KEYS` in admin.ts). */
+/**
+ * The full system-setting catalogue — the first three keys are what the M2
+ * approval page drives, the rest are the M3 groups (docs/04 §6.17).
+ *
+ * Values/types/`is_public`/descriptions come from the backend
+ * `SETTING_DEFAULTS`, and `min`/`max`/`options` from `SETTING_SPECS`
+ * (`app/repositories/system_settings.py`). The frontend renders its controls
+ * from exactly this metadata, so the ranges must be data-driven (验收 #14).
+ *
+ * `upload.max_images` / `quota.alert_percent` / `stats.download_retention_days`
+ * are kept as aliases of the backend's `upload.max_screenshots` /
+ * `quota.warn_threshold_pct` / `stats.download_log_retention_days` so both the
+ * contract key list and the backend catalogue resolve.
+ */
 export const MOCK_SETTINGS: MockSettingRecord[] = [
   {
     key: "approval.mode",
@@ -1743,7 +2038,7 @@ export const MOCK_SETTINGS: MockSettingRecord[] = [
     value: true,
     value_type: "bool",
     is_public: false,
-    description: "是否启用免审白名单。",
+    description: "免审白名单总开关。",
     options: null,
     min: null,
     max: null,
@@ -1755,11 +2050,333 @@ export const MOCK_SETTINGS: MockSettingRecord[] = [
     value: true,
     value_type: "bool",
     is_public: false,
-    description: "新版本是否也需要重新审批。",
+    description: "已发布工具发新版本是否需再审。",
     options: null,
     min: null,
     max: null,
     updated_at: "2025-03-01T10:00:00Z",
+    updated_by_id: 1,
+  },
+  {
+    key: "version.history_limit",
+    value: 10,
+    value_type: "int",
+    is_public: false,
+    description: "历史版本保留份数。",
+    options: null,
+    min: 1,
+    max: 50,
+    updated_at: "2025-02-18T10:00:00Z",
+    updated_by_id: 1,
+  },
+  {
+    key: "upload.max_file_size_mb",
+    value: 200,
+    value_type: "int",
+    is_public: false,
+    description: "单文件上传上限（MB）。",
+    options: null,
+    min: 1,
+    max: 2048,
+    updated_at: "2025-02-18T10:00:00Z",
+    updated_by_id: 1,
+  },
+  {
+    key: "upload.allowed_extensions",
+    value: [
+      "zip",
+      "tar.gz",
+      "tgz",
+      "whl",
+      "tar",
+      "gz",
+      "7z",
+      "rar",
+      "exe",
+      "msi",
+      "deb",
+      "rpm",
+      "sh",
+      "py",
+      "md",
+      "txt",
+      "json",
+      "yaml",
+      "pdf",
+      "png",
+      "jpg",
+    ],
+    value_type: "list",
+    is_public: false,
+    description: "允许上传的扩展名白名单。",
+    options: null,
+    min: null,
+    max: null,
+    updated_at: "2025-02-18T10:00:00Z",
+    updated_by_id: 1,
+  },
+  {
+    key: "upload.max_screenshots",
+    value: 8,
+    value_type: "int",
+    is_public: false,
+    description: "每个工具最多截图数。",
+    options: null,
+    min: 0,
+    max: 20,
+    updated_at: "2025-02-18T10:00:00Z",
+    updated_by_id: 1,
+  },
+  {
+    key: "upload.max_images",
+    value: 8,
+    value_type: "int",
+    is_public: false,
+    description: "每个工具最多图片数（`upload.max_screenshots` 的契约别名）。",
+    options: null,
+    min: 0,
+    max: 20,
+    updated_at: "2025-02-18T10:00:00Z",
+    updated_by_id: 1,
+  },
+  {
+    key: "upload.max_tags",
+    value: 8,
+    value_type: "int",
+    is_public: false,
+    description: "单个工具最多标签数。",
+    options: null,
+    min: 1,
+    max: 20,
+    updated_at: "2025-02-18T10:00:00Z",
+    updated_by_id: 1,
+  },
+  {
+    key: "quota.per_user_mb",
+    value: 2048,
+    value_type: "int",
+    is_public: false,
+    description: "单用户配额（MB），0 = 不限。",
+    options: null,
+    min: 0,
+    max: 1_048_576,
+    updated_at: "2025-02-18T10:00:00Z",
+    updated_by_id: 1,
+  },
+  {
+    key: "quota.total_mb",
+    value: 51_200,
+    value_type: "int",
+    is_public: false,
+    description: "平台总配额（MB），0 = 不限。",
+    options: null,
+    min: 0,
+    max: 1_048_576,
+    updated_at: "2025-02-18T10:00:00Z",
+    updated_by_id: 1,
+  },
+  {
+    key: "quota.warn_threshold_pct",
+    value: 85,
+    value_type: "int",
+    is_public: false,
+    description: "配额告警阈值百分比。",
+    options: null,
+    min: 1,
+    max: 100,
+    updated_at: "2025-02-18T10:00:00Z",
+    updated_by_id: 1,
+  },
+  {
+    key: "quota.alert_percent",
+    value: 85,
+    value_type: "int",
+    is_public: false,
+    description: "配额告警阈值百分比（`quota.warn_threshold_pct` 的契约别名）。",
+    options: null,
+    min: 1,
+    max: 100,
+    updated_at: "2025-02-18T10:00:00Z",
+    updated_by_id: 1,
+  },
+  {
+    key: "security.access_token_minutes",
+    value: 30,
+    value_type: "int",
+    is_public: false,
+    description: "access token 有效期（分钟）。",
+    options: null,
+    min: 1,
+    max: 1440,
+    updated_at: "2025-02-18T10:00:00Z",
+    updated_by_id: 1,
+  },
+  {
+    key: "security.refresh_token_days",
+    value: 7,
+    value_type: "int",
+    is_public: false,
+    description: "refresh token 有效期（天）。",
+    options: null,
+    min: 1,
+    max: 365,
+    updated_at: "2025-02-18T10:00:00Z",
+    updated_by_id: 1,
+  },
+  {
+    key: "security.login_max_failures",
+    value: 5,
+    value_type: "int",
+    is_public: false,
+    description: "连续登录失败锁定阈值。",
+    options: null,
+    min: 1,
+    max: 20,
+    updated_at: "2025-02-18T10:00:00Z",
+    updated_by_id: 1,
+  },
+  {
+    key: "security.lockout_minutes",
+    value: 15,
+    value_type: "int",
+    is_public: false,
+    description: "锁定时长（分钟）。",
+    options: null,
+    min: 1,
+    max: 1440,
+    updated_at: "2025-02-18T10:00:00Z",
+    updated_by_id: 1,
+  },
+  {
+    key: "portal.site_name",
+    value: "工具与 Skill 平台",
+    value_type: "string",
+    is_public: true,
+    description: "站点名称。",
+    options: null,
+    min: null,
+    max: null,
+    updated_at: "2025-03-01T10:00:00Z",
+    updated_by_id: 1,
+  },
+  {
+    key: "portal.announcement_md",
+    value: "**本周五 20:00** 进行例行维护，期间门户只读。",
+    value_type: "string",
+    is_public: true,
+    description: "首页公告（Markdown）。",
+    options: null,
+    min: null,
+    max: null,
+    updated_at: "2025-03-01T10:00:00Z",
+    updated_by_id: 1,
+  },
+  {
+    key: "portal.allow_anonymous_view",
+    value: false,
+    value_type: "bool",
+    is_public: true,
+    description: "是否允许未登录浏览门户。",
+    options: null,
+    min: null,
+    max: null,
+    updated_at: "2025-03-01T10:00:00Z",
+    updated_by_id: 1,
+  },
+  {
+    key: "portal.allow_admin_view_private",
+    value: true,
+    value_type: "bool",
+    is_public: false,
+    description: "超管是否可见他人 private 工具。",
+    options: null,
+    min: null,
+    max: null,
+    updated_at: "2025-03-01T10:00:00Z",
+    updated_by_id: 1,
+  },
+  {
+    key: "portal.default_sort",
+    value: "hot",
+    value_type: "string",
+    is_public: true,
+    description: "门户默认排序。",
+    options: ["hot", "new", "name"],
+    min: null,
+    max: null,
+    updated_at: "2025-03-01T10:00:00Z",
+    updated_by_id: 1,
+  },
+  {
+    key: "portal.page_size",
+    value: 24,
+    value_type: "int",
+    is_public: true,
+    description: "门户每页条数。",
+    options: null,
+    min: 1,
+    max: 200,
+    updated_at: "2025-03-01T10:00:00Z",
+    updated_by_id: 1,
+  },
+  {
+    key: "stats.download_log_retention_days",
+    value: 180,
+    value_type: "int",
+    is_public: false,
+    description: "下载明细保留天数。",
+    options: null,
+    min: 1,
+    max: 3650,
+    updated_at: "2025-02-18T10:00:00Z",
+    updated_by_id: 1,
+  },
+  {
+    key: "stats.download_retention_days",
+    value: 180,
+    value_type: "int",
+    is_public: false,
+    description: "下载明细保留天数（`stats.download_log_retention_days` 的契约别名）。",
+    options: null,
+    min: 1,
+    max: 3650,
+    updated_at: "2025-02-18T10:00:00Z",
+    updated_by_id: 1,
+  },
+  {
+    key: "stats.view_dedup_minutes",
+    value: 60,
+    value_type: "int",
+    is_public: false,
+    description: "浏览去重窗口（分钟）。",
+    options: null,
+    min: 0,
+    max: 1440,
+    updated_at: "2025-02-18T10:00:00Z",
+    updated_by_id: 1,
+  },
+  {
+    key: "webapp.health_check_enabled",
+    value: false,
+    value_type: "bool",
+    is_public: false,
+    description: "在线工具探活（二期）。",
+    options: null,
+    min: null,
+    max: null,
+    updated_at: "2025-02-18T10:00:00Z",
+    updated_by_id: 1,
+  },
+  {
+    key: "api.docs_enabled",
+    value: false,
+    value_type: "bool",
+    is_public: false,
+    description: "是否开放 /docs。",
+    options: null,
+    min: null,
+    max: null,
+    updated_at: "2025-02-18T10:00:00Z",
     updated_by_id: 1,
   },
 ];

@@ -4,9 +4,16 @@ import * as React from "react";
 import { toast } from "sonner";
 
 import { getErrorMessage } from "@/api/client";
-import { createDownloadTicket, fetchSkillPreview, skillPreviewQueryKey } from "@/api/tools";
-import type { ApprovalQueueItem, SkillPreview } from "@/api/types";
+import {
+  createDownloadTicket,
+  fetchSkillPreview,
+  fetchToolDetail,
+  skillPreviewQueryKey,
+  toolDetailQueryKey,
+} from "@/api/tools";
+import type { ApprovalQueueItem, SkillPreview, ToolDetail } from "@/api/types";
 import { SubmissionTypeBadge, WaitingBadge } from "@/components/admin/ApprovalQueue";
+import { CopyButton } from "@/components/common/CopyButton";
 import { Markdown } from "@/components/common/Markdown";
 import { ToolTypeBadge } from "@/components/tools/ToolTypeBadge";
 import { Badge } from "@/components/ui/badge";
@@ -21,9 +28,13 @@ import { cn } from "@/lib/utils";
  *  - `xl` 及以上：内联在右侧栏（保留列表上下文，不跳转门户）
  *  - `xl` 以下：塞进 `Sheet` 抽屉
  *
- * 预览一律复用项目的公共渲染件（`Markdown`），不重新实现 Markdown / Skill 渲染。
- * 详情字段全部来自队列条目本身（`GET /admin/approvals`），不额外拉工具详情 ——
- * 审批接口已下发审批所需的全部信息，少一次请求也少一处越权面。
+ * 预览一律复用项目的公共渲染件（`Markdown` / `PromptViewer` 的排版），不重新实现渲染。
+ *
+ * **数据源分工**（CONTRACT §17.11）：列表与头部信息来自 `GET /admin/approvals`
+ * （队列数据），而**内容预览**来自 `GET /tools/{slug}` —— 因为队列条目的
+ * `pending_version` 不含 prompt 正文，也没有 webapp URL；后端 M3 已让该接口对
+ * approver 开放 `pending` / `pending_update` / `offline`，于是四种类型都能预览。
+ * 详情请求只在用户展开「预览包内容」时才发出，关闭/切换条目时不产生额外请求。
  */
 
 /** 审批动作区（备注 / 理由 / 按钮）由页面注入，两种容器共用同一套状态。 */
@@ -306,7 +317,8 @@ function PackagePreviewButton({ item }: { item: ApprovalQueueItem }) {
   const version = item.pending_version?.version ?? "";
   const pendingVersionId = item.pending_version?.id ?? null;
 
-  const previewEnabled = item.tool_type === "skill" && expanded && pendingVersionId !== null;
+  const skillPreviewEnabled =
+    item.tool_type === "skill" && expanded && pendingVersionId !== null && version.length > 0;
   const {
     data: preview,
     isFetching,
@@ -315,8 +327,21 @@ function PackagePreviewButton({ item }: { item: ApprovalQueueItem }) {
   } = useQuery({
     queryKey: skillPreviewQueryKey(item.tool_slug, version),
     queryFn: ({ signal }) => fetchSkillPreview(item.tool_slug, version, signal),
-    enabled: previewEnabled && version.length > 0,
+    enabled: skillPreviewEnabled,
     staleTime: 5 * 60_000,
+  });
+
+  // 详情只在展开时拉（`GET /tools/{slug}` 对 approver 开放 pending/offline）。
+  const {
+    data: detail,
+    isFetching: detailFetching,
+    isError: detailFailed,
+    refetch: refetchDetail,
+  } = useQuery({
+    queryKey: toolDetailQueryKey(item.tool_slug),
+    queryFn: ({ signal }) => fetchToolDetail(item.tool_slug, signal),
+    enabled: expanded,
+    staleTime: 60_000,
   });
 
   return (
@@ -335,6 +360,10 @@ function PackagePreviewButton({ item }: { item: ApprovalQueueItem }) {
         <div className="rounded-md border bg-muted/30 p-3">
           <PackagePreview
             item={item}
+            detail={detail ?? null}
+            detailLoading={detailFetching}
+            detailError={detailFailed}
+            onRetryDetail={() => void refetchDetail()}
             preview={preview ?? null}
             loading={isFetching}
             error={isError}
@@ -348,19 +377,43 @@ function PackagePreviewButton({ item }: { item: ApprovalQueueItem }) {
   );
 }
 
+/** 详情接口失败的统一重试行（四种类型共用）。 */
+function DetailRetry({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <AlertTriangle aria-hidden="true" className="size-3.5" />
+      <span className="text-muted-foreground">内容预览加载失败。</span>
+      <Button type="button" variant="ghost" size="xs" onClick={onRetry}>
+        重试
+      </Button>
+    </div>
+  );
+}
+
 function PackagePreview({
   item,
+  detail,
+  detailLoading,
+  detailError,
+  onRetryDetail,
   preview,
   loading,
   error,
   onRetry,
 }: {
   item: ApprovalQueueItem;
+  /** `GET /tools/{slug}` —— prompt 正文 / webapp URL / skill manifest 的来源。 */
+  detail: ToolDetail | null;
+  detailLoading: boolean;
+  detailError: boolean;
+  onRetryDetail: () => void;
   preview: SkillPreview | null;
   loading: boolean;
   error: boolean;
   onRetry: () => void;
 }) {
+  const detailPending = detailLoading && detail === null;
+  const detailFailedToLoad = detailError && detail === null;
   if (item.tool_type === "file") {
     return (
       <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 text-xs">
@@ -372,30 +425,74 @@ function PackagePreview({
         <dd className="break-all font-mono">
           {item.pending_version?.file_sha256?.slice(0, 16) ?? "—"}
         </dd>
+        <dt className="text-muted-foreground">当前版本</dt>
+        <dd className="font-mono">
+          {detail?.current_version?.version ?? item.current_version?.version ?? "—"}
+          {detail?.current_version?.file_size
+            ? `（${formatFileSize(detail.current_version.file_size)}）`
+            : ""}
+        </dd>
       </dl>
     );
   }
 
   if (item.tool_type === "webapp") {
+    if (detailPending) return <p className="text-xs text-muted-foreground">加载访问地址…</p>;
+    if (detailFailedToLoad) return <DetailRetry onRetry={onRetryDetail} />;
+    const url = detail?.webapp_url ?? null;
+    if (!url) {
+      return (
+        <p className="text-xs text-muted-foreground">
+          该在线工具没有填写访问地址，建议驳回并要求补充。
+        </p>
+      );
+    }
     return (
-      <p className="flex items-start gap-2 text-xs text-muted-foreground">
-        <ExternalLink aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
-        在线工具没有包体，审批时请确认提交人填写的访问地址。M2 冻结接口里没有把地址放进审批队列，
-        可在门户详情页核对。
-      </p>
+      <div className="space-y-2 text-xs">
+        <p className="text-muted-foreground">在线工具没有包体，审批时请确认访问地址可用：</p>
+        <p className="flex items-center gap-2">
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 break-all font-mono text-primary underline-offset-4 hover:underline"
+          >
+            <ExternalLink aria-hidden="true" className="size-3.5 shrink-0" />
+            {url}
+          </a>
+          <CopyButton value={url} label="复制访问地址" testId="approval-webapp-url-copy" />
+        </p>
+      </div>
     );
   }
 
   if (item.tool_type === "prompt") {
+    if (detailPending) return <p className="text-xs text-muted-foreground">加载提示词正文…</p>;
+    if (detailFailedToLoad) return <DetailRetry onRetry={onRetryDetail} />;
+    const content = detail?.prompt?.content ?? "";
+    if (content.trim() === "") {
+      return <p className="text-xs text-muted-foreground">该提示词没有正文内容。</p>;
+    }
     return (
-      <p className="text-xs text-muted-foreground">
-        提示词正文随版本内容审核；M2 的预览接口只覆盖 Skill 包（docs/03 §3.5），因此这里只展示
-        变更说明，不渲染提示词全文。
-      </p>
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs text-muted-foreground">
+            提示词正文（{detail?.prompt?.char_count ?? content.length} 字）
+          </span>
+          <CopyButton value={content} label="复制提示词正文" testId="approval-prompt-copy" />
+        </div>
+        <pre
+          data-testid="approval-prompt-content"
+          className="max-h-72 overflow-auto rounded-md border bg-background p-3 font-mono text-xs whitespace-pre-wrap"
+        >
+          {content}
+        </pre>
+      </div>
     );
   }
 
   if (loading) return <p className="text-xs text-muted-foreground">加载包内容…</p>;
+
   if (error) {
     return (
       <div className="flex items-center gap-2 text-xs">
