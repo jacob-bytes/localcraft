@@ -243,6 +243,37 @@ current_version.can_download = True      ← 错误
 **测试**：对 `viewer` / `user` / `owner` / `superadmin` 四种身份，
 断言 `current_version.can_download == 顶层 can_download`。
 
+### J-10. 上传扩展名默认白名单与文档不符（监控方实测发现）
+
+**实测**：`app/core/config.py` 的 `allowed_extensions` 默认只有 **21 项**：
+
+```
+zip tar.gz tgz whl tar gz 7z rar exe msi deb rpm sh py md txt json yaml pdf png jpg
+```
+
+而 `docs/01` §8 的清单还包括 `.jpeg .webp .gif .svg .csv .xlsx .docx .js .ts .go .java .sql .bat .ps1 .jar .war .bin .iso .img` 等。
+
+**后果**：内网用户上传 `.xlsx`（很常见）或 `.csv` 会被 `415 UNSUPPORTED_MEDIA_TYPE` 拒绝，
+而文档说这是允许的。**这是实际可用性问题，不是纯文档问题。**
+
+**裁定：扩充默认白名单以匹配 `docs/01` §8 的意图**，补入：
+
+```
+jpeg webp gif svg csv xlsx docx pptx
+js ts jsx tsx go java sql
+bat ps1 jar war bin iso img
+```
+
+**新增 J-10。** 理由：平台**从不执行**上传的文件，只以
+`Content-Disposition: attachment` 提供下载，因此放宽类型白名单的风险很低；
+而「传 Excel 被拒」会直接产生支持工单。
+
+（`docs/09` 勘误里我原先裁定「以实现的 21 项为准」，**现改为以 `docs/01` §8 的清单为准** ——
+那条勘误需同步修正，由监控方处理。）
+
+**测试**：断言 `docs/01` §8 列出的每个扩展名都在默认白名单内（用一条测试钉死两者一致，
+防止再次漂移）。
+
 ---
 
 ## M6 验收清单（监控方会逐条核验）
@@ -269,6 +300,7 @@ current_version.can_download = True      ← 错误
 | 18 | `backend/openapi.json` 与运行时一致 | 无差异；守卫测试 `test_openapi_artifact_is_current` 存在且通过 |
 | 19 | viewer 看 `file` 详情 | `current_version.can_download == 顶层 can_download == False` |
 | 20 | 四种身份的 `can_download` 一致性 | 每个身份都满足 `current_version.can_download == 顶层` |
+| 21 | 扩展名默认白名单 | 覆盖 `docs/01` §8 列出的全部类型（含 `.xlsx`/`.csv`/`.jpeg`） |
 
 ---
 
