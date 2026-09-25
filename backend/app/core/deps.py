@@ -131,7 +131,20 @@ async def _principal_from_api_token(session: AsyncSession, token: str) -> Princi
     # admin:all 隐含全部其他 Scope（docs/03 §1.4）
     if ApiScope.ADMIN_ALL.value in token_scopes:
         token_scopes = set(ALL_PERMISSIONS)
-    effective = frozenset(token_scopes & creator_perms)
+    effective = set(token_scopes & creator_perms)
+
+    # `download` 是本项目内部的能力点，不对外暴露成 Scope。
+    # docs/03 §1.4 的映射表写的是「下载工具 → 角色 user 及以上 + Scope tools:read」，
+    # 所以只要 Token 有 tools:read、且**创建者**的角色本身就允许下载，
+    # 就应当具备下载能力。否则 API Token 永远下不了东西（它的 scopes 里
+    # 不可能出现 "download" 这个内部能力点）。
+    if (
+        ApiScope.TOOLS_READ.value in effective
+        and PERM_DOWNLOAD in creator_perms
+    ):
+        effective.add(PERM_DOWNLOAD)
+
+    effective = frozenset(effective)
 
     return Principal(
         kind="api_token",
@@ -293,6 +306,11 @@ class PortalAccess:
         return self.principal.roles if self.principal else frozenset()
 
     @property
+    def permissions(self) -> frozenset[str]:
+        """匿名访客没有任何权限点（`can_download` 等布尔值因此全为 False）。"""
+        return self.principal.permissions if self.principal else frozenset()
+
+    @property
     def can_download(self) -> bool:
         return bool(self.principal and self.principal.can_download)
 
@@ -362,3 +380,126 @@ def get_client_info(request: Request) -> ClientInfo:
         ip=client.host if client else None,
         user_agent=request.headers.get("User-Agent"),
     )
+
+
+# ---------------------------------------------------------------------------
+# 下载入口：票据 **或** 常规凭证
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class DownloadAccess:
+    """下载接口的身份上下文。
+
+    两条路径（docs/03 §1.10）：
+      - `ticket` 有值：HMAC 票据就是凭证，**不需要** Authorization 头
+      - 否则走常规鉴权；完全匿名时由 `portal.allow_anonymous_view` 决定
+
+    票据里的 `tool_id` 校验放到处理器里做 —— 依赖阶段还不知道要访问哪个工具。
+    """
+
+    principal: Principal | None
+    ticket: dict[str, Any] | None
+    request_id: str
+
+    @property
+    def is_ticket(self) -> bool:
+        return self.ticket is not None
+
+    @property
+    def ticket_user_id(self) -> int | None:
+        return int(self.ticket["user_id"]) if self.ticket else None
+
+    @property
+    def ticket_version_id(self) -> int | None:
+        return int(self.ticket["version_id"]) if self.ticket else None
+
+    @property
+    def user_id(self) -> int | None:
+        if self.ticket is not None:
+            return self.ticket_user_id
+        return self.principal.user_id if self.principal else None
+
+    @property
+    def roles(self) -> frozenset[str]:
+        return self.principal.roles if self.principal else frozenset()
+
+    @property
+    def can_download(self) -> bool:
+        """票据用户按「普通已登录用户」处理；匿名则不可下载。"""
+        if self.ticket is not None:
+            return True
+        return bool(self.principal and self.principal.can_download)
+
+
+async def download_access(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> DownloadAccess:
+    """下载专用入口依赖。
+
+    **票据优先**：带 `?ticket=` 时不再解析 Authorization —— 票据已经把
+    `user_id` 绑进去了，混用两种凭证只会让权限来源变得难以推理。
+    """
+    from app.services import download_service
+
+    ticket_token = request.query_params.get("ticket")
+    if ticket_token:
+        # 只校验签名与有效期；tool_id 的比对在处理器里（那里才知道工具）
+        try:
+            from app.core.security import verify_download_ticket
+
+            payload = verify_download_ticket(ticket_token)
+        except Exception as exc:
+            from app.core.errors import NotFoundError
+
+            # 统一 404：不区分「签名错」与「已过期」，避免探测
+            raise NotFoundError(
+                message="资源不存在", details={"reason": "invalid_ticket"}
+            ) from exc
+        await download_service.check_ticket_user_active(session, payload)
+        return DownloadAccess(principal=None, ticket=payload, request_id=request.state.request_id)
+
+    principal = await resolve_principal(request, session)
+    if principal is not None:
+        if principal.must_change_password:
+            raise PasswordChangeRequiredError()
+        if principal.is_api_token and ApiScope.TOOLS_READ.value not in principal.permissions:
+            raise ScopeMissingError([ApiScope.TOOLS_READ.value])
+    else:
+        allowed = await settings_service.is_anonymous_view_allowed(session)
+        if not allowed:
+            raise UnauthenticatedError()
+
+    return DownloadAccess(
+        principal=principal, ticket=None, request_id=request.state.request_id
+    )
+
+
+# 本依赖内部已经做了改密拦截（principal.must_change_password → 403），
+# 所以标成 password gate，让守卫测试的「拦截覆盖面」断言成立。
+_mark_password_gate(download_access)
+
+
+def require_roles_and_scope(*roles: str, scope: str) -> Any:
+    """同时校验**角色**与**API Token Scope**。
+
+    为什么需要组合守卫：
+      - 只查角色 → API Token 会绕过 `scopes` 限制（它的 `roles` 是创建者的角色）
+      - 只查 Scope → JWT 请求不受限（`require_scope` 对 JWT 直接放行）
+
+    `/me/*` 的写接口两个都要：docs/01 §3.2 要求 viewer 不能上传，
+    docs/03 §1.4 又要求 API Token 具备 `tools:write`。
+    """
+
+    async def _dep(
+        principal: Annotated[Principal, Depends(require_authenticated)],
+    ) -> Principal:
+        if not (principal.roles & set(roles)):
+            raise ForbiddenError(f"需要以下角色之一：{', '.join(sorted(roles))}")
+        if principal.is_api_token:
+            missing = {scope} - principal.permissions
+            if missing:
+                raise ScopeMissingError(sorted(missing))
+        return principal
+
+    _dep.__name__ = f"require_roles_{'_'.join(sorted(roles))}_scope_{scope}"
+    return _mark_auth(_dep)

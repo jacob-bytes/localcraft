@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import hmac
+import json
 import secrets
 import unicodedata
 from datetime import UTC, datetime, timedelta
@@ -209,3 +212,112 @@ def api_token_prefix(token: str) -> str:
 
 def constant_time_equals(a: str, b: str) -> bool:
     return hmac.compare_digest(a, b)
+
+
+# ---------------------------------------------------------------------------
+# 下载票据 —— HMAC-SHA256，密钥是从 SECRET_KEY 派生的**子密钥**
+# ---------------------------------------------------------------------------
+# 为什么必须派生子密钥：SECRET_KEY 同时用于签 JWT。如果下载票据直接复用主密钥，
+# 任何一次票据签名/校验的实现缺陷都会把主密钥的用途扩大一圈（签名预言机），
+# 而且将来轮换票据密钥就必须同时作废所有登录态。用途隔离（key separation）
+# 是标准做法。
+#
+# 这里用 HKDF-SHA256（RFC 5869）的 extract+expand 两步，不引入额外依赖。
+_HKDF_SALT = b"selftool-hkdf-v1"
+
+
+def derive_subkey(purpose: str, *, length: int = 32) -> bytes:
+    """由 SECRET_KEY 派生用途隔离的子密钥（HKDF-SHA256）。"""
+    ikm = settings.secret_key.encode("utf-8")
+    prk = hmac.new(_HKDF_SALT, ikm, hashlib.sha256).digest()
+    info = f"selftool:{purpose}".encode()
+    okm = b""
+    block = b""
+    counter = 1
+    while len(okm) < length:
+        block = hmac.new(prk, block + info + bytes([counter]), hashlib.sha256).digest()
+        okm += block
+        counter += 1
+    return okm[:length]
+
+
+DOWNLOAD_TICKET_PURPOSE = "download-ticket"
+
+#: 票据有效期（秒）—— docs/03 §3.15 规定 60 秒
+DOWNLOAD_TICKET_TTL_SECONDS = 60
+
+
+def _b64url_encode(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _b64url_decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode(value + padding)
+
+
+def create_download_ticket(
+    *,
+    tool_id: int,
+    version_id: int,
+    user_id: int,
+    ttl_seconds: int = DOWNLOAD_TICKET_TTL_SECONDS,
+    now: datetime | None = None,
+) -> tuple[str, datetime]:
+    """签发下载票据，返回 `(token, expires_at)`。
+
+    载荷绑定 `user_id`：票据泄露给别人也用不了（横向越权防护）。
+    """
+    issued = now or datetime.now(UTC)
+    expires_at = issued + timedelta(seconds=ttl_seconds)
+    payload = {
+        "tool_id": tool_id,
+        "version_id": version_id,
+        "user_id": user_id,
+        "exp": int(expires_at.timestamp()),
+        "iat": int(issued.timestamp()),
+        "jti": secrets.token_hex(8),
+    }
+    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    signature = hmac.new(
+        derive_subkey(DOWNLOAD_TICKET_PURPOSE), raw, hashlib.sha256
+    ).digest()
+    return f"{_b64url_encode(raw)}.{_b64url_encode(signature)}", expires_at
+
+
+class TicketError(Exception):
+    """票据无效（签名错/格式错/篡改）。"""
+
+
+class TicketExpiredError(TicketError):
+    """票据已过期。"""
+
+
+def verify_download_ticket(token: str, *, now: datetime | None = None) -> dict[str, Any]:
+    """校验票据并返回载荷。
+
+    签名比对用 `hmac.compare_digest`（常量时间），避免时序侧信道。
+    """
+    if not token or "." not in token:
+        raise TicketError("票据格式不正确")
+    raw_b64, sig_b64 = token.rsplit(".", 1)
+    try:
+        raw = _b64url_decode(raw_b64)
+        signature = _b64url_decode(sig_b64)
+    except (ValueError, binascii.Error) as exc:
+        raise TicketError("票据编码不正确") from exc
+
+    expected = hmac.new(derive_subkey(DOWNLOAD_TICKET_PURPOSE), raw, hashlib.sha256).digest()
+    # compare_digest 而不是 == ：字符串/字节比较会短路，泄露签名前缀
+    if not hmac.compare_digest(signature, expected):
+        raise TicketError("票据签名校验失败")
+
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise TicketError("票据内容不正确") from exc
+
+    current = now or datetime.now(UTC)
+    if int(payload.get("exp", 0)) <= int(current.timestamp()):
+        raise TicketExpiredError("票据已过期")
+    return payload

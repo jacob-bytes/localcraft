@@ -1,6 +1,544 @@
 {
   "components": {
     "schemas": {
+      "AclEntryIn": {
+        "properties": {
+          "can_download": {
+            "default": true,
+            "title": "Can Download",
+            "type": "boolean"
+          },
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "integer"
+          },
+          "subject_type": {
+            "$ref": "#/components/schemas/AclSubjectType"
+          }
+        },
+        "required": [
+          "subject_type",
+          "subject_id"
+        ],
+        "title": "AclEntryIn",
+        "type": "object"
+      },
+      "AclEntryOut": {
+        "description": "回显用的授权条目（带主体名称，避免前端再查一次）。",
+        "properties": {
+          "can_download": {
+            "default": true,
+            "title": "Can Download",
+            "type": "boolean"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "integer"
+          },
+          "subject_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Name"
+          },
+          "subject_type": {
+            "$ref": "#/components/schemas/AclSubjectType"
+          }
+        },
+        "required": [
+          "subject_type",
+          "subject_id"
+        ],
+        "title": "AclEntryOut",
+        "type": "object"
+      },
+      "AclReplaceRequest": {
+        "description": "`PUT /me/tools/{id}/acl` —— **全量替换**语义（FR-ACL-03）。",
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/AclEntryIn"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/ToolVisibility"
+          }
+        },
+        "required": [
+          "visibility"
+        ],
+        "title": "AclReplaceRequest",
+        "type": "object"
+      },
+      "AclResponse": {
+        "description": "docs/03 §3.11：「返回工具详情的 permissions 与 acl 部分」。",
+        "properties": {
+          "effective": {
+            "default": true,
+            "description": "ACL 是否正在生效（visibility==restricted 时才有意义）",
+            "title": "Effective",
+            "type": "boolean"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/AclEntryOut"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "permissions": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "title": "Permissions",
+            "type": "object"
+          },
+          "tool_id": {
+            "title": "Tool Id",
+            "type": "integer"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/ToolVisibility"
+          }
+        },
+        "required": [
+          "tool_id",
+          "visibility"
+        ],
+        "title": "AclResponse",
+        "type": "object"
+      },
+      "AclSubjectType": {
+        "description": "docs/02 §3.10 `tool_acl.subject_type`",
+        "enum": [
+          "user",
+          "group"
+        ],
+        "title": "AclSubjectType",
+        "type": "string"
+      },
+      "ApprovalAction": {
+        "description": "docs/02 §3.13 `approval_records.action`",
+        "enum": [
+          "submit",
+          "withdraw",
+          "resubmit",
+          "approve",
+          "reject",
+          "offline",
+          "relist",
+          "purge_version",
+          "transfer_owner"
+        ],
+        "title": "ApprovalAction",
+        "type": "string"
+      },
+      "ApprovalQueueItem": {
+        "description": "docs/03 §3.8 的队列元素。",
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CategoryBrief"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "current_version": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CurrentVersionBrief"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "owner": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner"
+          },
+          "pending_version": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PendingVersionBrief"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "submission_type": {
+            "title": "Submission Type",
+            "type": "string"
+          },
+          "submitted_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submitted At"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "tool_id": {
+            "title": "Tool Id",
+            "type": "integer"
+          },
+          "tool_name": {
+            "title": "Tool Name",
+            "type": "string"
+          },
+          "tool_slug": {
+            "title": "Tool Slug",
+            "type": "string"
+          },
+          "tool_type": {
+            "$ref": "#/components/schemas/ToolType"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/ToolVisibility"
+          },
+          "waiting_hours": {
+            "default": 0.0,
+            "title": "Waiting Hours",
+            "type": "number"
+          }
+        },
+        "required": [
+          "tool_id",
+          "tool_slug",
+          "tool_name",
+          "tool_type",
+          "summary",
+          "visibility",
+          "submission_type",
+          "status"
+        ],
+        "title": "ApprovalQueueItem",
+        "type": "object"
+      },
+      "ApprovalRecordOut": {
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/ApprovalAction"
+          },
+          "actor_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Id"
+          },
+          "actor_label": {
+            "title": "Actor Label",
+            "type": "string"
+          },
+          "auto_rule": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Rule"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "from_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Status"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "is_automatic": {
+            "default": false,
+            "title": "Is Automatic",
+            "type": "boolean"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "to_status": {
+            "title": "To Status",
+            "type": "string"
+          },
+          "tool_id": {
+            "title": "Tool Id",
+            "type": "integer"
+          },
+          "tool_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Name"
+          },
+          "tool_slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Slug"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          },
+          "version_from_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version From Status"
+          },
+          "version_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Id"
+          },
+          "version_to_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version To Status"
+          }
+        },
+        "required": [
+          "id",
+          "tool_id",
+          "action",
+          "to_status",
+          "actor_label"
+        ],
+        "title": "ApprovalRecordOut",
+        "type": "object"
+      },
+      "ApproveRequest": {
+        "properties": {
+          "expected_version_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Version Seq"
+          },
+          "force": {
+            "default": false,
+            "title": "Force",
+            "type": "boolean"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "version_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Id"
+          }
+        },
+        "title": "ApproveRequest",
+        "type": "object"
+      },
+      "ApproveResponse": {
+        "description": "docs/03 §3.9 的响应。",
+        "properties": {
+          "approval_record_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Record Id"
+          },
+          "current_version": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CurrentVersionBrief"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "purged_versions": {
+            "items": {
+              "$ref": "#/components/schemas/SupersededVersionBrief"
+            },
+            "title": "Purged Versions",
+            "type": "array"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "superseded_version": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SupersededVersionBrief"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tool_id": {
+            "title": "Tool Id",
+            "type": "integer"
+          },
+          "version_seq": {
+            "title": "Version Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tool_id",
+          "status",
+          "version_seq"
+        ],
+        "title": "ApproveResponse",
+        "type": "object"
+      },
       "AuthProviderResponse": {
         "description": "`GET /api/v1/auth/provider`（FR-AUTH-09）——\n\n返回当前启用的认证方式与登录页需要渲染的字段，供前端适配 OIDC 等可插拔方式。\n\n`login_fields` 是**结构化字段描述**而不是字符串数组：FR-AUTH-09 要求前端按\n后端返回的字段动态渲染登录表单，将来接 OIDC 时不用改前端代码。\n`display_name` 是 `web/src/api/types.ts` 已声明的字段，这里补上以避免\n三方比对（docs/03 ↔ openapi.json ↔ types.ts）出现缺失项。",
         "properties": {
@@ -45,6 +583,202 @@
         ],
         "title": "AuthSource",
         "type": "string"
+      },
+      "BatchApproveItemResult": {
+        "properties": {
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "tool_id": {
+            "title": "Tool Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tool_id",
+          "ok"
+        ],
+        "title": "BatchApproveItemResult",
+        "type": "object"
+      },
+      "BatchApproveRequest": {
+        "description": "批量批准（FR-APPR-09）。不提供批量驳回 —— 驳回需逐条理由。",
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "tool_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Tool Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tool_ids"
+        ],
+        "title": "BatchApproveRequest",
+        "type": "object"
+      },
+      "BatchApproveResponse": {
+        "properties": {
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/BatchApproveItemResult"
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "succeeded": {
+            "title": "Succeeded",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "succeeded",
+          "failed"
+        ],
+        "title": "BatchApproveResponse",
+        "type": "object"
+      },
+      "Body_upload_image_api_v1_me_tools__tool_id__images_post": {
+        "properties": {
+          "alt_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alt Text"
+          },
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          },
+          "kind": {
+            "default": "screenshot",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_image_api_v1_me_tools__tool_id__images_post",
+        "type": "object"
+      },
+      "Body_upload_version_api_v1_me_tools__tool_id__versions_post": {
+        "properties": {
+          "auto_submit": {
+            "default": false,
+            "title": "Auto Submit",
+            "type": "boolean"
+          },
+          "changelog_md": {
+            "default": "",
+            "title": "Changelog Md",
+            "type": "string"
+          },
+          "file": {
+            "anyOf": [
+              {
+                "contentMediaType": "application/octet-stream",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File"
+          },
+          "prompt_content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Content"
+          },
+          "version": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Version",
+            "type": "string"
+          },
+          "webapp_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Webapp Url"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "title": "Body_upload_version_api_v1_me_tools__tool_id__versions_post",
+        "type": "object"
       },
       "CategoryBrief": {
         "description": "工具卡片里的分类（docs/03 §3.3 `category`）。",
@@ -188,6 +922,396 @@
         "title": "ChangePasswordRequest",
         "type": "object"
       },
+      "CurrentVersionBrief": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "version"
+        ],
+        "title": "CurrentVersionBrief",
+        "type": "object"
+      },
+      "CurrentVersionDetail": {
+        "description": "详情页的 `current_version`（docs/03 §3.4 的字段集）。",
+        "properties": {
+          "approved_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved At"
+          },
+          "can_download": {
+            "default": false,
+            "title": "Can Download",
+            "type": "boolean"
+          },
+          "changelog_md": {
+            "title": "Changelog Md",
+            "type": "string"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "file_ext": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Ext"
+          },
+          "file_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Name"
+          },
+          "file_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Sha256"
+          },
+          "file_sha256_short": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Sha256 Short"
+          },
+          "file_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Size"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "is_current": {
+            "title": "Is Current",
+            "type": "boolean"
+          },
+          "mime_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mime Type"
+          },
+          "prompt_content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Content"
+          },
+          "purged_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purged At"
+          },
+          "reject_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reject Reason"
+          },
+          "skill": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SkillVersionInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/VersionStatus"
+          },
+          "tool_id": {
+            "title": "Tool Id",
+            "type": "integer"
+          },
+          "uploaded_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VersionUploader"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tool_id",
+          "version",
+          "changelog_md",
+          "status",
+          "is_current"
+        ],
+        "title": "CurrentVersionDetail",
+        "type": "object"
+      },
+      "DailyStatPoint": {
+        "properties": {
+          "downloads": {
+            "title": "Downloads",
+            "type": "integer"
+          },
+          "stat_date": {
+            "title": "Stat Date",
+            "type": "string"
+          },
+          "views": {
+            "title": "Views",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "stat_date",
+          "views",
+          "downloads"
+        ],
+        "title": "DailyStatPoint",
+        "type": "object"
+      },
+      "DownloadLogOut": {
+        "description": "`GET /me/downloads` 的历史条目。",
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "file_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Name"
+          },
+          "file_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Size"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "tool_id": {
+            "title": "Tool Id",
+            "type": "integer"
+          },
+          "tool_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Name"
+          },
+          "tool_slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Slug"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          },
+          "version_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Id"
+          },
+          "via_api_token_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Via Api Token Id"
+          }
+        },
+        "required": [
+          "id",
+          "tool_id"
+        ],
+        "title": "DownloadLogOut",
+        "type": "object"
+      },
+      "DownloadTicketResponse": {
+        "description": "docs/03 §3.15。",
+        "properties": {
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "file_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Name"
+          },
+          "file_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Sha256"
+          },
+          "file_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Size"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "DownloadTicketResponse",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -210,6 +1334,178 @@
           }
         },
         "title": "HealthResponse",
+        "type": "object"
+      },
+      "ImageKind": {
+        "description": "docs/02 §3.12 `tool_images.kind`",
+        "enum": [
+          "cover",
+          "screenshot",
+          "inline"
+        ],
+        "title": "ImageKind",
+        "type": "string"
+      },
+      "ImageOut": {
+        "description": "docs/03 §3.4 的 `images[]` 元素。",
+        "properties": {
+          "alt_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alt Text"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "file_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Name"
+          },
+          "file_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Size"
+          },
+          "height": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ImageKind"
+          },
+          "mime_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mime Type"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
+          "sort_order": {
+            "default": 0,
+            "title": "Sort Order",
+            "type": "integer"
+          },
+          "thumb_url": {
+            "title": "Thumb Url",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          },
+          "width": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Width"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "url",
+          "thumb_url"
+        ],
+        "title": "ImageOut",
+        "type": "object"
+      },
+      "ImagePatchRequest": {
+        "description": "`PATCH /me/tools/{id}/images/{image_id}`。",
+        "properties": {
+          "alt_text": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alt Text"
+          },
+          "set_as_cover": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Set As Cover"
+          },
+          "sort_order": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sort Order"
+          }
+        },
+        "title": "ImagePatchRequest",
         "type": "object"
       },
       "LoginField": {
@@ -346,6 +1642,1148 @@
         "title": "MetaResponse",
         "type": "object"
       },
+      "MyToolListItem": {
+        "description": "`GET /me/tools` 的元素 —— 比门户卡片多状态与理由（含草稿/驳回/下架）。",
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CategoryBrief"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cover_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cover Url"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "current_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Version"
+          },
+          "download_count": {
+            "default": 0,
+            "title": "Download Count",
+            "type": "integer"
+          },
+          "file_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Size"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "offline_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Offline Reason"
+          },
+          "pending_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Version"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          },
+          "reject_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reject Reason"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ToolStatus"
+          },
+          "status_label": {
+            "default": "",
+            "title": "Status Label",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "tool_type": {
+            "$ref": "#/components/schemas/ToolType"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "version_seq": {
+            "default": 0,
+            "title": "Version Seq",
+            "type": "integer"
+          },
+          "view_count": {
+            "default": 0,
+            "title": "View Count",
+            "type": "integer"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/ToolVisibility"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "summary",
+          "tool_type",
+          "visibility",
+          "status"
+        ],
+        "title": "MyToolListItem",
+        "type": "object"
+      },
+      "MyToolListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MyToolListItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size",
+          "pages"
+        ],
+        "title": "MyToolListResponse",
+        "type": "object"
+      },
+      "OfflineRequest": {
+        "description": "下架（FR-APPR-10：理由必填）。",
+        "properties": {
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 5,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "OfflineRequest",
+        "type": "object"
+      },
+      "OfflineResponse": {
+        "properties": {
+          "approval_record_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Record Id"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "tool_id": {
+            "title": "Tool Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tool_id",
+          "status"
+        ],
+        "title": "OfflineResponse",
+        "type": "object"
+      },
+      "Page_ApprovalQueueItem_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ApprovalQueueItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size",
+          "pages"
+        ],
+        "title": "Page[ApprovalQueueItem]",
+        "type": "object"
+      },
+      "Page_ApprovalRecordOut_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ApprovalRecordOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size",
+          "pages"
+        ],
+        "title": "Page[ApprovalRecordOut]",
+        "type": "object"
+      },
+      "Page_DownloadLogOut_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DownloadLogOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size",
+          "pages"
+        ],
+        "title": "Page[DownloadLogOut]",
+        "type": "object"
+      },
+      "PendingVersionBrief": {
+        "properties": {
+          "changelog_md": {
+            "default": "",
+            "title": "Changelog Md",
+            "type": "string"
+          },
+          "file_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Name"
+          },
+          "file_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Sha256"
+          },
+          "file_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Size"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "version"
+        ],
+        "title": "PendingVersionBrief",
+        "type": "object"
+      },
+      "ProfileOut": {
+        "description": "`GET /me/profile` —— 资料 + 用量（docs/03 §2.4）。",
+        "properties": {
+          "auth_source": {
+            "title": "Auth Source",
+            "type": "string"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "last_login_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Login At"
+          },
+          "must_change_password": {
+            "title": "Must Change Password",
+            "type": "boolean"
+          },
+          "permissions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Permissions",
+            "type": "array"
+          },
+          "roles": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Roles",
+            "type": "array"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UsageOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "username",
+          "display_name",
+          "status",
+          "auth_source",
+          "must_change_password"
+        ],
+        "title": "ProfileOut",
+        "type": "object"
+      },
+      "ProfileUpdateRequest": {
+        "description": "`PATCH /me/profile` —— 只能改展示名与邮箱（FR-AUTH-11）。",
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          }
+        },
+        "title": "ProfileUpdateRequest",
+        "type": "object"
+      },
+      "PromptDetailInfo": {
+        "properties": {
+          "char_count": {
+            "title": "Char Count",
+            "type": "integer"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          }
+        },
+        "required": [
+          "content",
+          "char_count"
+        ],
+        "title": "PromptDetailInfo",
+        "type": "object"
+      },
+      "RejectRequest": {
+        "description": "docs/03 §3.10：`reason` 必填，长度 5~2000（FR-APPR-08 ≥5 字）。",
+        "properties": {
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 5,
+            "title": "Reason",
+            "type": "string"
+          },
+          "version_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Id"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "RejectRequest",
+        "type": "object"
+      },
+      "RejectResponse": {
+        "description": "docs/03 §3.10 的响应。\n\n注意 `status` 通常是 `approved` —— 驳回「新版本」时工具本身仍是已发布状态。",
+        "properties": {
+          "approval_record_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Record Id"
+          },
+          "pending_version": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PendingVersionBrief"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rejected_version": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SupersededVersionBrief"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "tool_id": {
+            "title": "Tool Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tool_id",
+          "status"
+        ],
+        "title": "RejectResponse",
+        "type": "object"
+      },
+      "RelistRequest": {
+        "description": "重新上架（FR-APPR-11：理由选填）。",
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "title": "RelistRequest",
+        "type": "object"
+      },
+      "RelistResponse": {
+        "properties": {
+          "approval_record_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Record Id"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "tool_id": {
+            "title": "Tool Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tool_id",
+          "status"
+        ],
+        "title": "RelistResponse",
+        "type": "object"
+      },
+      "SettingItem": {
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "is_public": {
+            "title": "Is Public",
+            "type": "boolean"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "max": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max"
+          },
+          "min": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min"
+          },
+          "options": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Options"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "updated_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SettingUpdatedBy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "value": {
+            "title": "Value"
+          },
+          "value_type": {
+            "$ref": "#/components/schemas/SettingValueType"
+          }
+        },
+        "required": [
+          "key",
+          "value",
+          "value_type",
+          "is_public"
+        ],
+        "title": "SettingItem",
+        "type": "object"
+      },
+      "SettingListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SettingItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/SettingWarning"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "SettingListResponse",
+        "type": "object"
+      },
+      "SettingUpdateItem": {
+        "properties": {
+          "key": {
+            "maxLength": 64,
+            "title": "Key",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value"
+          }
+        },
+        "required": [
+          "key",
+          "value"
+        ],
+        "title": "SettingUpdateItem",
+        "type": "object"
+      },
+      "SettingUpdateRequest": {
+        "description": "批量**部分**更新（docs/03 §3.13）。",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SettingUpdateItem"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "SettingUpdateRequest",
+        "type": "object"
+      },
+      "SettingUpdatedBy": {
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "title": "SettingUpdatedBy",
+        "type": "object"
+      },
+      "SettingValueType": {
+        "description": "docs/02 §3.19 `system_settings.value_type`",
+        "enum": [
+          "bool",
+          "int",
+          "string",
+          "json",
+          "list"
+        ],
+        "title": "SettingValueType",
+        "type": "string"
+      },
+      "SettingWarning": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "pending_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Count"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "SettingWarning",
+        "type": "object"
+      },
+      "SkillDetailInfo": {
+        "description": "`tool_type == \"skill\"` 时详情页的 `skill` 字段。\n\n**不返回完整 `readme_md` 与文件树** —— 它们可能很大，\n由 `GET /versions/{version}/skill-preview` 按需拉取（docs/03 §3.4）。",
+        "properties": {
+          "file_tree_summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SkillTreeSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "manifest": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manifest"
+          },
+          "parse_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parse Error"
+          },
+          "readme_md": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Readme Md"
+          }
+        },
+        "title": "SkillDetailInfo",
+        "type": "object"
+      },
+      "SkillPreviewResponse": {
+        "description": "docs/03 §3.5 的响应。",
+        "properties": {
+          "file_tree": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "File Tree",
+            "type": "array"
+          },
+          "file_tree_truncated": {
+            "default": false,
+            "title": "File Tree Truncated",
+            "type": "boolean"
+          },
+          "manifest": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manifest"
+          },
+          "readme_md": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Readme Md"
+          },
+          "total_size": {
+            "default": 0,
+            "title": "Total Size",
+            "type": "integer"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "title": "SkillPreviewResponse",
+        "type": "object"
+      },
+      "SkillTreeSummary": {
+        "properties": {
+          "file_count": {
+            "title": "File Count",
+            "type": "integer"
+          },
+          "max_depth": {
+            "title": "Max Depth",
+            "type": "integer"
+          },
+          "total_size": {
+            "title": "Total Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "file_count",
+          "total_size",
+          "max_depth"
+        ],
+        "title": "SkillTreeSummary",
+        "type": "object"
+      },
+      "SkillVersionInfo": {
+        "description": "版本上的 skill 附加信息（docs/03 §3.7 的 `skill` 字段）。",
+        "properties": {
+          "file_tree_summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SkillTreeSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "manifest": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manifest"
+          },
+          "parse_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parse Error"
+          }
+        },
+        "title": "SkillVersionInfo",
+        "type": "object"
+      },
+      "SubmitResponse": {
+        "properties": {
+          "approval_record_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Record Id"
+          },
+          "auto_approved": {
+            "default": false,
+            "title": "Auto Approved",
+            "type": "boolean"
+          },
+          "auto_approved_rule": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Approved Rule"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ToolStatus"
+          },
+          "tool_id": {
+            "title": "Tool Id",
+            "type": "integer"
+          },
+          "version_seq": {
+            "title": "Version Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tool_id",
+          "status",
+          "version_seq"
+        ],
+        "title": "SubmitResponse",
+        "type": "object"
+      },
+      "SupersededVersionBrief": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "version"
+        ],
+        "title": "SupersededVersionBrief",
+        "type": "object"
+      },
       "TagOut": {
         "description": "`GET /api/v1/tags` 列表项。\n\n`name` 是归一化后的键（小写、全角转半角），`display_name` 是首次创建时的\n原始写法（FR-TAX-03）。前端联想框展示 `display_name`，提交筛选时用任一个\n都可以 —— 服务端对 `?tag=` 入参会做同样的归一化。",
         "properties": {
@@ -402,6 +2840,340 @@
           "user"
         ],
         "title": "TokenResponse",
+        "type": "object"
+      },
+      "ToolCreateRequest": {
+        "description": "`POST /me/tools`（docs/03 §3.6 的校验规则）。",
+        "properties": {
+          "category_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Id"
+          },
+          "description_md": {
+            "default": "",
+            "maxLength": 100000,
+            "title": "Description Md",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "summary": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Summary",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 8,
+            "title": "Tags",
+            "type": "array"
+          },
+          "tool_type": {
+            "$ref": "#/components/schemas/ToolType"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/ToolVisibility",
+            "default": "public"
+          },
+          "webapp_health_url": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Webapp Health Url"
+          },
+          "webapp_url": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Webapp Url"
+          }
+        },
+        "required": [
+          "name",
+          "summary",
+          "tool_type"
+        ],
+        "title": "ToolCreateRequest",
+        "type": "object"
+      },
+      "ToolDetail": {
+        "description": "`GET /api/v1/tools/{slug}`（docs/03 §3.4）。\n\n`permissions` 是服务端算好的布尔值 —— 前端不重复实现权限逻辑。",
+        "properties": {
+          "acl": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/AclEntryOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acl"
+          },
+          "can_download": {
+            "default": false,
+            "title": "Can Download",
+            "type": "boolean"
+          },
+          "can_edit": {
+            "default": false,
+            "title": "Can Edit",
+            "type": "boolean"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CategoryBrief"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "current_version": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CurrentVersionDetail"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deleted At"
+          },
+          "description_html": {
+            "title": "Description Html",
+            "type": "string"
+          },
+          "description_md": {
+            "title": "Description Md",
+            "type": "string"
+          },
+          "download_count": {
+            "default": 0,
+            "title": "Download Count",
+            "type": "integer"
+          },
+          "history_version_count": {
+            "default": 0,
+            "title": "History Version Count",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "images": {
+            "items": {
+              "$ref": "#/components/schemas/ImageOut"
+            },
+            "title": "Images",
+            "type": "array"
+          },
+          "last_version_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Version At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "offline_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Offline Reason"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/UserBrief"
+          },
+          "pending_version": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CurrentVersionBrief"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "permissions": {
+            "$ref": "#/components/schemas/ToolPermissions"
+          },
+          "prompt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PromptDetailInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          },
+          "reject_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reject Reason"
+          },
+          "skill": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SkillDetailInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ToolStatus"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "tool_type": {
+            "$ref": "#/components/schemas/ToolType"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "version_count": {
+            "default": 0,
+            "title": "Version Count",
+            "type": "integer"
+          },
+          "view_count": {
+            "default": 0,
+            "title": "View Count",
+            "type": "integer"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/ToolVisibility"
+          },
+          "webapp_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Webapp Url"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "summary",
+          "description_md",
+          "description_html",
+          "tool_type",
+          "visibility",
+          "status",
+          "owner"
+        ],
+        "title": "ToolDetail",
         "type": "object"
       },
       "ToolFacets": {
@@ -607,6 +3379,91 @@
         "title": "ToolListResponse",
         "type": "object"
       },
+      "ToolPermissions": {
+        "description": "服务端算好的权限布尔值。\n\ndocs/03 §3.4 明确说这是刻意设计：「前端不需要自己实现一遍权限逻辑，\n直接读服务端给的布尔值」。服务端仍是唯一权威。",
+        "properties": {
+          "can_approve": {
+            "default": false,
+            "title": "Can Approve",
+            "type": "boolean"
+          },
+          "can_delete": {
+            "default": false,
+            "title": "Can Delete",
+            "type": "boolean"
+          },
+          "can_download": {
+            "default": false,
+            "title": "Can Download",
+            "type": "boolean"
+          },
+          "can_edit": {
+            "default": false,
+            "title": "Can Edit",
+            "type": "boolean"
+          },
+          "can_manage_versions": {
+            "default": false,
+            "title": "Can Manage Versions",
+            "type": "boolean"
+          },
+          "can_submit": {
+            "default": false,
+            "title": "Can Submit",
+            "type": "boolean"
+          },
+          "can_view_acl": {
+            "default": false,
+            "title": "Can View Acl",
+            "type": "boolean"
+          }
+        },
+        "title": "ToolPermissions",
+        "type": "object"
+      },
+      "ToolStatsResponse": {
+        "properties": {
+          "daily": {
+            "items": {
+              "$ref": "#/components/schemas/DailyStatPoint"
+            },
+            "title": "Daily",
+            "type": "array"
+          },
+          "download_count": {
+            "title": "Download Count",
+            "type": "integer"
+          },
+          "tool_id": {
+            "title": "Tool Id",
+            "type": "integer"
+          },
+          "view_count": {
+            "title": "View Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tool_id",
+          "download_count",
+          "view_count"
+        ],
+        "title": "ToolStatsResponse",
+        "type": "object"
+      },
+      "ToolStatus": {
+        "description": "docs/02 §3.8 `tools.status`（docs/01 §4.1 工具状态机）",
+        "enum": [
+          "draft",
+          "pending",
+          "approved",
+          "rejected",
+          "pending_update",
+          "offline"
+        ],
+        "title": "ToolStatus",
+        "type": "string"
+      },
       "ToolType": {
         "description": "docs/02 §3.8 `tools.tool_type`（D1：四种工具形态）",
         "enum": [
@@ -617,6 +3474,111 @@
         ],
         "title": "ToolType",
         "type": "string"
+      },
+      "ToolUpdateRequest": {
+        "description": "`PATCH /me/tools/{id}` —— 元信息变更，**不触发重新审批**（FR-TOOL-13）。\n\n所有字段可选，只更新传入的（局部更新语义）。",
+        "properties": {
+          "category_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Id"
+          },
+          "description_md": {
+            "anyOf": [
+              {
+                "maxLength": 100000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description Md"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 8,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          },
+          "visibility": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ToolVisibility"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "webapp_health_url": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Webapp Health Url"
+          },
+          "webapp_url": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Webapp Url"
+          }
+        },
+        "title": "ToolUpdateRequest",
+        "type": "object"
       },
       "ToolVisibility": {
         "description": "docs/02 §3.8 `tools.visibility`（D5：三级可见性）",
@@ -645,6 +3607,68 @@
           "count"
         ],
         "title": "TypeFacet",
+        "type": "object"
+      },
+      "UsageOut": {
+        "description": "用量与配额（FR-FILE-12 / `GET /me/stats`）。",
+        "properties": {
+          "download_count": {
+            "default": 0,
+            "title": "Download Count",
+            "type": "integer"
+          },
+          "draft_tool_count": {
+            "default": 0,
+            "title": "Draft Tool Count",
+            "type": "integer"
+          },
+          "pending_tool_count": {
+            "default": 0,
+            "title": "Pending Tool Count",
+            "type": "integer"
+          },
+          "platform_used_bytes": {
+            "default": 0,
+            "title": "Platform Used Bytes",
+            "type": "integer"
+          },
+          "published_tool_count": {
+            "default": 0,
+            "title": "Published Tool Count",
+            "type": "integer"
+          },
+          "quota_bytes": {
+            "default": 0,
+            "title": "Quota Bytes",
+            "type": "integer"
+          },
+          "tool_count": {
+            "default": 0,
+            "title": "Tool Count",
+            "type": "integer"
+          },
+          "total_quota_bytes": {
+            "default": 0,
+            "title": "Total Quota Bytes",
+            "type": "integer"
+          },
+          "used_bytes": {
+            "default": 0,
+            "title": "Used Bytes",
+            "type": "integer"
+          },
+          "used_percent": {
+            "default": 0.0,
+            "title": "Used Percent",
+            "type": "number"
+          },
+          "version_count": {
+            "default": 0,
+            "title": "Version Count",
+            "type": "integer"
+          }
+        },
+        "title": "UsageOut",
         "type": "object"
       },
       "UserBrief": {
@@ -795,6 +3819,462 @@
         ],
         "title": "ValidationError",
         "type": "object"
+      },
+      "VersionPatchRequest": {
+        "description": "PATCH `/me/tools/{tool_id}/versions/{version}` —— 只能改变更说明（FR-VER-11）。",
+        "properties": {
+          "changelog_md": {
+            "maxLength": 100000,
+            "title": "Changelog Md",
+            "type": "string"
+          }
+        },
+        "required": [
+          "changelog_md"
+        ],
+        "title": "VersionPatchRequest",
+        "type": "object"
+      },
+      "VersionStatus": {
+        "description": "docs/02 §3.11 `tool_versions.status`（docs/01 §4.2 版本状态机）",
+        "enum": [
+          "pending",
+          "approved",
+          "rejected",
+          "superseded",
+          "purged"
+        ],
+        "title": "VersionStatus",
+        "type": "string"
+      },
+      "VersionSummary": {
+        "description": "版本列表项 / `me/tools/{id}/versions` 的元素。\n\n`file_sha256` 在列表里给**前 16 位**（FR-VER-06），完整值在详情与下载接口里给。",
+        "properties": {
+          "approved_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved At"
+          },
+          "can_download": {
+            "default": false,
+            "title": "Can Download",
+            "type": "boolean"
+          },
+          "changelog_md": {
+            "title": "Changelog Md",
+            "type": "string"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "file_ext": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Ext"
+          },
+          "file_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Name"
+          },
+          "file_sha256_short": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Sha256 Short"
+          },
+          "file_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Size"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "is_current": {
+            "title": "Is Current",
+            "type": "boolean"
+          },
+          "mime_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mime Type"
+          },
+          "purged_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purged At"
+          },
+          "reject_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reject Reason"
+          },
+          "status": {
+            "$ref": "#/components/schemas/VersionStatus"
+          },
+          "tool_id": {
+            "title": "Tool Id",
+            "type": "integer"
+          },
+          "uploaded_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VersionUploader"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tool_id",
+          "version",
+          "changelog_md",
+          "status",
+          "is_current"
+        ],
+        "title": "VersionSummary",
+        "type": "object"
+      },
+      "VersionUploadResponse": {
+        "description": "docs/03 §3.7 的 201 响应。",
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "file_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Name"
+          },
+          "file_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Sha256"
+          },
+          "file_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Size"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "prompt_content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Content"
+          },
+          "skill": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SkillVersionInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/VersionStatus"
+          },
+          "tool_id": {
+            "title": "Tool Id",
+            "type": "integer"
+          },
+          "tool_status": {
+            "title": "Tool Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tool_id",
+          "version",
+          "status",
+          "tool_status"
+        ],
+        "title": "VersionUploadResponse",
+        "type": "object"
+      },
+      "VersionUploader": {
+        "description": "版本上传者（docs/03 §3.4 的 `current_version.uploaded_by`）。\n\n只有 `id` 与 `display_name` —— 不是完整的 UserBrief，按 docs 示例来。",
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "title": "VersionUploader",
+        "type": "object"
+      },
+      "WhitelistEntryIn": {
+        "properties": {
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "user_id"
+        ],
+        "title": "WhitelistEntryIn",
+        "type": "object"
+      },
+      "WhitelistEntryOut": {
+        "properties": {
+          "added_by_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Added By Id"
+          },
+          "added_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Added By Name"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "is_effective": {
+            "default": true,
+            "title": "Is Effective",
+            "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "integer"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          }
+        },
+        "required": [
+          "user_id"
+        ],
+        "title": "WhitelistEntryOut",
+        "type": "object"
+      },
+      "WithdrawResponse": {
+        "properties": {
+          "approval_record_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Record Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ToolStatus"
+          },
+          "tool_id": {
+            "title": "Tool Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tool_id",
+          "status"
+        ],
+        "title": "WithdrawResponse",
+        "type": "object"
       }
     }
   },
@@ -805,6 +4285,684 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/admin/approval-whitelist": {
+      "get": {
+        "operationId": "list_whitelist_api_v1_admin_approval_whitelist_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/WhitelistEntryOut"
+                  },
+                  "title": "Response List Whitelist Api V1 Admin Approval Whitelist Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "免审白名单",
+        "tags": [
+          "admin"
+        ]
+      },
+      "post": {
+        "operationId": "add_whitelist_api_v1_admin_approval_whitelist_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WhitelistEntryIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WhitelistEntryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "加入免审白名单",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/approval-whitelist/{user_id}": {
+      "delete": {
+        "operationId": "remove_whitelist_api_v1_admin_approval_whitelist__user_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Remove Whitelist Api V1 Admin Approval Whitelist  User Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "移出免审白名单",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/approvals": {
+      "get": {
+        "description": "`sort` 固定为提交时间**正序**（FR-APPR-05：先提交先处理），\n所以本接口不提供 sort 参数 —— 队列的顺序是业务规则，不是用户偏好。",
+        "operationId": "list_approvals_api_v1_admin_approvals_get",
+        "parameters": [
+          {
+            "description": "pending / pending_update / pending_all",
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "pending / pending_update / pending_all",
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tool_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tool Type"
+            }
+          },
+          {
+            "description": "按提交人 username 过滤",
+            "in": "query",
+            "name": "owner",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "按提交人 username 过滤",
+              "title": "Owner"
+            }
+          },
+          {
+            "description": "页码，从 1 开始",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "description": "页码，从 1 开始",
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "每页条数，1~200",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "description": "每页条数，1~200",
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_ApprovalQueueItem_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "审批队列",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/approvals/batch-approve": {
+      "post": {
+        "description": "**不提供批量驳回** —— 驳回必须逐条写理由（FR-APPR-09）。",
+        "operationId": "batch_approve_api_v1_admin_approvals_batch_approve_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchApproveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchApproveResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "批量批准",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/approvals/history": {
+      "get": {
+        "description": "可按工具、操作人、动作类型、时间范围筛选（FR-APPR-12）。",
+        "operationId": "approval_history_api_v1_admin_approvals_history_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tool_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tool Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "actor_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Actor Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "action",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Action"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date To"
+            }
+          },
+          {
+            "description": "页码，从 1 开始",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "description": "页码，从 1 开始",
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "每页条数，1~200",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "description": "每页条数，1~200",
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_ApprovalRecordOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "审批历史",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/approvals/{tool_id}/approve": {
+      "post": {
+        "operationId": "approve_api_v1_admin_approvals__tool_id__approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tool_id",
+            "required": true,
+            "schema": {
+              "title": "Tool Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApproveResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "批准",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/approvals/{tool_id}/offline": {
+      "post": {
+        "operationId": "offline_api_v1_admin_approvals__tool_id__offline_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tool_id",
+            "required": true,
+            "schema": {
+              "title": "Tool Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OfflineRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfflineResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "下架",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/approvals/{tool_id}/reject": {
+      "post": {
+        "description": "驳回。\n\n**注意返回的 `status`**：驳回「新版本」时工具仍是 `approved`\n（docs/03 §3.10 的语义陷阱），只有驳回首次提交才是 `rejected`。",
+        "operationId": "reject_api_v1_admin_approvals__tool_id__reject_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tool_id",
+            "required": true,
+            "schema": {
+              "title": "Tool Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RejectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RejectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "驳回",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/approvals/{tool_id}/relist": {
+      "post": {
+        "operationId": "relist_api_v1_admin_approvals__tool_id__relist_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tool_id",
+            "required": true,
+            "schema": {
+              "title": "Tool Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RelistRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelistResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "重新上架",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/settings": {
+      "get": {
+        "operationId": "get_settings_api_v1_admin_settings_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "系统设置",
+        "tags": [
+          "admin"
+        ]
+      },
+      "put": {
+        "description": "批量**部分**更新；任何一项非法则整体回滚（docs/03 §3.13）。",
+        "operationId": "put_settings_api_v1_admin_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "批量更新设置",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/api/v1/auth/change-password": {
       "post": {
         "description": "校验旧密码 → 强度校验 → 更新哈希 → 清 `must_change_password`\n→ 吊销该用户**全部其他 session**（FR-AUTH-10 / 契约 §3.2 ⑥）。\n\n同时清掉当前 refresh Cookie：契约 §3.2 ⑥ 要求「改密成功后强制用新密码\n重新登录」，而登录页挂载时会尝试 refresh。若 Cookie 还在，refresh 会成功\n并把用户静默弹回门户，与契约 §8 验收第 11 条冲突。",
@@ -1008,6 +5166,1040 @@
         "summary": "分类列表（含当前用户可见工具数）",
         "tags": [
           "portal"
+        ]
+      }
+    },
+    "/api/v1/images/{image_id}": {
+      "get": {
+        "description": "按 `?variant=thumb|full` 输出缩略图或原图。\n\n无权访问一律 **404**（不是 403）—— 与图片是否存在无关，\n避免用状态码差异探测资源。",
+        "operationId": "get_image_api_v1_images__image_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "image_id",
+            "required": true,
+            "schema": {
+              "title": "Image Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "variant",
+            "required": false,
+            "schema": {
+              "default": "full",
+              "pattern": "^(full|thumb)$",
+              "title": "Variant",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "图片获取（做可见性校验后输出文件）",
+        "tags": [
+          "portal"
+        ]
+      }
+    },
+    "/api/v1/me/downloads": {
+      "get": {
+        "operationId": "my_downloads_api_v1_me_downloads_get",
+        "parameters": [
+          {
+            "description": "页码，从 1 开始",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "description": "页码，从 1 开始",
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "每页条数，1~200",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "description": "每页条数，1~200",
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_DownloadLogOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "我的下载历史",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/profile": {
+      "get": {
+        "operationId": "get_profile_api_v1_me_profile_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "个人资料与用量",
+        "tags": [
+          "me"
+        ]
+      },
+      "patch": {
+        "description": "FR-AUTH-11：只允许改展示名与邮箱（username 创建后不可改）。",
+        "operationId": "update_profile_api_v1_me_profile_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "修改显示名与邮箱",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/stats": {
+      "get": {
+        "operationId": "get_my_stats_api_v1_me_stats_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "我的统计与配额",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/tools": {
+      "get": {
+        "description": "含草稿/待审/驳回/下架，**排除软删除**。",
+        "operationId": "list_my_tools_api_v1_me_tools_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "category",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Category"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sort"
+            }
+          },
+          {
+            "description": "页码，从 1 开始",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "description": "页码，从 1 开始",
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "每页条数，1~200",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "description": "每页条数，1~200",
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyToolListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "我的工具列表",
+        "tags": [
+          "me"
+        ]
+      },
+      "post": {
+        "description": "创建后是 `draft`，不进入审批队列；需要显式 submit。",
+        "operationId": "create_tool_api_v1_me_tools_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "创建工具草稿",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/tools/{tool_id}": {
+      "delete": {
+        "description": "**软删除**（FR-TOOL-10）：只置 `deleted_at`，存储文件延迟清理。\n\n软删除后立刻从所有列表消失（门户查询都带 `deleted_at IS NULL`）。",
+        "operationId": "delete_my_tool_api_v1_me_tools__tool_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tool_id",
+            "required": true,
+            "schema": {
+              "title": "Tool Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Delete My Tool Api V1 Me Tools  Tool Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "软删除工具",
+        "tags": [
+          "me"
+        ]
+      },
+      "get": {
+        "description": "含草稿、被驳回、已下架的详情。\n\n非 owner 但具备审批权限的人也能看（FR-APPR-06：审批人要能直接预览）。\n其他人一律 404。",
+        "operationId": "get_my_tool_api_v1_me_tools__tool_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tool_id",
+            "required": true,
+            "schema": {
+              "title": "Tool Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "我的工具详情",
+        "tags": [
+          "me"
+        ]
+      },
+      "patch": {
+        "description": "FR-TOOL-11：`pending` 状态下不可编辑 → 409 `TOOL_NOT_EDITABLE`。\n\nFR-TOOL-13：元信息变更**不触发重新审批**（只有版本内容变更才触发）。",
+        "operationId": "update_my_tool_api_v1_me_tools__tool_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tool_id",
+            "required": true,
+            "schema": {
+              "title": "Tool Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "编辑工具元信息",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/tools/{tool_id}/acl": {
+      "put": {
+        "operationId": "replace_acl_api_v1_me_tools__tool_id__acl_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tool_id",
+            "required": true,
+            "schema": {
+              "title": "Tool Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AclReplaceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AclResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "全量替换授权列表",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/tools/{tool_id}/images": {
+      "post": {
+        "description": "FR-FILE-09：png/jpg/jpeg/webp/gif，单张 ≤ 5 MB，封面 1 张、截图 ≤ 8 张。\n\n**必须校验真实格式**（Pillow 嗅探）而不是扩展名 —— 否则改名的可执行文件\n就能进存储。同时生成 480px 缩略图（FR-FILE-10）。",
+        "operationId": "upload_image_api_v1_me_tools__tool_id__images_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tool_id",
+            "required": true,
+            "schema": {
+              "title": "Tool Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_image_api_v1_me_tools__tool_id__images_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "上传封面或截图",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/tools/{tool_id}/images/{image_id}": {
+      "delete": {
+        "operationId": "delete_image_api_v1_me_tools__tool_id__images__image_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tool_id",
+            "required": true,
+            "schema": {
+              "title": "Tool Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "image_id",
+            "required": true,
+            "schema": {
+              "title": "Image Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Delete Image Api V1 Me Tools  Tool Id  Images  Image Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "删除图片",
+        "tags": [
+          "me"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_image_api_v1_me_tools__tool_id__images__image_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tool_id",
+            "required": true,
+            "schema": {
+              "title": "Tool Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "image_id",
+            "required": true,
+            "schema": {
+              "title": "Image Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImagePatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "更新图片信息",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/tools/{tool_id}/submit": {
+      "post": {
+        "operationId": "submit_my_tool_api_v1_me_tools__tool_id__submit_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tool_id",
+            "required": true,
+            "schema": {
+              "title": "Tool Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmitResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "提交审批",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/tools/{tool_id}/versions": {
+      "get": {
+        "operationId": "list_my_versions_api_v1_me_tools__tool_id__versions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tool_id",
+            "required": true,
+            "schema": {
+              "title": "Tool Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/VersionSummary"
+                  },
+                  "title": "Response List My Versions Api V1 Me Tools  Tool Id  Versions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "我的工具版本列表（含待审与已驳回）",
+        "tags": [
+          "me"
+        ]
+      },
+      "post": {
+        "description": "见 `version_service.create_version` 的 12 步顺序说明。",
+        "operationId": "upload_version_api_v1_me_tools__tool_id__versions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tool_id",
+            "required": true,
+            "schema": {
+              "title": "Tool Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_version_api_v1_me_tools__tool_id__versions_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionUploadResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "上传新版本（multipart，12 步顺序）",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/tools/{tool_id}/versions/{version}": {
+      "delete": {
+        "description": "FR-VER-09/10：当前版本不可删；只有 `pending` / `rejected` 可删。",
+        "operationId": "delete_version_api_v1_me_tools__tool_id__versions__version__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tool_id",
+            "required": true,
+            "schema": {
+              "title": "Tool Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "title": "Version",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Delete Version Api V1 Me Tools  Tool Id  Versions  Version  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "删除未过审的版本",
+        "tags": [
+          "me"
+        ]
+      },
+      "patch": {
+        "description": "FR-VER-11：**只有未过审的版本**可以改变更说明；\n已过审的版本内容不可改，只能发新版本。",
+        "operationId": "patch_version_api_v1_me_tools__tool_id__versions__version__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tool_id",
+            "required": true,
+            "schema": {
+              "title": "Tool Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "title": "Version",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VersionPatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "修改版本变更说明",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/tools/{tool_id}/withdraw": {
+      "post": {
+        "operationId": "withdraw_my_tool_api_v1_me_tools__tool_id__withdraw_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tool_id",
+            "required": true,
+            "schema": {
+              "title": "Tool Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WithdrawResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "撤回提交",
+        "tags": [
+          "me"
         ]
       }
     },
@@ -1274,6 +6466,302 @@
           }
         },
         "summary": "门户工具列表",
+        "tags": [
+          "portal"
+        ]
+      }
+    },
+    "/api/v1/tools/{slug}": {
+      "get": {
+        "description": "无权访问返回 **404**（不是 403）—— FR-FILE-08，避免探测资源存在性。\n\n浏览量在这里累加（内存计数器，不写库）。",
+        "operationId": "get_tool_detail_api_v1_tools__slug__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "工具详情",
+        "tags": [
+          "portal"
+        ]
+      }
+    },
+    "/api/v1/tools/{slug}/download": {
+      "get": {
+        "description": "走 ASGI `FileResponse`（sendfile 路径）。\n\n鉴权两条路径：\n  - `?ticket=` 有效票据 → 不需要 Authorization 头\n  - 否则常规凭证；匿名再看 `portal.allow_anonymous_view`\n\n`FileResponse` 自带 Range 支持（返回 206 + `Content-Range`），\n所以断点续传不用自己实现。",
+        "operationId": "download_tool_api_v1_tools__slug__download_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "description": "指定版本；不传则下载当前版本",
+            "in": "query",
+            "name": "version_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "指定版本；不传则下载当前版本",
+              "title": "Version Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "下载（支持 Range 断点续传）",
+        "tags": [
+          "portal"
+        ]
+      }
+    },
+    "/api/v1/tools/{slug}/download-ticket": {
+      "post": {
+        "description": "签发 60 秒有效的 HMAC 票据（docs/03 §3.15）。\n\n票据绑定 `user_id`：泄露给别人也用不了。允许在有效期内多次使用，\n因为浏览器会为 Range 请求或重试发多次请求。",
+        "operationId": "create_download_ticket_endpoint_api_v1_tools__slug__download_ticket_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "version_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Version Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadTicketResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "签发下载票据",
+        "tags": [
+          "portal"
+        ]
+      }
+    },
+    "/api/v1/tools/{slug}/stats": {
+      "get": {
+        "operationId": "tool_stats_api_v1_tools__slug__stats_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolStatsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "工具统计",
+        "tags": [
+          "portal"
+        ]
+      }
+    },
+    "/api/v1/tools/{slug}/versions": {
+      "get": {
+        "description": "对**有可见性权限的用户**开放（FR-VER-06）。\n\n`purged` 版本仍然出现在列表里但 `can_download=false` —— 界面显示「已归档」，\n而不是把它藏起来（那样用户会以为版本丢了）。",
+        "operationId": "list_tool_versions_api_v1_tools__slug__versions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/VersionSummary"
+                  },
+                  "title": "Response List Tool Versions Api V1 Tools  Slug  Versions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "版本列表（含待审、已驳回、已归档）",
+        "tags": [
+          "portal"
+        ]
+      }
+    },
+    "/api/v1/tools/{slug}/versions/{version}/skill-preview": {
+      "get": {
+        "operationId": "skill_preview_api_v1_tools__slug__versions__version__skill_preview_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "title": "Version",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillPreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Skill 包预览（manifest / readme / 文件树）",
         "tags": [
           "portal"
         ]

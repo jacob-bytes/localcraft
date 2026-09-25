@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from app.api.public import M2_TOTAL_ENDPOINTS
 from app.cli import cli
 from app.core.security import password_strength_errors
 
@@ -286,7 +287,7 @@ def test_list_users_shows_roles_and_storage(cli_db) -> None:
 # ---------------------------------------------------------------------------
 # export-openapi（监控方做契约比对用）
 # ---------------------------------------------------------------------------
-def test_export_openapi_writes_all_m1_paths(tmp_path) -> None:
+def test_export_openapi_writes_all_frozen_paths(tmp_path) -> None:
     output = tmp_path / "openapi.json"
     result = runner.invoke(cli, ["export-openapi", "--output", str(output)])
     assert result.exit_code == 0, result.output
@@ -299,7 +300,12 @@ def test_export_openapi_writes_all_m1_paths(tmp_path) -> None:
         for method in item
         if method in ("get", "post", "put", "patch", "delete")
     }
-    assert len(operations) == 12, sorted(operations)
+    # M1 的 12 个 + M2 的 38 个 = 50（契约 §6.1）
+    assert operations == set(M2_TOTAL_ENDPOINTS), (
+        f"多出: {sorted(operations - set(M2_TOTAL_ENDPOINTS))}\n"
+        f"缺失: {sorted(set(M2_TOTAL_ENDPOINTS) - operations)}"
+    )
+    assert len(operations) == 50
     assert ("GET", "/api/v1/tools") in operations
     assert ("POST", "/api/v1/auth/refresh") in operations
 

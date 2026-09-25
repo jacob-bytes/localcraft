@@ -30,3 +30,16 @@ typer
 # ---------- 文件与流式 IO ----------
 aiofiles
 python-multipart
+
+# ---------- 图片与 Markdown（M2 新增，三个都已在 docs 中出现）----------
+# Pillow：缩略图生成（480px）与真实图片格式校验（FR-FILE-09 / FR-FILE-10）。
+#   docs/05 §3.2 的原生扩展清单里明确列了它（C 扩展，双架构都需要 wheel）。
+Pillow
+# markdown-it-py：详情 Markdown → HTML（FR-TOOL-09 点名 markdown-it）
+markdown-it-py
+# bleach：HTML 消毒，白名单与前端一致（FR-TOOL-09 点名 bleach，二者择一统一）
+bleach
+# PyYAML：解析 SKILL.md 的 YAML frontmatter（FR-SKILL-02）。
+#   它本来就是 uvicorn[standard] 的传递依赖（docs/05 §3.2 有列），
+#   但现在是**直接**依赖，所以显式声明，不靠传递引入。
+PyYAML

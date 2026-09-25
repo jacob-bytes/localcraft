@@ -255,6 +255,17 @@ class ToolVersion(Base):
         DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
     )
 
+    # ---- 关系（M2 追加）----
+    # tools 与 tool_versions 之间有两条外键路径（tools.current_version_id →
+    # tool_versions.id，以及 tool_versions.tool_id → tools.id），
+    # 所以两个方向都必须显式给出 foreign_keys，否则 SQLAlchemy 无法判定。
+    tool: Mapped[Tool] = relationship(
+        foreign_keys=[tool_id], lazy="raise", viewonly=True
+    )
+    uploader: Mapped[User] = relationship(  # noqa: F821
+        foreign_keys=[uploaded_by_id], lazy="joined", viewonly=True
+    )
+
 
 class ToolImage(Base):
     """docs/02 §3.12 `tool_images`

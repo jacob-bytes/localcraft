@@ -1,13 +1,19 @@
-"""门户工具列表 Schema（docs/03 §3.3）。"""
+"""门户工具列表 Schema（docs/03 §3.3）。
+
+M2 追加了详情、创建/编辑请求与「我的工具」列表项，放在本文件末尾。
+"""
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.models.enums import ToolType, ToolVisibility
+from app.models.enums import ToolStatus, ToolType, ToolVisibility
+from app.schemas.acl import AclEntryOut, ToolPermissions
 from app.schemas.auth import UserBrief
 from app.schemas.common import OptionalUTCDateTime
+from app.schemas.me import ImageOut
 from app.schemas.taxonomy import CategoryBrief, CategoryFacet, TypeFacet
+from app.schemas.version import SkillTreeSummary, VersionDetail, VersionUploader
 
 
 class ToolListItem(BaseModel):
@@ -60,3 +66,228 @@ class ToolListResponse(BaseModel):
 
 #: `sort` 白名单 → 实际 ORDER BY 表达式（在 repository 里映射，绝不拼接用户输入）
 SORT_WHITELIST: frozenset[str] = frozenset({"hot", "new", "name", "-updated_at"})
+
+
+# ===========================================================================
+# M2：详情 / 创建 / 编辑
+# ===========================================================================
+class CurrentVersionDetail(VersionDetail):
+    """详情页的 `current_version`（docs/03 §3.4 的字段集）。"""
+
+    uploaded_by: VersionUploader | None = None
+
+
+class SkillDetailInfo(BaseModel):
+    """`tool_type == "skill"` 时详情页的 `skill` 字段。
+
+    **不返回完整 `readme_md` 与文件树** —— 它们可能很大，
+    由 `GET /versions/{version}/skill-preview` 按需拉取（docs/03 §3.4）。
+    """
+
+    manifest: dict | None = None
+    readme_md: str | None = None
+    file_tree_summary: SkillTreeSummary | None = None
+    parse_error: str | None = None
+
+
+class PromptDetailInfo(BaseModel):
+    content: str
+    char_count: int
+
+
+class ToolDetail(BaseModel):
+    """`GET /api/v1/tools/{slug}`（docs/03 §3.4）。
+
+    `permissions` 是服务端算好的布尔值 —— 前端不重复实现权限逻辑。
+    """
+
+    id: int
+    slug: str
+    name: str
+    summary: str
+    description_md: str
+    description_html: str
+    tool_type: ToolType
+    visibility: ToolVisibility
+    status: ToolStatus
+    category: CategoryBrief | None = None
+    tags: list[str] = Field(default_factory=list)
+    images: list[ImageOut] = Field(default_factory=list)
+    webapp_url: str | None = None
+    current_version: CurrentVersionDetail | None = None
+    pending_version: CurrentVersionBrief | None = None
+    version_count: int = 0
+    history_version_count: int = 0
+    download_count: int = 0
+    view_count: int = 0
+    owner: UserBrief
+    published_at: OptionalUTCDateTime = None
+    last_version_at: OptionalUTCDateTime = None
+    created_at: OptionalUTCDateTime = None
+    updated_at: OptionalUTCDateTime = None
+    reject_reason: str | None = None
+    offline_reason: str | None = None
+    deleted_at: OptionalUTCDateTime = None
+    #: 兼容 docs/03 §3.4 顶层的两个便捷布尔
+    can_download: bool = False
+    can_edit: bool = False
+    permissions: ToolPermissions = Field(default_factory=ToolPermissions)
+    acl: list[AclEntryOut] | None = None
+    #: 按类型附加
+    skill: SkillDetailInfo | None = None
+    prompt: PromptDetailInfo | None = None
+
+
+class CurrentVersionBrief(BaseModel):
+    id: int
+    version: str
+
+
+class ToolCreateRequest(BaseModel):
+    """`POST /me/tools`（docs/03 §3.6 的校验规则）。"""
+
+    name: str = Field(min_length=1, max_length=128)
+    summary: str = Field(min_length=1, max_length=500)
+    description_md: str = Field(default="", max_length=100_000)
+    tool_type: ToolType
+    category_id: int | None = None
+    tags: list[str] = Field(default_factory=list, max_length=8)
+    visibility: ToolVisibility = ToolVisibility.PUBLIC
+    webapp_url: str | None = Field(default=None, max_length=1024)
+    webapp_health_url: str | None = Field(default=None, max_length=1024)
+
+    @field_validator("tags")
+    @classmethod
+    def _check_tags(cls, v: list[str]) -> list[str]:
+        cleaned = [t.strip() for t in v if t and t.strip()]
+        if len(cleaned) > 8:
+            raise ValueError("标签不能超过 8 个")
+        for tag in cleaned:
+            if len(tag) > 64:
+                raise ValueError(f"标签过长: {tag[:20]}…")
+        return cleaned
+
+    @field_validator("webapp_url", "webapp_health_url")
+    @classmethod
+    def _check_url(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip()
+        if not v:
+            return None
+        if not (v.startswith("http://") or v.startswith("https://")):
+            raise ValueError("URL 必须以 http:// 或 https:// 开头")
+        return v
+
+    @model_validator(mode="after")
+    def _webapp_requires_url(self) -> ToolCreateRequest:
+        # FR-TOOL-05：webapp 必须填内网 URL
+        if self.tool_type == ToolType.WEBAPP and not self.webapp_url:
+            raise ValueError("webapp 类型必须填写 URL")
+        return self
+
+
+class ToolUpdateRequest(BaseModel):
+    """`PATCH /me/tools/{id}` —— 元信息变更，**不触发重新审批**（FR-TOOL-13）。
+
+    所有字段可选，只更新传入的（局部更新语义）。
+    """
+
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    summary: str | None = Field(default=None, min_length=1, max_length=500)
+    description_md: str | None = Field(default=None, max_length=100_000)
+    category_id: int | None = None
+    tags: list[str] | None = Field(default=None, max_length=8)
+    visibility: ToolVisibility | None = None
+    webapp_url: str | None = Field(default=None, max_length=1024)
+    webapp_health_url: str | None = Field(default=None, max_length=1024)
+
+    @field_validator("tags")
+    @classmethod
+    def _check_tags(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return None
+        cleaned = [t.strip() for t in v if t and t.strip()]
+        if len(cleaned) > 8:
+            raise ValueError("标签不能超过 8 个")
+        for tag in cleaned:
+            if len(tag) > 64:
+                raise ValueError(f"标签过长: {tag[:20]}…")
+        return cleaned
+
+    @field_validator("webapp_url", "webapp_health_url")
+    @classmethod
+    def _check_url(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip()
+        if not v:
+            return None
+        if not (v.startswith("http://") or v.startswith("https://")):
+            raise ValueError("URL 必须以 http:// 或 https:// 开头")
+        return v
+
+
+class MyToolListItem(BaseModel):
+    """`GET /me/tools` 的元素 —— 比门户卡片多状态与理由（含草稿/驳回/下架）。"""
+
+    id: int
+    slug: str
+    name: str
+    summary: str
+    tool_type: ToolType
+    visibility: ToolVisibility
+    status: ToolStatus
+    category: CategoryBrief | None = None
+    tags: list[str] = Field(default_factory=list)
+    cover_url: str | None = None
+    current_version: str | None = None
+    pending_version: str | None = None
+    file_size: int | None = None
+    download_count: int = 0
+    view_count: int = 0
+    version_seq: int = 0
+    reject_reason: str | None = None
+    offline_reason: str | None = None
+    published_at: OptionalUTCDateTime = None
+    created_at: OptionalUTCDateTime = None
+    updated_at: OptionalUTCDateTime = None
+    #: 状态说明（前端「我的工具」列表直接显示，避免自己拼文案）
+    status_label: str = ""
+
+
+class MyToolListResponse(BaseModel):
+    items: list[MyToolListItem]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class SubmitResponse(BaseModel):
+    tool_id: int
+    status: ToolStatus
+    version_seq: int
+    auto_approved: bool = False
+    auto_approved_rule: str | None = None
+    approval_record_id: int | None = None
+
+
+class WithdrawResponse(BaseModel):
+    tool_id: int
+    status: ToolStatus
+    approval_record_id: int | None = None
+
+
+class DownloadTicketResponse(BaseModel):
+    """docs/03 §3.15。"""
+
+    url: str
+    expires_at: OptionalUTCDateTime = None
+    file_name: str | None = None
+    file_size: int | None = None
+    file_sha256: str | None = None
+
+
+ToolDetail.model_rebuild()
+

@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, Request, Response
@@ -34,13 +35,36 @@ from app.core.errors import DomainError, NotFoundError, code_for_status, message
 from app.core.logging import configure_logging
 from app.core.request_id import resolve_request_id
 from app.core.timeutil import utcnow
-from app.db.session import SessionLocal
+from app.db.session import SessionLocal, engine
 from app.schemas.meta import HealthResponse, ReadyCheck, ReadyResponse
+from app.services.counter_service import get_counter_service
 
 configure_logging()
 logger = logging.getLogger("app.request")
 
+
+@asynccontextmanager
+async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+    """应用生命周期。
+
+    起停**计数器后台任务**：它在后台每 30 秒把内存里的下载/浏览增量落库。
+
+    关闭时（SIGTERM → uvicorn 优雅关闭 → lifespan 退出）必须 flush，
+    否则最后一批计数会丢 —— 这是契约 §11 第 5 条「内存聚合批量落库」的
+    配套要求，也是任务清单里的易错点第 18 条。
+    """
+    counters = get_counter_service()
+    await counters.start()
+    try:
+        yield
+    finally:
+        # 放在 finally 里：即使应用启动后抛异常，也要把已累计的计数落库
+        await counters.stop()
+        await engine.dispose()
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="selftool API",
     version=settings.selftool_version,
     description="selftool — 内网工具 / Skill 共享平台后端",

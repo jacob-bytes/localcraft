@@ -117,7 +117,7 @@ class Role(Base):
         primaryjoin="Role.id == UserRole.role_id",
         secondaryjoin="User.id == UserRole.user_id",
         back_populates="roles",
-        lazy="noload",
+        lazy="raise",
         viewonly=True,
     )
 

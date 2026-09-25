@@ -79,6 +79,48 @@ class Settings(BaseSettings):
     # ---------- 文档 ----------
     api_docs_enabled: bool = False
 
+    # ---------- 上传与解压防护（docs/05 §13.5 的五个限制 + 超时）----------
+    # 这些走**环境变量**而不是系统设置表：它们是安全基线，
+    # 不应该被一个「改设置」的请求在线放宽。docs/05 §13.5 也是按环境变量列的。
+    # 上传的**业务**上限（单文件 MB、截图数、标签数、配额）走系统设置表，
+    # 因为运营需要在管理台调整（docs/02 §3.19）。
+    #
+    # 解压后总体积上限：1 GB
+    unzip_max_total_size: int = 1024 * 1024 * 1024
+    # 压缩比上限：正常 zip 通常 < 20，200 足以识别炸弹
+    unzip_max_ratio: int = 200
+    # 条目数上限（防 inode 耗尽）
+    unzip_max_files: int = 5000
+    # 目录递归深度上限
+    unzip_max_depth: int = 16
+    # 单个条目解压后上限。
+    # 注意：docs/05 §13.5 的表格建议 100 MB，而 docs/01 FR-SKILL-05（P0 需求）
+    # 写的是 200 MB。这里取需求文档的 200 MB，需要更严时可改环境变量收紧。
+    unzip_max_file_size: int = 200 * 1024 * 1024
+    # 解压整体超时（秒）—— 防止「慢速炸弹」长时间占住 worker
+    unzip_timeout_seconds: int = 60
+
+    #: 上传文件大小上限的兜底值（系统设置 upload.max_file_size_mb 优先）
+    max_upload_size: int = 200 * 1024 * 1024
+    #: 允许上传的扩展名兜底值（系统设置 upload.allowed_extensions 优先）
+    allowed_extensions: list[str] = [
+        "zip", "tar.gz", "tgz", "whl", "tar", "gz", "7z", "rar",
+        "exe", "msi", "deb", "rpm", "sh", "py", "md", "txt",
+        "json", "yaml", "pdf", "png", "jpg",
+    ]
+
+    @property
+    def unzip_limits(self) -> dict[str, int]:
+        """打包给 `skill_service` 用，避免它到处读 settings。"""
+        return {
+            "max_total_size": self.unzip_max_total_size,
+            "max_ratio": self.unzip_max_ratio,
+            "max_files": self.unzip_max_files,
+            "max_depth": self.unzip_max_depth,
+            "max_file_size": self.unzip_max_file_size,
+            "timeout_seconds": self.unzip_timeout_seconds,
+        }
+
     @field_validator("log_level")
     @classmethod
     def _upper_log_level(cls, v: str) -> str:

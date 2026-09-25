@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -128,3 +130,96 @@ async def get_effective_str(session: AsyncSession, key: str, default: str = "") 
         fallback = SETTING_DEFAULTS_BY_KEY.get(key)
         return str(fallback[0]) if fallback else default
     return str(row.value)
+
+
+# ===========================================================================
+# M2：设置项元信息（docs/03 §3.13）
+# ===========================================================================
+@dataclass(frozen=True)
+class SettingSpec:
+    """设置项的**元信息**，用于驱动前端控件。
+
+    docs/03 §3.13 明确要求 options / min / max 由服务端下发，
+    「避免前端硬编码设置项的元信息」。
+    """
+
+    options: tuple[str, ...] | None = None
+    minimum: int | None = None
+    maximum: int | None = None
+
+
+#: key → 元信息。没列出的 key 没有额外约束（只做类型校验）。
+SETTING_SPECS: dict[str, SettingSpec] = {
+    "approval.mode": SettingSpec(options=("require", "auto_approve_all")),
+    "version.history_limit": SettingSpec(minimum=1, maximum=50),
+    "upload.max_file_size_mb": SettingSpec(minimum=1, maximum=2048),
+    "upload.max_screenshots": SettingSpec(minimum=0, maximum=20),
+    "upload.max_tags": SettingSpec(minimum=1, maximum=20),
+    "quota.per_user_mb": SettingSpec(minimum=0, maximum=1024 * 1024),
+    "quota.total_mb": SettingSpec(minimum=0, maximum=1024 * 1024),
+    "quota.warn_threshold_pct": SettingSpec(minimum=1, maximum=100),
+    "security.access_token_minutes": SettingSpec(minimum=1, maximum=1440),
+    "security.refresh_token_days": SettingSpec(minimum=1, maximum=365),
+    "security.login_max_failures": SettingSpec(minimum=1, maximum=20),
+    "security.lockout_minutes": SettingSpec(minimum=1, maximum=1440),
+    "portal.default_sort": SettingSpec(options=("hot", "new", "name")),
+    "portal.page_size": SettingSpec(minimum=1, maximum=200),
+    "stats.download_log_retention_days": SettingSpec(minimum=1, maximum=3650),
+    "stats.view_dedup_minutes": SettingSpec(minimum=0, maximum=1440),
+}
+
+
+def validate_setting_value(key: str, value: Any, value_type: str) -> str | None:
+    """校验单个设置值，返回错误信息；通过则返回 `None`。
+
+    四类校验：类型匹配 → 枚举合法 → 数值范围 → 非负。
+    （FR-CFG-04：设置项必须有类型校验与范围校验）
+    """
+    spec = SETTING_SPECS.get(key)
+
+    if value_type == "bool":
+        if not isinstance(value, bool):
+            return "必须是布尔值"
+    elif value_type == "int":
+        # 注意：bool 是 int 的子类，必须显式排除，否则 `true` 会被当成 1
+        if isinstance(value, bool) or not isinstance(value, int):
+            return "必须是整数"
+        if spec is not None:
+            if spec.minimum is not None and value < spec.minimum:
+                return f"不能小于 {spec.minimum}"
+            if spec.maximum is not None and value > spec.maximum:
+                return f"不能大于 {spec.maximum}"
+    elif value_type == "string":
+        if not isinstance(value, str):
+            return "必须是字符串"
+    elif value_type == "list":
+        if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
+            return "必须是字符串数组"
+    elif value_type == "json":
+        pass
+    else:
+        return f"未知的 value_type: {value_type}"
+
+    if spec is not None and spec.options is not None and value not in spec.options:
+        return f"只能是 {' / '.join(spec.options)} 之一"
+
+    return None
+
+
+async def get_row(session: AsyncSession, key: str) -> SystemSetting | None:
+    return await session.get(SystemSetting, key)
+
+
+async def update_value(
+    session: AsyncSession,
+    row: SystemSetting,
+    *,
+    value: Any,
+    updated_by_id: int | None,
+    now: datetime,
+) -> None:
+    """更新一项设置并记录修改人与时间（FR-CFG-02）。"""
+    row.value = value
+    row.updated_by_id = updated_by_id
+    row.updated_at = now
+    await session.flush()

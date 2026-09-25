@@ -350,3 +350,173 @@ async def get_by_slug(session: AsyncSession, slug: str) -> Tool | None:
         select(Tool).options(selectinload(Tool.tags)).where(Tool.slug == slug)
     )
     return result.scalar_one_or_none()
+
+
+# ===========================================================================
+# M2：详情、我的工具
+# ===========================================================================
+#: 门户详情允许的状态。
+#:
+#: 取**与门户列表相同的集合**（approved / pending_update）。理由：
+#: docs/01 §4.1 的状态表把 `draft`/`pending`/`rejected`/`offline` 的
+#: 「门户可见」一列全部标为「否」，其中 `offline` 特别注明「超管可见」——
+#: 而「owner 看到下架理由」这条需求（FR-APPR-10）明确走的是**个人中心**
+#: （`/me/tools/{id}`），不是门户详情页。
+#:
+#: 如果按 §4.3 步骤 1 的字面把 `offline` 放进门户可见集，会出现
+#: 「已下架工具仍能被任何知道 slug 的人打开」的结果，与 §4.1 直接冲突。
+#: 这里以 §4.1 的状态表为准，并在 checkpoint 报告里列出这个文档矛盾。
+DETAIL_VISIBLE_STATUSES: tuple[str, ...] = (
+    ToolStatus.APPROVED.value,
+    ToolStatus.PENDING_UPDATE.value,
+)
+
+
+def detail_scope_clause(visibility: VisibilityContext) -> ColumnElement[bool]:
+    """详情/二级资源的统一可见范围。
+
+    与门户**列表**的差别在于多了状态维度（docs/01 §4.3 步骤 1）：
+    未发布状态只对 owner 与超管可见。
+
+    `deleted_at IS NULL` 对所有角色都生效 —— 软删除的工具从任何入口都消失
+    （回收站是 M3 的超管功能）。
+    """
+    del visibility
+    # 状态与软删除对**所有角色**一视同仁：未发布/已下架的工具在门户一律不可见。
+    # 需要看草稿、驳回、下架的入口是 `/me/tools/{id}`（owner）与
+    # `/admin/approvals`（审批人），它们各自有独立的权限校验。
+    return and_(Tool.deleted_at.is_(None), Tool.status.in_(DETAIL_VISIBLE_STATUSES))
+
+
+async def get_visible_by_slug(
+    session: AsyncSession, slug: str, *, visibility: VisibilityContext
+) -> Tool | None:
+    """按 slug 取工具，**可见性判定下推到 SQL**。
+
+    无权访问返回 `None`（调用方转成 404）—— 而不是先查出来再在 Python 里判断，
+    也不是返回 403（FR-FILE-08：403 会泄露资源存在性）。
+
+    与 M1 的门户列表复用同一个 `VisibilityContext.clause()`，
+    保证「列表里看得到 = 详情能打开」。
+    """
+    stmt = (
+        select(Tool)
+        .options(selectinload(Tool.tags))
+        .where(Tool.slug == slug, detail_scope_clause(visibility))
+    )
+    vis = visibility.clause()
+    if vis is not None:
+        stmt = stmt.where(vis)
+    result = await session.execute(stmt)
+    return result.scalars().unique().one_or_none()
+
+
+async def get_visible_by_id(
+    session: AsyncSession, tool_id: int, *, visibility: VisibilityContext
+) -> Tool | None:
+    """按 id 取工具并做同样的可见性过滤（下载、图片等二级资源用）。"""
+    stmt = (
+        select(Tool)
+        .options(selectinload(Tool.tags))
+        .where(Tool.id == tool_id, detail_scope_clause(visibility))
+    )
+    vis = visibility.clause()
+    if vis is not None:
+        stmt = stmt.where(vis)
+    result = await session.execute(stmt)
+    return result.scalars().unique().one_or_none()
+
+
+async def slug_exists(session: AsyncSession, slug: str) -> bool:
+    result = await session.execute(select(Tool.id).where(Tool.slug == slug).limit(1))
+    return result.first() is not None
+
+
+async def list_owned_tools(
+    session: AsyncSession,
+    *,
+    owner_id: int,
+    statuses: list[str] | None = None,
+    q: str | None = None,
+    tool_types: list[str] | None = None,
+    category_slugs: list[str] | None = None,
+    sort: str = "-updated_at",
+    limit: int = 20,
+    offset: int = 0,
+) -> list[Tool]:
+    """`GET /me/tools` —— 含草稿/待审/驳回/下架，**排除软删除**。
+
+    与门户列表不同：这里不做可见性过滤（owner 看自己的全部），
+    但必须排除 `deleted_at`（软删除的工具只可能在回收站里，那是 M3）。
+    """
+    stmt = (
+        select(Tool)
+        .options(selectinload(Tool.tags))
+        .where(Tool.owner_id == owner_id, Tool.deleted_at.is_(None))
+    )
+    if statuses:
+        stmt = stmt.where(Tool.status.in_(statuses))
+    if tool_types:
+        stmt = stmt.where(Tool.tool_type.in_(tool_types))
+    if category_slugs:
+        stmt = stmt.where(
+            Tool.category_id.in_(
+                select(Category.id).where(Category.slug.in_(category_slugs))
+            )
+        )
+    if q:
+        pattern = f"%{q}%"
+        stmt = stmt.where(or_(Tool.name.ilike(pattern), Tool.summary.ilike(pattern)))
+
+    order_by = SORT_EXPRESSIONS.get(sort) or (
+        Tool.updated_at.desc(),
+        Tool.id.desc(),
+    )
+    return list(
+        (
+            await session.execute(stmt.order_by(*order_by).limit(limit).offset(offset))
+        )
+        .scalars()
+        .unique()
+        .all()
+    )
+
+
+async def count_owned_tools(
+    session: AsyncSession,
+    *,
+    owner_id: int,
+    statuses: list[str] | None = None,
+    q: str | None = None,
+    tool_types: list[str] | None = None,
+    category_slugs: list[str] | None = None,
+) -> int:
+    stmt = (
+        select(func.count())
+        .select_from(Tool)
+        .where(Tool.owner_id == owner_id, Tool.deleted_at.is_(None))
+    )
+    if statuses:
+        stmt = stmt.where(Tool.status.in_(statuses))
+    if tool_types:
+        stmt = stmt.where(Tool.tool_type.in_(tool_types))
+    if category_slugs:
+        stmt = stmt.where(
+            Tool.category_id.in_(
+                select(Category.id).where(Category.slug.in_(category_slugs))
+            )
+        )
+    if q:
+        pattern = f"%{q}%"
+        stmt = stmt.where(or_(Tool.name.ilike(pattern), Tool.summary.ilike(pattern)))
+    return int((await session.execute(stmt)).scalar_one())
+
+
+async def owner_status_counts(session: AsyncSession, owner_id: int) -> dict[str, int]:
+    """个人中心的状态分布（`GET /me/stats`）。"""
+    result = await session.execute(
+        select(Tool.status, func.count(Tool.id))
+        .where(Tool.owner_id == owner_id, Tool.deleted_at.is_(None))
+        .group_by(Tool.status)
+    )
+    return {str(row[0]): int(row[1]) for row in result.all()}

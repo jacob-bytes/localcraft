@@ -13,6 +13,16 @@ TOOLS = "/api/v1/tools"
 CATEGORIES = "/api/v1/categories"
 TAGS = "/api/v1/tags"
 
+#: 播种数据全部落在 cat-a 下；M2 的测试会往同一个库里加不带分类的工具，
+#: 因此所有**精确计数**断言都必须收敛到 cat-a，否则会互相污染。
+SEEDED_CATEGORY = "cat-a"
+
+
+def seeded_params(**extra) -> dict:
+    """带播种分类过滤的查询参数。"""
+    return {"category": SEEDED_CATEGORY, **extra}
+
+
 #: 各身份在门户里能看到的工具数（由 conftest 的播种数据决定）
 EXPECTED_VISIBLE = {
     "admin": 6,  # 超管 + allow_admin_view_private → 全部 approved 且未删除
@@ -44,7 +54,7 @@ async def test_anonymous_tools_requires_login_by_default(client) -> None:
 async def test_anonymous_tools_allowed_when_setting_enabled(client) -> None:
     await _set_setting("portal.allow_anonymous_view", True)
     try:
-        response = await client.get(TOOLS)
+        response = await client.get(TOOLS, params=seeded_params())
         assert response.status_code == 200, response.text
         body = response.json()
         # 匿名只能看到 public
@@ -88,7 +98,9 @@ async def test_page_size_bounds_are_inclusive(client, seeded) -> None:
 async def test_page_beyond_last_returns_empty_items_not_404(client, seeded) -> None:
     """docs/03 §1.5：超过最大页数返回空 items 而非 404。"""
     token = await login(client, "admin")
-    response = await client.get(TOOLS, params={"page": 9999}, headers=auth(token))
+    response = await client.get(
+        TOOLS, params=seeded_params(page=9999), headers=auth(token)
+    )
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["items"] == []
@@ -102,7 +114,7 @@ async def test_pagination_walks_the_full_set(client, seeded) -> None:
     page = 1
     while True:
         response = await client.get(
-            TOOLS, params={"page": page, "page_size": 2}, headers=auth(token)
+            TOOLS, params=seeded_params(page=page, page_size=2), headers=auth(token)
         )
         body = response.json()
         if not body["items"]:
@@ -156,7 +168,7 @@ async def test_tools_table_survives_sql_injection_attempt(client, seeded) -> Non
     """sort 只做白名单查表，非法值不可能进入 SQL。"""
     token = await login(client, "admin")
     await client.get(TOOLS, params={"sort": "name; DROP TABLE tools"}, headers=auth(token))
-    ok = await client.get(TOOLS, headers=auth(token))
+    ok = await client.get(TOOLS, params=seeded_params(), headers=auth(token))
     assert ok.status_code == 200
     assert ok.json()["total"] == EXPECTED_VISIBLE["admin"]
 
@@ -178,14 +190,15 @@ async def test_facets_are_visibility_filtered(client, seeded) -> None:
     """FR-TAX-07：facets 计数必须与当前用户可见性一致。"""
     for username, expected in EXPECTED_VISIBLE.items():
         token = await login(client, username)
-        response = await client.get(TOOLS, headers=auth(token))
+        response = await client.get(TOOLS, params=seeded_params(), headers=auth(token))
         facets = response.json()["facets"]
         category_counts = {c["slug"]: c["count"] for c in facets["categories"]}
         assert category_counts.get("cat-a") == expected, username
         # 所有分类的计数之和 == total
         assert sum(category_counts.values()) == response.json()["total"], username
-        # 类型 facet 之和同样等于 total
-        assert sum(t["count"] for t in facets["types"]) == expected, username
+        # 类型 facet 是**全部门户工具**的分布（不受分类筛选影响），
+        # 所以这里只能断言「不少于该身份在 cat-a 下看到的数量」
+        assert sum(t["count"] for t in facets["types"]) >= expected, username
 
 
 async def test_categories_endpoint_matches_facets(client, seeded) -> None:
@@ -193,7 +206,9 @@ async def test_categories_endpoint_matches_facets(client, seeded) -> None:
     for username in EXPECTED_VISIBLE:
         token = await login(client, username)
         categories = (await client.get(CATEGORIES, headers=auth(token))).json()
-        facets = (await client.get(TOOLS, headers=auth(token))).json()["facets"]["categories"]
+        facets = (
+            await client.get(TOOLS, params=seeded_params(), headers=auth(token))
+        ).json()["facets"]["categories"]
         assert {c["slug"]: c["tool_count"] for c in categories} == {
             c["slug"]: c["count"] for c in facets
         }, username
@@ -213,7 +228,9 @@ async def test_categories_exclude_inactive(client, seeded) -> None:
 @pytest.mark.parametrize("username", ["admin", "outsider", "approver", "viewer"])
 async def test_visibility_matrix(client, seeded, username: str) -> None:
     token = await login(client, username)
-    response = await client.get(TOOLS, params={"page_size": 200}, headers=auth(token))
+    response = await client.get(
+        TOOLS, params=seeded_params(page_size=200), headers=auth(token)
+    )
     slugs = {item["slug"] for item in response.json()["items"]}
 
     assert "deleted-public" not in slugs, "软删除的工具不得出现"
@@ -247,7 +264,9 @@ async def test_superadmin_private_visibility_respects_setting(client, seeded) ->
     await _set_setting("portal.allow_admin_view_private", False)
     try:
         token = await login(client, "admin")
-        response = await client.get(TOOLS, params={"page_size": 200}, headers=auth(token))
+        response = await client.get(
+            TOOLS, params=seeded_params(page_size=200), headers=auth(token)
+        )
         slugs = {item["slug"] for item in response.json()["items"]}
         assert "private-owned" not in slugs
         assert response.json()["total"] == EXPECTED_VISIBLE["admin"] - 1
@@ -258,12 +277,14 @@ async def test_superadmin_private_visibility_respects_setting(client, seeded) ->
 async def test_viewer_sees_but_cannot_download(client, seeded) -> None:
     """docs/01 §3.2：viewer 可浏览 public，但不能下载。"""
     token = await login(client, "viewer")
-    body = (await client.get(TOOLS, headers=auth(token))).json()
+    body = (await client.get(TOOLS, params=seeded_params(), headers=auth(token))).json()
     assert body["total"] > 0
     assert all(item["can_download"] is False for item in body["items"])
 
     admin_token = await login(client, "admin")
-    admin_body = (await client.get(TOOLS, headers=auth(admin_token))).json()
+    admin_body = (
+        await client.get(TOOLS, params=seeded_params(), headers=auth(admin_token))
+    ).json()
     assert all(item["can_download"] is True for item in admin_body["items"])
 
 
@@ -283,7 +304,9 @@ async def test_filter_by_category(client, seeded) -> None:
 async def test_filter_by_type_accepts_repeats(client, seeded) -> None:
     token = await login(client, "admin")
     response = await client.get(
-        TOOLS, params=[("type", "file"), ("type", "prompt")], headers=auth(token)
+        TOOLS,
+        params=[("category", SEEDED_CATEGORY), ("type", "file"), ("type", "prompt")],
+        headers=auth(token),
     )
     assert response.status_code == 200, response.text
     assert response.json()["total"] == EXPECTED_VISIBLE["admin"]
@@ -403,7 +426,9 @@ async def test_timestamps_are_iso8601_utc_with_z(client, seeded) -> None:
 
 async def test_pages_field_is_ceiling(client, seeded) -> None:
     token = await login(client, "admin")
-    body = (await client.get(TOOLS, params={"page_size": 4}, headers=auth(token))).json()
+    body = (
+        await client.get(TOOLS, params=seeded_params(page_size=4), headers=auth(token))
+    ).json()
     assert body["pages"] == 2  # ceil(6 / 4)
 
 

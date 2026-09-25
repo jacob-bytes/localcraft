@@ -19,7 +19,12 @@ from typing import Any
 
 from fastapi.routing import APIRoute
 
-from app.api.public import PASSWORD_GATE_EXEMPT_PREFIXES, PUBLIC_ENDPOINTS
+from app.api.public import (
+    M2_TOTAL_ENDPOINTS,
+    M3_FORBIDDEN_PREFIXES,
+    PASSWORD_GATE_EXEMPT_PREFIXES,
+    PUBLIC_ENDPOINTS,
+)
 from app.core.deps import AUTH_DEP_ATTR, PASSWORD_GATE_ATTR
 from app.main import app
 
@@ -148,34 +153,18 @@ def test_password_gate_exempt_prefixes_are_exactly_the_documented_ones() -> None
 
 
 # ---------------------------------------------------------------------------
-# M1 冻结接口清单（契约 §6）
+# M2 冻结接口清单（契约 §6 + §6.1）
 # ---------------------------------------------------------------------------
-M1_ENDPOINTS = {
-    ("GET", "/healthz"),
-    ("GET", "/readyz"),
-    ("GET", "/api/v1/meta"),
-    ("GET", "/api/v1/auth/provider"),
-    ("POST", "/api/v1/auth/login"),
-    ("POST", "/api/v1/auth/refresh"),
-    ("POST", "/api/v1/auth/logout"),
-    ("GET", "/api/v1/auth/me"),
-    ("POST", "/api/v1/auth/change-password"),
-    ("GET", "/api/v1/categories"),
-    ("GET", "/api/v1/tags"),
-    ("GET", "/api/v1/tools"),
-}
+def test_m2_surface_is_exactly_the_frozen_list() -> None:
+    """契约 §6.1：M1 的 12 个 + M2 的 38 个 = **50**。
 
-
-def test_m1_surface_is_exactly_the_frozen_list() -> None:
-    """契约 §6「M1 只实现这些」+ §12「明确不做」。
-
-    多出任何接口（工具详情、写接口、`/admin/*`）都应该在这里失败，
-    逼迫走契约 §9 的变更流程。
+    多出或缺少任何一个都应该在这里失败，逼迫走契约 §9 的变更流程。
     """
     actual = {(method, path) for method, path, _ in ALL_ROUTES}
-    assert actual == M1_ENDPOINTS, (
-        f"多出的接口（契约未冻结）: {sorted(actual - M1_ENDPOINTS)}\n"
-        f"缺失的接口: {sorted(M1_ENDPOINTS - actual)}"
+    assert len(M2_TOTAL_ENDPOINTS) == 50, "冻结清单本身应当是 50 条"
+    assert actual == set(M2_TOTAL_ENDPOINTS), (
+        f"多出的接口（契约未冻结）: {sorted(actual - set(M2_TOTAL_ENDPOINTS))}\n"
+        f"缺失的接口: {sorted(set(M2_TOTAL_ENDPOINTS) - actual)}"
     )
 
 
@@ -194,10 +183,49 @@ def test_spa_fallback_is_the_only_non_api_catch_all() -> None:
     assert all(not path.startswith("/api") for _m, path, _r in catch_alls)
 
 
-def test_no_admin_or_write_endpoints_in_m1() -> None:
-    """即使有人改了上面的清单，这条也独立兜住 M1 边界。"""
-    for method, path, _ in ALL_ROUTES:
-        assert not path.startswith("/api/v1/admin"), f"M1 不应有管理台接口: {path}"
-        if path.startswith("/api/v1/tools"):
-            assert method == "GET", f"M1 不应有工具写接口: {method} {path}"
-            assert path == "/api/v1/tools", f"M1 不应有工具详情接口: {path}"
+def test_no_m3_endpoints_in_m2() -> None:
+    """M2 的边界（契约 §6.1「M2 不做」）。
+
+    M1 时代的 `test_no_admin_or_write_endpoints_in_m1` 会被 M2 **合法地打破**
+    （工具详情与写接口本来就是 M2 的交付物），所以它在这里被替换成 M3 版本的断言。
+    """
+    leaked: list[str] = []
+    for _method, path, _route in ALL_ROUTES:
+        for prefix in M3_FORBIDDEN_PREFIXES:
+            if path.startswith(prefix):
+                leaked.append(path)
+                break
+    assert not leaked, f"M2 不应包含 M3 的接口: {sorted(set(leaked))}"
+
+
+def test_m2_portal_routes_are_read_only_except_ticket() -> None:
+    """门户侧只有 `download-ticket` 是写动作（签发票据），其余都是只读。"""
+    write_methods = {"POST", "PUT", "PATCH", "DELETE"}
+    for method, path, _route in ALL_ROUTES:
+        if not path.startswith("/api/v1/tools"):
+            continue
+        if method in write_methods:
+            assert path.endswith("/download-ticket"), f"门户侧意外的写接口: {method} {path}"
+
+
+def test_all_write_endpoints_declare_a_write_scope() -> None:
+    """写接口必须走 `tools:write` / `approvals:write` / `settings:write` 守卫。
+
+    这条防的是「新加的写接口只挂了 get_current_user」——
+    那样 API Token 会绕过 scope 限制。
+    """
+    write_methods = {"POST", "PUT", "PATCH", "DELETE"}
+    exempt = {
+        # 认证类：登录/刷新/登出/改密是自助操作，不走业务 scope
+        "/api/v1/auth/login",
+        "/api/v1/auth/refresh",
+        "/api/v1/auth/logout",
+        "/api/v1/auth/change-password",
+    }
+    for method, path, route in ALL_ROUTES:
+        if method not in write_methods or path in exempt:
+            continue
+        _, has_gate = _dependant_tree_flags(route)
+        assert has_gate, f"写接口缺少强制改密拦截: {method} {path}"
+        has_auth, _ = _dependant_tree_flags(route)
+        assert has_auth, f"写接口缺少鉴权依赖: {method} {path}"
