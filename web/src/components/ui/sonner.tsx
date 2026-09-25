@@ -1,0 +1,44 @@
+import {
+  CircleCheckIcon,
+  InfoIcon,
+  Loader2Icon,
+  OctagonXIcon,
+  TriangleAlertIcon,
+} from "lucide-react"
+import { Toaster as Sonner, type ToasterProps } from "sonner"
+
+import { useTheme } from "@/hooks/useTheme"
+
+/**
+ * shadcn's generated Toaster, rewired to the app's own theme context.
+ * The upstream template depends on `next-themes`, which this Vite SPA has no
+ * use for (docs/04 §1 — global state is user + theme via Context only).
+ */
+const Toaster = ({ ...props }: ToasterProps) => {
+  const { resolvedTheme } = useTheme()
+
+  return (
+    <Sonner
+      theme={resolvedTheme}
+      className="toaster group"
+      icons={{
+        success: <CircleCheckIcon className="size-4" />,
+        info: <InfoIcon className="size-4" />,
+        warning: <TriangleAlertIcon className="size-4" />,
+        error: <OctagonXIcon className="size-4" />,
+        loading: <Loader2Icon className="size-4 animate-spin" />,
+      }}
+      style={
+        {
+          "--normal-bg": "var(--popover)",
+          "--normal-text": "var(--popover-foreground)",
+          "--normal-border": "var(--border)",
+          "--border-radius": "var(--radius)",
+        } as React.CSSProperties
+      }
+      {...props}
+    />
+  )
+}
+
+export { Toaster }

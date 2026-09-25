@@ -1,0 +1,158 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@plugin "@tailwindcss/typography";
+
+/* Class-based dark mode: <html class="dark"> is set by the inline bootstrap in
+   index.html before React mounts (docs/04 §3.4). */
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  --font-sans: "Inter", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
+  --radius: 0.625rem;
+}
+
+/* ---------------------------------------------------------------------------
+   Design tokens (docs/04 §3.1). Primary = indigo/violet, neutrals = slate.
+   These are the single source of truth for colour; semantic usage rules are in
+   docs/04 §3.1 — primary = main action, success = published, warning = pending,
+   destructive = danger, muted = secondary info.
+   --------------------------------------------------------------------------- */
+:root {
+  --background: oklch(0.995 0 0);
+  --foreground: oklch(0.21 0.02 265);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.21 0.02 265);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.21 0.02 265);
+  --primary: oklch(0.51 0.19 275); /* indigo */
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.97 0.005 265);
+  --secondary-foreground: oklch(0.28 0.02 265);
+  --muted: oklch(0.97 0.005 265);
+  --muted-foreground: oklch(0.55 0.02 265);
+  --accent: oklch(0.96 0.02 275);
+  --accent-foreground: oklch(0.32 0.09 275);
+  --destructive: oklch(0.58 0.22 27);
+  --destructive-foreground: oklch(0.99 0 0);
+  --success: oklch(0.62 0.16 150);
+  --warning: oklch(0.75 0.15 75);
+  --border: oklch(0.92 0.005 265);
+  --input: oklch(0.92 0.005 265);
+  --ring: oklch(0.51 0.19 275);
+}
+
+.dark {
+  --background: oklch(0.17 0.015 265);
+  --foreground: oklch(0.95 0.005 265);
+  --card: oklch(0.21 0.015 265);
+  --card-foreground: oklch(0.95 0.005 265);
+  --popover: oklch(0.21 0.015 265);
+  --popover-foreground: oklch(0.95 0.005 265);
+  --primary: oklch(0.68 0.16 275);
+  --primary-foreground: oklch(0.16 0.02 265);
+  --secondary: oklch(0.26 0.015 265);
+  --secondary-foreground: oklch(0.95 0.005 265);
+  --muted: oklch(0.26 0.015 265);
+  --muted-foreground: oklch(0.68 0.015 265);
+  --accent: oklch(0.3 0.04 275);
+  --accent-foreground: oklch(0.92 0.02 275);
+  --destructive: oklch(0.65 0.19 25);
+  --destructive-foreground: oklch(0.16 0.02 265);
+  --success: oklch(0.7 0.15 150);
+  --warning: oklch(0.8 0.14 75);
+  --border: oklch(0.29 0.015 265);
+  --input: oklch(0.32 0.015 265);
+  --ring: oklch(0.68 0.16 275);
+}
+
+/* Expose the tokens above as Tailwind colour/radius utilities (bg-background,
+   text-muted-foreground, border-border, rounded-lg, …). */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* Radius scale derived from --radius (docs/04 §3.3) */
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Focus stays visible everywhere (docs/04 §8.1). Never `outline: none`
+     without a replacement indicator — shadcn components add their own ring,
+     this is the floor for everything else. */
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  /* Skip-to-content link: first Tab stop, hidden until focused (docs/04 §8.1) */
+  .skip-link {
+    position: fixed;
+    top: 0.5rem;
+    left: 0.5rem;
+    z-index: 100;
+    transform: translateY(-200%);
+    border-radius: var(--radius-md);
+    background-color: var(--primary);
+    color: var(--primary-foreground);
+    padding: 0.5rem 0.75rem;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    transition: transform 150ms ease;
+  }
+
+  .skip-link:focus-visible {
+    transform: translateY(0);
+  }
+}
+
+/* Respect users who ask for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

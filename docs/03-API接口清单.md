@@ -185,7 +185,7 @@
 | GET | `/api/v1/tools/{slug}/stats` | 该工具的统计（浏览量、下载量、趋势） |
 | GET | `/api/v1/categories` | 分类列表（含各分类可见工具数） |
 | GET | `/api/v1/tags` | 标签列表（支持前缀搜索，用于输入联想） |
-| GET | `/api/v1/images/{id}` | 图片获取（做可见性校验后输出文件） |
+| GET | `/api/v1/images/{id}` | 图片获取。**签名能力 URL**：接受 `?sig=`（HMAC，后端在列表/详情响应中下发）或 `Authorization` 头，两者都无返回 404。详见 `contracts/CONTRACT.md` §14.3 |
 
 ### 2.4 个人中心
 

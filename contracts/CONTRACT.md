@@ -411,3 +411,123 @@ M1 的唯一目标是：**一条打通「登录 → 恢复会话 → 门户列�
 5. 检查是否有越界改动（改了不属于自己的目录）
 6. 检查是否有未报告的依赖变更
 7. 通过后打一次 git commit 作为可回退点
+
+---
+
+## 14. M1 Checkpoint 裁定（前端，2025-03）
+
+前端 M1 交付后，监控方对账了 `web/src/api/types.ts` 与真实后端响应（逐字段 dump 比对），
+并对开发 agent 提出的 4 处偏差与 7 条待裁决作出如下裁定。**这些裁定是 M2 的输入，不要再议。**
+
+### 14.1 已实测通过的部分（无需动作）
+
+真实前后端联调 24 项检查中 23 项通过。特别确认：
+
+- **refresh cookie 的 `Path=/api/v1/auth` 在真实浏览器下工作正常**（F5 后会话恢复，不闪登录页）
+- **React 18 下无 ref 相关警告** —— shadcn 新模板的 React 19 写法回归已确实修复
+- `safeRedirectPath()` 实现正确（拒绝非 `/` 开头、`//`、反斜杠、换行）
+- `dist/` 中无 MSW 残留，首屏 gzip ≈ 225 KB（预算 500 KB）
+- SPA fallback 正确：未匹配深链返回 HTML 由前端路由接管；未匹配 `/api` 路径返回 **JSON 404**
+
+### 14.2 类型对账结果（裁定：以后端为准，补进 `docs/03`）
+
+| 接口 | 前端推断 | 后端实际 | 裁定 |
+| --- | --- | --- | --- |
+| `GET /auth/me` | 8 字段 | 11 字段（多 `status` / `last_login_at` / `created_at`） | 补进类型，三个字段均为 `string \| null`（`status` 除外，为 `"active" \| "disabled"`） |
+| `GET /auth/provider` | 3 字段 | 5 字段（多 `password_change_supported` / `refresh_supported`） | 补进类型，均为 `boolean` |
+| `GET /categories` | 8 字段 | 完全一致 | 冻结 |
+| `GET /tags` | 4 字段 | 完全一致 | 冻结 |
+| 旧密码错误 | `400 VALIDATION_ERROR` + `details.fields[{field:"old_password"}]` | 完全一致 | 冻结 |
+| **登出 / 改密成功** | **假定 204 无体** | **`200` + `{"status":"ok"}`** | **以后端为准：一律 `200` + `{"status":"ok"}`**。前端 `request<null>` 忽略响应体，两种都能跑，但类型与文档统一按 200 |
+
+### 14.3 裁定：图片改为签名能力 URL（原待裁决 2）
+
+**问题**：`<img>` 无法携带 `Authorization` 头；refresh cookie 又被限制在 `Path=/api/v1/auth`。
+若 `GET /api/v1/images/{id}` 强制鉴权，则**封面与截图在浏览器中永远 404**。这是一个真实的设计缺陷，
+不是前端 bug。
+
+**裁定**：复用本项目已有的下载票据模式，把图片 URL 改成**签名能力 URL**。
+
+- 后端在列表/详情响应里下发 `cover_url` / `thumb_url`，形如
+  `/api/v1/images/88?variant=thumb&sig=<hmac>`
+- `sig` = HMAC-SHA256(从 `SECRET_KEY` 派生的子密钥, `"{image_id}|{variant}"`)，有效期由
+  `images.signature_ttl_hours` 控制，**默认 168 小时（7 天）**
+- `GET /api/v1/images/{id}` 接受**两条鉴权路径**：有效 `sig`，**或**有效 `Authorization` 头
+  （后者供脚本/API 使用）。两者都无 → `404`
+- **已知取舍**：工具可见性被收紧后，此前签发的签名在 TTL 内仍有效。这是能力 URL 模型的固有性质，
+  用有界 TTL 限制影响面。若需立即失效，把 TTL 调小。
+- **M1 阶段**：后端还没实现该接口，`seed-demo` 下发的 `cover_url` 会 404。前端已实现 `onError`
+  降级为占位块，**验收 #7「无破图」在任何情况下都成立**，因此不阻塞。
+- **M2 阶段**：后端实现签名下发后，M1 的 6 次 404 自然消失。
+
+### 14.4 裁定：内联主题脚本用 sha256 而非 nonce（原待裁决 3）
+
+同意前端的建议 **(b)**。
+
+`dist/index.html` 是静态文件，无法携带每请求 nonce；为注入 nonce 而把 index.html 模板化，
+会破坏其可缓存性并让后端托管逻辑变复杂。该内联脚本内容固定，其 sha256 稳定。
+
+**同时修订 `docs/04` §3.4**：把「CSP 里用 nonce 放行」改为「用 sha256 哈希放行」，
+并在构建产物校验中记录该哈希（M3 的 nginx CSP 头按此配置）。
+
+### 14.5 裁定：react-router 保持 v6（原待裁决 4）
+
+- 实测 `npm audit --omit=dev` 为 **2 条 moderate**（agent 报告的 3 moderate + 1 high 含 dev 依赖），
+  且 `react-router` 6.x **无可用修复**（`No fix available`）
+- 纯 SPA 下 SSR hydration 那条公告**不适用**
+- 后斜杠开放重定向那条，应用侧已由 `safeRedirectPath()` 覆盖；项目中也未把用户可控字符串
+  传给 `<Link to>` 或 `useNavigate`
+- **裁定**：M1/M2 保持 v6；**M3 单独安排一次 RR7 升级**（`createBrowserRouter` 用法基本兼容），
+  同期修订 `docs/04` §1 的版本号。不把破坏性升级混在功能里程碑里
+
+### 14.6 裁定：扩种子数据以支持 UI 级分页验证（原待裁决 5）
+
+同意「不属前端问题」。M1 的 8 个工具在 12/24/48 档下 `pages` 恒为 1，分页控件不可见。
+
+- **监控方已验证**：用 URL 强制 `page_size=3` 时 `pages=3`，前端第 2 页渲染正常、facets=null 不崩
+  （联调 C1/C3 通过）。所以分页逻辑本身是好的，只是 UI 档位看不到
+- **M2 裁定**：后端 `seed-demo` 扩到 **26 个工具**（保留原 8 个作为边界子集，新增 18 个普通工具），
+  使 12/24/48 档分别得到 3/2/1 页，UI 级分页可验证
+- 同时补 3 个作者账号 `zhangsan` / `lisi` / `wangwu`（`Author@12345`，角色 `user`），
+  让 mock 与真实数据在「作者多样性」上一致（见 14.8）
+
+### 14.7 裁定：Badge 增加 warning / success 变体（原待裁决 6）
+
+前端的 amber 显式类实现视觉上没问题，但 `docs/04` 多处引用 `Badge variant="warning"`，
+且 M2 会大量使用（待审徽标、配额告警、新版待审角标）。
+
+**裁定**：在项目的 `web/src/components/ui/badge.tsx` 中**正式增加 `warning` 与 `success` 变体**
+（shadcn 模型下组件源码归项目所有，扩展变体是正确做法），当前 amber 样式即 `warning` 的实现。
+不要再用散落的显式颜色类。
+
+### 14.8 裁定：保留 mock 的额外作者账号（原待裁决 7）
+
+**保留** `zhangsan` / `lisi` / `wangwu`。单一作者的 mock 数据不真实，会掩盖「我的工具」过滤、
+所有权校验、作者展示等一类问题。这些数据只存在于 mock 中（已实测 `dist/` 无 MSW）。
+
+同时按 14.6 把同名的 3 个账号补进后端 `seed-demo`，使 mock 与真实环境一致。
+
+> `contracts/CONTRACT.md` §7 的「2 个账号」指的是**后端种子**的最小要求（`admin` + `newbie`），
+> 现扩充为 5 个（再加 3 个作者）。mock 与后端种子应保持一致，避免联调时出现「mock 有、真实没有」的错觉。
+
+### 14.9 裁定：`npx shadcn@latest add` 的回归必须有守卫（原偏差 1）
+
+前端的处理是对的，但「每次 add 都要重做」是个会持续复发的隐患。
+
+**裁定**：M2 增加一个仓库内检查脚本 `web/scripts/check-ui-primitives.mjs`，断言：
+
+1. 交互型原子组件（`button` / `input` / `select` / `checkbox` / `sheet` / `dialog` /
+   `alert-dialog` / `dropdown-menu` / `popover` / `tooltip`）都使用 `forwardRef`
+2. `src/lib/utils.ts` 的 `cn` 是本地 `clsx` + `tailwind-merge` 实现
+3. `package.json` 中不存在 `cn` 与 `next-themes` 依赖
+
+并把它挂到 `npm run lint` 或 `npm run verify` 里。这样「记得重做」变成「检查会失败」。
+
+### 14.10 裁定：其余偏差
+
+| 偏差 | 裁定 |
+| --- | --- |
+| 偏差 2：mock 的 refresh cookie 用 `Path=/` | **接受**。mock 无 HttpOnly 存储，且前端从不读 cookie。真实路径已实测正常（14.1） |
+| 偏差 3：⌘K 面板跳 `/?q=` 而非 `/tools/:slug` | **接受**，M1 正确取舍（详情页是 M2）。**M2 改为跳 `/tools/:slug`** |
+| 偏差 4：个人中心/管理后台以 disabled 项占位 | **接受**。不制造死链是正确做法。M2 启用「个人中心/我的工具」，M3 启用「管理后台」 |
+| 偏差 5：依赖增删（radix-ui 伞包、cmdk、shiki、typography、tw-animate-css、oxlint、playwright；移除 cn/next-themes） | **批准**。已核验 dist 无 MSW、首屏预算达标。新依赖用途明确 |

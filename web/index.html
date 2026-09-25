@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>工具与 Skill 平台</title>
+    <!--
+      Blocking inline theme bootstrap (docs/04 §3.4). This is the ONLY inline
+      script in the app: it runs before first paint so that a dark-theme user
+      never sees a white flash, and before React mounts.
+      It must stay in sync with `src/hooks/useTheme.tsx`
+      (localStorage key + "dark" class on <html>).
+    -->
+    <script>
+      (function () {
+        try {
+          var STORAGE_KEY = "selftool-theme";
+          var stored = window.localStorage.getItem(STORAGE_KEY);
+          var mode =
+            stored === "light" || stored === "dark" || stored === "system"
+              ? stored
+              : "system";
+          var isDark =
+            mode === "dark" ||
+            (mode === "system" &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          var root = document.documentElement;
+          root.classList.toggle("dark", isDark);
+          root.style.colorScheme = isDark ? "dark" : "light";
+        } catch (err) {
+          /* localStorage unavailable (private mode) — fall back to light theme */
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
