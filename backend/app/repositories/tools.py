@@ -55,6 +55,7 @@ class VisibilityContext:
 
     user_id: int | None = None
     group_ids: tuple[int, ...] = ()
+    roles: frozenset[str] = frozenset()
     is_superadmin: bool = False
     allow_admin_view_private: bool = True
 
@@ -62,6 +63,14 @@ class VisibilityContext:
     def sees_everything(self) -> bool:
         """超管 + `portal.allow_admin_view_private` → 可见全部工具（D32）。"""
         return self.user_id is not None and self.is_superadmin and self.allow_admin_view_private
+
+    @property
+    def is_approver(self) -> bool:
+        """是否具备审批角色（approver / superadmin）。
+
+        用于详情页的状态可见范围（contracts §15.5）：审批人需要预览待审与已下架工具。
+        """
+        return bool(self.roles & {"approver", "superadmin"})
 
     @property
     def is_anonymous(self) -> bool:
@@ -131,10 +140,12 @@ class VisibilityContext:
             from app.repositories import users as users_repo
 
             group_ids = await users_repo.group_ids_for_user(session, user_id)
+        role_set = frozenset(roles)
         return cls(
             user_id=user_id,
             group_ids=tuple(group_ids),
-            is_superadmin="superadmin" in set(roles),
+            roles=role_set,
+            is_superadmin="superadmin" in role_set,
             allow_admin_view_private=allow_admin_view_private,
         )
 
@@ -355,37 +366,52 @@ async def get_by_slug(session: AsyncSession, slug: str) -> Tool | None:
 # ===========================================================================
 # M2：详情、我的工具
 # ===========================================================================
-#: 门户详情允许的状态。
+#: 门户详情对**普通用户**开放的状态。
 #:
-#: 取**与门户列表相同的集合**（approved / pending_update）。理由：
 #: docs/01 §4.1 的状态表把 `draft`/`pending`/`rejected`/`offline` 的
-#: 「门户可见」一列全部标为「否」，其中 `offline` 特别注明「超管可见」——
-#: 而「owner 看到下架理由」这条需求（FR-APPR-10）明确走的是**个人中心**
-#: （`/me/tools/{id}`），不是门户详情页。
-#:
-#: 如果按 §4.3 步骤 1 的字面把 `offline` 放进门户可见集，会出现
-#: 「已下架工具仍能被任何知道 slug 的人打开」的结果，与 §4.1 直接冲突。
-#: 这里以 §4.1 的状态表为准，并在 checkpoint 报告里列出这个文档矛盾。
+#: 「门户可见」一列标为「否」，所以普通人只能看到这两个。
 DETAIL_VISIBLE_STATUSES: tuple[str, ...] = (
     ToolStatus.APPROVED.value,
     ToolStatus.PENDING_UPDATE.value,
+)
+
+#: **审批人**额外可见的状态（contracts §15.5，配套修订后的 docs/01 §4.3 第 1 步）。
+#:
+#: 这解决了「§4.3 第 1 步只给 owner 与 superadmin / FR-APPR-06 又要求审批人能预览」
+#: 的文档自相矛盾：审批人的预览入口就从这里走，`/me/tools/*` 则收为 owner 命名空间。
+#: `draft` **不在内** —— 未提交的草稿没有审批理由可见。
+APPROVER_VISIBLE_STATUSES: tuple[str, ...] = (
+    ToolStatus.PENDING.value,
+    ToolStatus.PENDING_UPDATE.value,
+    ToolStatus.OFFLINE.value,
+    ToolStatus.APPROVED.value,
 )
 
 
 def detail_scope_clause(visibility: VisibilityContext) -> ColumnElement[bool]:
     """详情/二级资源的统一可见范围。
 
-    与门户**列表**的差别在于多了状态维度（docs/01 §4.3 步骤 1）：
-    未发布状态只对 owner 与超管可见。
+    与门户**列表**的差别在于多了状态维度与角色维度（docs/01 §4.3 步骤 1，
+    按 contracts §15.5 修订后）：
+
+      - 所有人：`approved` / `pending_update`
+      - 审批人（approver / superadmin）：额外可见 `pending` / `offline`
+      - `draft` 与 `rejected`：**任何角色**都不通过门户详情暴露
+        （owner 走 `/me/tools/{id}`）
+      - 超管：可见任意状态
 
     `deleted_at IS NULL` 对所有角色都生效 —— 软删除的工具从任何入口都消失
-    （回收站是 M3 的超管功能）。
+    （回收站走 `/admin/recycle-bin`）。
     """
-    del visibility
-    # 状态与软删除对**所有角色**一视同仁：未发布/已下架的工具在门户一律不可见。
-    # 需要看草稿、驳回、下架的入口是 `/me/tools/{id}`（owner）与
-    # `/admin/approvals`（审批人），它们各自有独立的权限校验。
-    return and_(Tool.deleted_at.is_(None), Tool.status.in_(DETAIL_VISIBLE_STATUSES))
+    clauses: list[ColumnElement[bool]] = [Tool.deleted_at.is_(None)]
+    if visibility.is_superadmin:
+        return and_(*clauses)
+
+    allowed = set(DETAIL_VISIBLE_STATUSES)
+    if visibility.is_approver:
+        allowed |= set(APPROVER_VISIBLE_STATUSES)
+    clauses.append(Tool.status.in_(tuple(allowed)))
+    return and_(*clauses)
 
 
 async def get_visible_by_slug(

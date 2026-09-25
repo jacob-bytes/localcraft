@@ -261,15 +261,15 @@ async def skill_preview(
         raise NotFoundError(message="资源不存在")
 
     tree = row.skill_file_tree or []
-    file_count = sum(1 for item in tree if not item.get("is_dir"))
     total_size = sum(int(item.get("size") or 0) for item in tree)
     return SkillPreviewResponse(
         version=row.version,
         manifest=row.skill_manifest,
         readme_md=row.skill_readme_md,
         file_tree=tree,
-        # 存储时按 FILE_TREE_MAX_ENTRIES 截断，真实条数仍在（见 skill_service）
-        file_tree_truncated=len(tree) >= 1 and file_count < len(tree),
+        # 直接读持久化列（contracts §15.3）。M2 用 `file_count < len(tree)` 推断，
+        # 因为「文件数」与「含目录的条目数」口径不一致，在所有小包上误报 true。
+        file_tree_truncated=bool(row.skill_tree_truncated),
         total_size=total_size,
     )
 

@@ -100,7 +100,9 @@ def bearer_token(request: Request) -> str | None:
     return None
 
 
-async def _principal_from_api_token(session: AsyncSession, token: str) -> Principal:
+async def _principal_from_api_token(
+    session: AsyncSession, token: str, *, request: Request | None = None
+) -> Principal:
     """API Token 鉴权（docs/02 §3.15 / docs/03 §1.3）。
 
     - 先按 `token_hash` 点查（唯一索引命中）
@@ -125,6 +127,15 @@ async def _principal_from_api_token(session: AsyncSession, token: str) -> Princi
         raise UnauthenticatedError("API Token 的创建者不存在")
     if creator.status != UserStatus.ACTIVE.value:
         raise AccountDisabledError()
+
+    # FR-API-05：记录 last_used_at / last_used_ip。
+    # 走内存聚合批量落库（禁止逐请求 UPDATE —— SQLite 单写者，会打死写锁）。
+    from app.services.counter_service import get_counter_service
+
+    client_ip = None
+    if request is not None and request.client is not None:
+        client_ip = request.client.host
+    get_counter_service().record_token_use(row.id, ip=client_ip)
 
     creator_perms = permissions_for_roles(creator.role_codes)
     token_scopes = set(row.scopes or [])
@@ -171,7 +182,7 @@ async def resolve_principal(request: Request, session: AsyncSession) -> Principa
         return None
 
     if token.startswith(API_TOKEN_PREFIX):
-        principal = await _principal_from_api_token(session, token)
+        principal = await _principal_from_api_token(session, token, request=request)
         request.state.user_id = principal.user_id
         return principal
 

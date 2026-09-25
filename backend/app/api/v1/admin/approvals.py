@@ -178,6 +178,7 @@ async def list_approvals(
                 },
                 submitted_at=submitted_at,
                 waiting_hours=waiting_hours,
+                version_seq=tool.version_seq,
             )
         )
 

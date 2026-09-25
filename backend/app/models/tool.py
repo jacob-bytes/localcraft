@@ -237,6 +237,14 @@ class ToolVersion(Base):
     skill_readme_md: Mapped[str | None] = mapped_column(Text, nullable=True)
     skill_manifest: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     skill_file_tree: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    #: 文件树是否因超过 `FILE_TREE_MAX_ENTRIES` 被截断。
+    #:
+    #: **必须持久化**：它无法从存储的数据推导出来（推导所需的真实条目总数在
+    #: 截断的那一刻就丢了）。这与 `is_current` 那类「可从别处推导」的冗余字段
+    #: 性质不同 —— 详见 contracts/CONTRACT.md §15.3。
+    skill_tree_truncated: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
     skill_parse_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     uploaded_by_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False

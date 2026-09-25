@@ -287,6 +287,7 @@ async def _persist_version(
         record.skill_manifest = parse_result.manifest
         record.skill_readme_md = parse_result.readme_md
         record.skill_file_tree = parse_result.file_tree
+        record.skill_tree_truncated = parse_result.file_tree_truncated
         record.skill_parse_error = parse_result.parse_error
     session.add(record)
     await session.flush()

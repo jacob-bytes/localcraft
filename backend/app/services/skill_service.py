@@ -101,10 +101,11 @@ class SkillParseResult:
     skill_md_path: str | None = None
     #: 目录条目数（文件树里 is_dir=True 的条数）。真实条目总数 = file_count + dir_count。
     dir_count: int = 0
-
-    @property
-    def file_tree_truncated(self) -> bool:
-        return self.file_count + self.dir_count > len(self.file_tree)
+    #: 文件树是否被截断。**解析时算好并持久化**，不要事后从树里推断：
+    #: 旧实现用 `file_count + dir_count > len(tree)` 推断，但 `file_count`
+    #: 只统计**文件**而 `len(tree)` 同时含目录条目，口径不一致，
+    #: 导致「3 个条目的包」也被误判成截断（contracts §15.3 的实测发现）。
+    file_tree_truncated: bool = False
 
     def tree_summary(self) -> dict[str, Any]:
         """docs/03 §3.4 的 `skill.file_tree_summary`。"""
@@ -330,7 +331,9 @@ def parse_skill_package(zip_path: Path, *, limits: SkillLimits | None = None) ->
             tree.append({"path": directory, "size": 0, "is_dir": True, "sha256": None})
         tree.sort(key=lambda item: (item["path"], item["is_dir"]))
 
-        truncated = len(tree) > FILE_TREE_MAX_ENTRIES
+        # 真实条目总数 = 文件 + 目录（此刻都还完整），与存储上限比较
+        total_entries = len(tree)
+        truncated = total_entries > FILE_TREE_MAX_ENTRIES
         stored_tree = tree[:FILE_TREE_MAX_ENTRIES]
 
         logger.info(
@@ -353,8 +356,8 @@ def parse_skill_package(zip_path: Path, *, limits: SkillLimits | None = None) ->
             max_depth=max_depth,
             skill_md_path=skill_md_path,
             dir_count=len(directories),
+            file_tree_truncated=truncated,
         )
-        result.dir_count = len(directories)
         return result
 
 

@@ -887,5 +887,219 @@ def gen_password() -> None:
             return
 
 
+# ---------------------------------------------------------------------------
+# M3 补全：批量导入导出 / Token 签发 / 清理任务
+# ---------------------------------------------------------------------------
+@cli.command("import-users")
+def import_users_cmd(
+    csv_path: Path = typer.Argument(..., exists=True, readable=True, help="CSV 文件路径"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="只预演，不写库"),
+    on_conflict: str = typer.Option("skip", "--on-conflict", help="skip / update / fail"),
+) -> None:
+    """离线批量导入用户（FR-API-14：运维在服务器上直接执行，无需依赖 HTTP）。"""
+    _run(_import_users(csv_path, dry_run, on_conflict))
+
+
+async def _import_users(csv_path: Path, dry_run: bool, on_conflict: str) -> None:
+    from app.services import import_export_service
+
+    content = csv_path.read_bytes()
+    async with SessionLocal() as session:
+        result = await import_export_service.import_users_csv(
+            session, content=content, dry_run=dry_run, on_conflict=on_conflict
+        )
+    await _dispose()
+
+    _ok(
+        f"导入完成 dry_run={result.dry_run} 成功={result.succeeded} "
+        f"失败={result.failed} 跳过={result.skipped}"
+    )
+    for item in result.errors[:50]:
+        typer.echo(f"  第 {item.row} 行 {item.field or '-'}: {item.message}")
+    if result.generated_passwords:
+        # 明文只打印到这里，**不进日志**。
+        typer.secho("  生成的初始密码（请立即转交用户，不会再次显示）:", fg=typer.colors.YELLOW)
+        for generated in result.generated_passwords:
+            typer.echo(f"    {generated.username} / {generated.password}")
+
+
+@cli.command("export-users")
+def export_users_cmd(
+    csv_path: Path = typer.Argument(..., help="输出 CSV 路径"),
+) -> None:
+    """离线导出用户（带 UTF-8 BOM，Excel 打开中文不乱码）。"""
+    _run(_export_users(csv_path))
+
+
+async def _export_users(csv_path: Path) -> None:
+    from app.services import import_export_service
+
+    async with SessionLocal() as session:
+        chunks = [chunk async for chunk in _aiter(session, import_export_service)]
+    csv_path.write_text("".join(chunks), encoding="utf-8")
+    await _dispose()
+    _ok(f"已导出 {csv_path}（前 3 字节应为 UTF-8 BOM: {csv_path.read_bytes()[:3]!r}）")
+
+
+async def _aiter(session: Any, module: Any) -> Any:
+    for chunk in module.export_users_csv(session):
+        yield chunk
+
+
+@cli.command("create-token")
+def create_token_cmd(
+    name: str = typer.Option(..., "--name", help="Token 名称，如「CI 发布脚本」"),
+    scopes: str = typer.Option(
+        "tools:read", "--scopes", help="逗号分隔，如 tools:read,tools:write"
+    ),
+    username: str = typer.Option("admin", "--username", help="以哪个超管的身份签发"),
+    note: str | None = typer.Option(None, "--note", help="备注"),
+    expires_days: int = typer.Option(90, "--expires-days", help="有效天数，0 表示永不过期"),
+) -> None:
+    """离线签发 API Token（服务器上应急用）。
+
+    明文只打印一次 —— 请立即复制保存。
+    """
+    _run(_create_token(name, scopes, username, note, expires_days))
+
+
+async def _create_token(
+    name: str, scopes: str, username: str, note: str | None, expires_days: int
+) -> None:
+    from datetime import timedelta
+
+    from app.core.security import generate_api_token
+    from app.repositories import api_tokens as tokens_repo
+
+    scope_list = [s.strip() for s in scopes.split(",") if s.strip()]
+    async with SessionLocal() as session:
+        user = await _get_user(session, username)
+        plaintext = generate_api_token()
+        now = utcnow()
+        row = await tokens_repo.create(
+            session,
+            name=name,
+            plaintext=plaintext,
+            scopes=scope_list,
+            created_by_id=user.id,
+            expires_at=(now + timedelta(days=expires_days)) if expires_days > 0 else None,
+            now=now,
+        )
+        await session.commit()
+        token_id, prefix = row.id, row.token_prefix
+
+    await _dispose()
+    _ok(f"已签发 Token id={token_id} prefix={prefix} scopes={scope_list}")
+    typer.secho(f"\n  {plaintext}\n", fg=typer.colors.YELLOW, bold=True)
+    typer.secho("  请立即复制保存 —— 此 Token 不会再次显示。", fg=typer.colors.YELLOW)
+
+
+@cli.command("revoke-tokens")
+def revoke_tokens_cmd(
+    username: str = typer.Option(..., "--user", help="要吊销全部 Token 的用户"),
+) -> None:
+    """一键吊销某用户的全部 API Token（docs/05 §13.8 的轮换要求）。"""
+    _run(_revoke_tokens(username))
+
+
+async def _revoke_tokens(username: str) -> None:
+    from app.repositories import api_tokens as tokens_repo
+
+    async with SessionLocal() as session:
+        user = await _get_user(session, username)
+        count = await tokens_repo.revoke_all_for_user(
+            session, user.id, revoked_by_id=user.id, now=utcnow()
+        )
+        await session.commit()
+    await _dispose()
+    _ok(f"已吊销 {username} 的 {count} 个 API Token")
+
+
+@cli.command("purge-recycle-bin")
+def purge_recycle_bin_cmd(
+    days: int = typer.Option(30, "--days", help="软删除超过多少天的工具被彻底清除"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="只列出，不删除"),
+) -> None:
+    """手动清理回收站（docs/02 §5 的每日任务也走同一段逻辑）。"""
+    _run(_purge_recycle_bin(days, dry_run))
+
+
+async def _purge_recycle_bin(days: int, dry_run: bool) -> None:
+    from app.services import admin_tool_service
+
+    async with SessionLocal() as session:
+        if dry_run:
+            from datetime import timedelta
+
+            from sqlalchemy import select
+
+            from app.models.tool import Tool
+
+            cutoff = utcnow() - timedelta(days=days)
+            result = await session.execute(
+                select(Tool.id, Tool.slug)
+                .where(Tool.deleted_at.is_not(None), Tool.deleted_at < cutoff)
+                .order_by(Tool.deleted_at.asc())
+            )
+            rows = result.all()
+            _ok(f"回收站中超过 {days} 天的工具有 {len(rows)} 个（dry-run，未删除）")
+            for tool_id, slug in rows[:50]:
+                typer.echo(f"  {tool_id}  {slug}")
+        else:
+            purged = await admin_tool_service.purge_expired_recycle_bin(
+                session, older_than_days=days
+            )
+            _ok(f"已彻底清除 {len(purged)} 个工具（含磁盘文件）")
+
+
+@cli.command("gc-versions")
+def gc_versions_cmd(
+    apply: bool = typer.Option(False, "--apply", help="真正执行；不加则只报告"),
+) -> None:
+    """清理超出 `version.history_limit` 的历史版本（docs/05 的 selftool-gc.timer 依赖它）。
+
+    正常路径下淘汰在「审批通过」时同步触发；本命令是**兜底与修复**用
+    （例如直接改过设置、或历史上有失败的删除）。
+    """
+    _run(_gc_versions(apply))
+
+
+async def _gc_versions(apply: bool) -> None:
+    from sqlalchemy import select
+
+    from app.models.tool import Tool
+    from app.repositories import system_settings as settings_repo
+    from app.repositories import tool_versions as versions_repo
+    from app.storage import get_storage
+
+    storage = get_storage()
+    total = 0
+    async with SessionLocal() as session:
+        keep = await settings_repo.get_effective_int(session, "version.history_limit", 10)
+        tool_ids = [
+            int(r[0])
+            for r in (await session.execute(select(Tool.id))).all()
+        ]
+        for tool_id in tool_ids:
+            candidates = await versions_repo.list_purge_candidates(
+                session, tool_id, keep=keep
+            )
+            for version in candidates:
+                total += 1
+                if apply:
+                    path = version.storage_path
+                    await versions_repo.mark_purged(session, version, now=utcnow())
+                    await session.flush()
+                    if path:
+                        await storage.delete(path)
+            if apply:
+                await session.commit()
+        if not apply:
+            await session.rollback()
+    await _dispose()
+    verb = "已归档" if apply else "待归档（未执行，加 --apply 生效）"
+    _ok(f"{verb} {total} 个历史版本（保留上限 {keep}）")
+
+
 if __name__ == "__main__":
     cli()

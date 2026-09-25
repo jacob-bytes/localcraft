@@ -30,6 +30,8 @@ class SkillVersionInfo(BaseModel):
     manifest: dict | None = None
     file_tree_summary: SkillTreeSummary | None = None
     parse_error: str | None = None
+    #: 文件树是否因超过存储上限（2000 条）被截断。持久化字段，不再事后推断。
+    file_tree_truncated: bool = False
 
 
 class VersionSummary(ORMModel):
@@ -97,5 +99,6 @@ class SkillPreviewResponse(BaseModel):
     manifest: dict | None = None
     readme_md: str | None = None
     file_tree: list[dict] = Field(default_factory=list)
+    #: 是否被截断。**直接读持久化列**（contracts §15.3），不做任何推断。
     file_tree_truncated: bool = False
     total_size: int = 0

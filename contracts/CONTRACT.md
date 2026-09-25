@@ -631,3 +631,100 @@ CAS 已能独立保证并发正确性（实测通过），所以这不是功能�
 **接受并表扬。** 这是典型的非显性集成缺陷：`logging.config.fileConfig` 默认会关闭进程内所有
 已存在的 logger，导致「在进程内跑过 alembic 之后应用日志静默消失、pytest 的 `caplog` 失效」。
 这类问题在正常路径下完全不显形，能被发现并加上回归测试，说明排查深度到位。
+
+---
+
+## 16. M3 Checkpoint 裁定（后端，2025-03）
+
+### 16.1 已实证通过
+
+监控方复跑了 `scripts/m3-evidence.sh` 并独立核验（该脚本本身质量很高：临时库、开启 `DB_ECHO`
+统计 SQL 写入、逐条对照期望值、失败即非零退出）。
+
+| 项 | 实测 |
+| --- | --- |
+| 接口面 | 74 路径 / **92 操作**，与 M1 12 + M2 38 + M3 42 完全一致 |
+| 测试 | **402 passed**，覆盖率 **91%**（目标 ≥85%）；`token_service`/`stats_service` 100% |
+| ruff | All checks passed |
+| 依赖 | **零新增**（已核验 `requirements.txt` / `.lock` 相对 M2 无 diff） |
+| 验收 1 | 3 条目小包 `file_tree_truncated = false`，DB 列 `skill_tree_truncated = 0` —— **小包误报已修复** |
+| 验收 2 | 2100 条目 → `true`，落库恰好 2000 条，DB 列 = 1 |
+| 验收 3 | 审批队列条目含 `version_seq` |
+| 验收 4 | approver 访问他人 `draft` → 404；作者本人 → 200（越权面已收紧） |
+| 验收 5 | approver 访问他人 `pending` 的 `GET /tools/{slug}` → 200；无关用户 → 404（可见性未被放宽） |
+| 验收 6 | 仅 `approvals:write` 的 Token 用 curl 完成审批 |
+| 验收 8 | Token 创建者被降级后，同一 Token 立即 403（**实时求值生效，不是等过期**） |
+| 验收 10 | 100 次并发带 Token 请求 → `UPDATE api_tokens` 仅 4 条（**聚合生效**） |
+| 验收 11 | 禁用用户后其 refresh 会话与 Token 均立即失效，库内活跃数 = 0 |
+| 验收 15 | 组删除 `409 GROUP_IN_USE` 附 `details.tools` 影响面；`force=true` 清理悬空 ACL |
+| 验收 17 | 标签合并引用转移 + **去重**（`deduplicated_references`） |
+| 验收 19 | 导入错误精确到 `row` + `field` |
+| 验收 20 | 导出 CSV 前 3 字节 `ef bb bf`；无密码哈希 |
+| 验收 21 | 负责人转移配额一增一减相等；审批历史有 `transfer_owner` |
+| 验收 22 | 彻底清除后磁盘文件消失、工具行与版本行均无残留 |
+| 验收 23 | 设置非法值整体回滚，合法项未被改动 |
+| 验收补充 B | `generated_passwords` 明文在服务日志中出现 **0** 次 |
+| 验收 24 | 守卫测试断言操作数恰好 92 |
+
+### 16.2 裁定：`details.missing_scopes` 保留（原契约偏差）
+
+开发 agent 报告：验收 7 的键名，实现是 `details.missing_scopes`（M2 已建立并有测试断言），
+而监控方的 prompt 写的是简写 `details.missing`。agent **没有擅自改名**，而是把问题交上来。
+
+**裁定：保留 `missing_scopes`。** 理由：
+
+1. 它是 M2 已验收、已有测试断言的既有契约，改名会推翻已冻结的 M2 行为
+2. `missing_scopes` 语义更明确（复数、指明是 scope）
+3. 监控方 prompt 里的 `details.missing` 是**叙述性简写**，不构成规范
+
+已修正 `prompts/backend-agent-m3.md`。`docs/03` 从未写过该简写，无需修订。
+
+> **这是正确的处理方式**：发现文档与实现不一致时，不擅自改实现去迎合文档，而是把冲突交上来裁定。
+> 与 M2 的 `file_tree_truncated` 形成对照 —— 那一次 agent 建议「保持现状」被否决，因为实测证明实现有 bug。
+
+### 16.3 裁定：验收 12 的取证方式被接受（HTTP 层不可达）
+
+开发 agent 指出：禁用最后一个超管在 **HTTP 层不可达**。监控方独立推演确认：
+
+- 要 disable 用户 X，actor 必须是 superadmin
+- 若 actor ≠ X，则至少存在 2 个活跃超管，X 不是最后一个
+- 若 actor = X，先被 FR-IAM-08「不能禁用自己」拦下
+
+**三条路径都到不了 `LAST_SUPERADMIN`。** 因此该分支走服务层取证是合理的。
+更重要的是，agent 补了**唯一真实可达的路径**的测试：`test_last_superadmin_cas_with_two_admins`
+并发降级两个超管，断言其中一个被 `LAST_SUPERADMIN` 拦下。**裁定：接受，无需补充。**
+
+同时确认 `PUT /admin/users/{id}/roles` 的自我降级守卫（`reason: self_demote`）也已实现。
+
+### 16.4 裁定：`TOKEN_REVOKED` 必须修正（监控方发现，agent 未报告）
+
+验收 9 的脚本输出显示：
+
+```
+吊销后 HTTP 401 body={"code":"UNAUTHENTICATED","message":"API Token 已被吊销"}（期望 401 TOKEN_REVOKED）
+```
+
+脚本**诚实地打印了期望值**，但开发 agent 的报告里未提及这处不符。根因：
+
+- `app/core/errors.py:117` **已存在** `TOKEN_REVOKED`（`default_message = "凭证已被吊销"`）
+- refresh token 路径正确使用它
+- 但 `app/core/deps.py:120` 的 **API Token 路径**用了 `UnauthenticatedError`
+  （`raise UnauthenticatedError("API Token 已被吊销")`）
+
+这是遗漏，不是设计选择：同一个语义（凭证被吊销）在两条路径上返回了两个不同的 code，
+且与 `docs/03` §4 的定义不符。前端 `ErrorCode` 联合类型已含 `TOKEN_REVOKED`。
+
+**裁定：必须改为 `TOKEN_REVOKED`。** 同时适用于验收 11 的「创建者被禁用」分支
+（凭证同样已失效，消息可保留说明性文字）。**列入 M4 修正项。**
+
+### 16.5 裁定：接口面永久冻结于 92
+
+M3 是最后一个新增接口的里程碑。M4 是打磨与交付，**不得新增任何接口**。
+守卫测试的 92 操作冻结清单自此永久生效；`M4_FORBIDDEN` 不再需要前缀黑名单，
+直接断言总数恰为 92 且与 `docs/03` §2.5 清单一致即可。
+
+### 16.6 关于「docs/ 与 web/ 的改动不是我的」
+
+开发 agent 声明其写操作只落在 `backend/` 与 `scripts/`。监控方核验属实：
+`git status` 显示 `docs/` 与 `contracts/` **零改动**，`web/` 的 51 项改动来自并行开发的前端 agent。
+未执行 git 命令的声明也与此前约定一致。

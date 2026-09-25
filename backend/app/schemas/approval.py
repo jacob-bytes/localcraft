@@ -43,6 +43,10 @@ class ApprovalQueueItem(BaseModel):
     submitted_at: OptionalUTCDateTime = None
     #: 服务端算好的等待小时数（前端据此高亮积压超过 24 小时的条目）
     waiting_hours: float = 0.0
+    #: `tools.version_seq` —— 可直接回填到批准请求的 `expected_version_seq`，
+    #: 启用乐观锁。（contracts §15.4：docs/03 §3.9 承诺了这个用法，
+    #: 但队列原先不返回它，而审批人恰恰是唯一需要它的人。）
+    version_seq: int = 0
 
 
 class ApproveRequest(BaseModel):

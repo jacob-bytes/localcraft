@@ -253,7 +253,7 @@ M2 只做了审批分组，本轮补全 `docs/02` §3.19 的**全部设置项**�
 | 4 | approver 访问他人 `draft` 工具的 `/me/tools/{id}` | 404（当前可见，属越权） |
 | 5 | approver 访问他人 `pending` 工具的 `GET /tools/{slug}` | 200（当前 404） |
 | 6 | 签发 scope=`approvals:write` 的 Token，批准待审工具 | 成功 |
-| 7 | 同一 Token 调 `POST /admin/users` | `403 SCOPE_MISSING`，`details.missing` 指出缺哪个 scope |
+| 7 | 同一 Token 调 `POST /admin/users` | `403 SCOPE_MISSING`，`details.missing_scopes` 指出缺哪个 scope（**键名以 M2 已验收的实现为准**，见 CONTRACT §16.2） |
 | 8 | 把 Token 创建者从 superadmin 降级 | 同一 Token 立即失效或降权（**不是等 token 过期**） |
 | 9 | 吊销 Token 后再调用 | `401 TOKEN_REVOKED` |
 | 10 | 100 次并发带 Token 的请求 | 数据库 `UPDATE api_tokens` 次数远小于 100（聚合生效） |

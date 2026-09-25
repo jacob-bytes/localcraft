@@ -42,7 +42,7 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
 from app.core.security import hash_password  # noqa: E402
 from app.core.timeutil import utcnow  # noqa: E402
-from app.db.session import SessionLocal  # noqa: E402
+from app.db.session import SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models.enums import (  # noqa: E402
     AclSubjectType,
@@ -341,6 +341,23 @@ def auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-@pytest.fixture(scope="session", autouse=True)
-def _dispose_engine_after() -> None:
+@pytest.fixture(autouse=True)
+async def _reset_engine_pool() -> AsyncIterator[None]:
+    """每个用例结束后清空连接池。
+
+    为什么必须做：pytest-asyncio 默认**每个测试一个新的事件循环**，而
+    `app.db.session.engine` 是模块级单例，连接池跨用例共享。aiosqlite 的每个
+    连接有一个工作线程，`future.get_loop()` 指向**创建它的那个 loop**；上个用例
+    结束后 loop 关闭，连接还回池里，下个用例拿到它再发查询时，工作线程会往一个
+    已关闭的 loop 上 `call_soon_threadsafe`，抛 `RuntimeError: Event loop is closed`。
+
+    这个异常**不是** DBAPI 错误，所以 `pool_pre_ping` 不会把它当作连接失效信号，
+    它会直接冒到请求路径上（M3 的 100 并发用例表现为 500 / "No response returned."，
+    且只在整包运行时复现 —— 单跑该文件时池里没有跨 loop 的陈旧连接）。
+
+    放在测试侧而不是给 SQLite 换 NullPool：生产运行时是单 loop 常驻进程，
+    连接复用本身没问题，不该为了测试改运行时行为。
+    """
     yield
+    if engine.dialect.name == "sqlite":
+        await engine.dispose()

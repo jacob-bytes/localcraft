@@ -57,8 +57,8 @@ class CounterService:
         self._view_seen: dict[str, dict[int, datetime]] = defaultdict(dict)
         #: 待批量插入的下载明细
         self._log_queue: list[dict[str, Any]] = []
-        #: api_tokens.last_used_at 的内存聚合
-        self._token_last_used: dict[int, datetime] = {}
+        #: api_tokens.last_used_at / last_used_ip 的内存聚合（M3）
+        self._token_last_used: dict[int, tuple[datetime, str | None]] = {}
 
         self._lock = asyncio.Lock()
         self._task: asyncio.Task[None] | None = None
@@ -120,9 +120,14 @@ class CounterService:
             }
         )
 
-    def record_token_use(self, token_id: int) -> None:
-        """`api_tokens.last_used_at` 的内存聚合（同样是禁止逐请求写）。"""
-        self._token_last_used[token_id] = utcnow()
+    def record_token_use(self, token_id: int, *, ip: str | None = None) -> None:
+        """记录 API Token 的使用（FR-API-05）。
+
+        **绝不逐请求写库**（易错点 1）：SQLite 是单写者，每个带 Token 的请求
+        写一次 `api_tokens` 会直接把写锁打死。这里只更新内存里的最新值，
+        由后台任务批量落库 —— 与下载计数复用同一套聚合框架。
+        """
+        self._token_last_used[token_id] = (utcnow(), ip)
 
     # ------------------------------------------------------------------
     # 落库
@@ -170,11 +175,12 @@ class CounterService:
                         session, log_queue, now=utcnow()
                     )
 
-                for token_id, used_at in token_uses.items():
+                for token_id, (used_at, used_ip) in token_uses.items():
+                    values: dict[str, Any] = {"last_used_at": used_at}
+                    if used_ip:
+                        values["last_used_ip"] = used_ip[:45]
                     await session.execute(
-                        update(ApiToken)
-                        .where(ApiToken.id == token_id)
-                        .values(last_used_at=used_at)
+                        update(ApiToken).where(ApiToken.id == token_id).values(**values)
                     )
                     stats["tokens"] += 1
 

@@ -326,6 +326,7 @@ def build_version_detail(version: ToolVersion | None) -> CurrentVersionDetail | 
                 manifest=version.skill_manifest,
                 file_tree_summary=_tree_summary(version),
                 parse_error=version.skill_parse_error,
+                file_tree_truncated=bool(version.skill_tree_truncated),
             )
             if version.skill_manifest is not None
             or version.skill_readme_md is not None

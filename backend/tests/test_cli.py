@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from app.api.public import M2_TOTAL_ENDPOINTS
+from app.api.public import M3_TOTAL_ENDPOINTS
 from app.cli import cli
 from app.core.security import password_strength_errors
 
@@ -300,12 +300,12 @@ def test_export_openapi_writes_all_frozen_paths(tmp_path) -> None:
         for method in item
         if method in ("get", "post", "put", "patch", "delete")
     }
-    # M1 的 12 个 + M2 的 38 个 = 50（契约 §6.1）
-    assert operations == set(M2_TOTAL_ENDPOINTS), (
-        f"多出: {sorted(operations - set(M2_TOTAL_ENDPOINTS))}\n"
-        f"缺失: {sorted(set(M2_TOTAL_ENDPOINTS) - operations)}"
+    # M1 的 12 + M2 的 38 + M3 的 42 = 92（契约 §6.2）
+    assert operations == set(M3_TOTAL_ENDPOINTS), (
+        f"多出: {sorted(operations - set(M3_TOTAL_ENDPOINTS))}\n"
+        f"缺失: {sorted(set(M3_TOTAL_ENDPOINTS) - operations)}"
     )
-    assert len(operations) == 50
+    assert len(operations) == 92
     assert ("GET", "/api/v1/tools") in operations
     assert ("POST", "/api/v1/auth/refresh") in operations
 

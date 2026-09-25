@@ -313,9 +313,14 @@ async def get_my_tool(
     session: Annotated[AsyncSession, Depends(get_db)],
     principal: Annotated[Principal, Depends(read_guard)],
 ) -> ToolDetail:
-    """含草稿、被驳回、已下架的详情。
+    """含草稿、被驳回、已下架的详情（owner 视角）。
 
-    非 owner 但具备审批权限的人也能看（FR-APPR-06：审批人要能直接预览）。
+    **approver 的可见范围被刻意排除 `draft`**（contracts §15.5）：
+    草稿是用户尚未提交的未完成工作，没有任何审批理由需要看到它 ——
+    允许审批人读别人的草稿是真实的越权面。
+
+    approver 需要预览的是**待审/已下架**的工具，那走 `GET /tools/{slug}`
+    （已对 approver 开放 pending / pending_update / offline）。
     其他人一律 404。
     """
     tool = await tools_repo.get_by_id(session, tool_id)
@@ -325,7 +330,8 @@ async def get_my_tool(
     is_approver = bool(
         principal.roles & {RoleCode.APPROVER.value, RoleCode.SUPERADMIN.value}
     )
-    if not (is_owner or is_approver):
+    # 非 owner：只有 approver/superadmin 能看，且**不能是 draft**
+    if not is_owner and (not is_approver or tool.status == ToolStatus.DRAFT.value):
         raise NotFoundError(message="资源不存在")
     return await _reload_detail(session, tool.id, principal)
 
@@ -976,6 +982,7 @@ def _skill_info(record: ToolVersion):
         manifest=record.skill_manifest,
         file_tree_summary=summary,
         parse_error=record.skill_parse_error,
+        file_tree_truncated=bool(record.skill_tree_truncated),
     )
 
 

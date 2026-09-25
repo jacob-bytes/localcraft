@@ -20,8 +20,10 @@ from typing import Any
 from fastapi.routing import APIRoute
 
 from app.api.public import (
-    M2_TOTAL_ENDPOINTS,
-    M3_FORBIDDEN_PREFIXES,
+    M1_ONLY_ENDPOINTS,
+    M2_ENDPOINTS,
+    M3_ENDPOINTS,
+    M3_TOTAL_ENDPOINTS,
     PASSWORD_GATE_EXEMPT_PREFIXES,
     PUBLIC_ENDPOINTS,
 )
@@ -155,17 +157,25 @@ def test_password_gate_exempt_prefixes_are_exactly_the_documented_ones() -> None
 # ---------------------------------------------------------------------------
 # M2 冻结接口清单（契约 §6 + §6.1）
 # ---------------------------------------------------------------------------
-def test_m2_surface_is_exactly_the_frozen_list() -> None:
-    """契约 §6.1：M1 的 12 个 + M2 的 38 个 = **50**。
+def test_m3_surface_is_exactly_the_frozen_list() -> None:
+    """契约 §6 + §6.1 + §6.2：12 + 38 + 42 = **92**。
 
     多出或缺少任何一个都应该在这里失败，逼迫走契约 §9 的变更流程。
     """
     actual = {(method, path) for method, path, _ in ALL_ROUTES}
-    assert len(M2_TOTAL_ENDPOINTS) == 50, "冻结清单本身应当是 50 条"
-    assert actual == set(M2_TOTAL_ENDPOINTS), (
-        f"多出的接口（契约未冻结）: {sorted(actual - set(M2_TOTAL_ENDPOINTS))}\n"
-        f"缺失的接口: {sorted(set(M2_TOTAL_ENDPOINTS) - actual)}"
+    assert len(M1_ONLY_ENDPOINTS) == 12
+    assert len(M2_ENDPOINTS) == 38
+    assert len(M3_ENDPOINTS) == 42
+    assert len(M3_TOTAL_ENDPOINTS) == 92, "冻结清单本身应当是 92 条"
+    assert actual == set(M3_TOTAL_ENDPOINTS), (
+        f"多出的接口（契约未冻结）: {sorted(actual - set(M3_TOTAL_ENDPOINTS))}\n"
+        f"缺失的接口: {sorted(set(M3_TOTAL_ENDPOINTS) - actual)}"
     )
+
+
+def test_endpoint_total_is_exactly_92() -> None:
+    """单独一条把「92」这个数字钉死 —— 容易被顺手改掉的是它。"""
+    assert len(ALL_ROUTES) == 92, f"接口操作总数应为 92，实际 {len(ALL_ROUTES)}"
 
 
 def test_spa_fallback_is_the_only_non_api_catch_all() -> None:
@@ -183,19 +193,34 @@ def test_spa_fallback_is_the_only_non_api_catch_all() -> None:
     assert all(not path.startswith("/api") for _m, path, _r in catch_alls)
 
 
-def test_no_m3_endpoints_in_m2() -> None:
-    """M2 的边界（契约 §6.1「M2 不做」）。
+def test_no_undeclared_admin_paths() -> None:
+    """反向断言：`/admin/*` 下不允许出现冻结清单之外的路径。
 
-    M1 时代的 `test_no_admin_or_write_endpoints_in_m1` 会被 M2 **合法地打破**
-    （工具详情与写接口本来就是 M2 的交付物），所以它在这里被替换成 M3 版本的断言。
+    这条与上面的精确相等断言是**双重保险**：即使有人把新路径加进了
+    `M3_ENDPOINTS` 常量（那会让上面那条通过），这里也会因为
+    「它不在 docs/03 §2.5 的清单里」而失败 —— 清单本身也得是诚实的。
     """
-    leaked: list[str] = []
-    for _method, path, _route in ALL_ROUTES:
-        for prefix in M3_FORBIDDEN_PREFIXES:
-            if path.startswith(prefix):
-                leaked.append(path)
-                break
-    assert not leaked, f"M2 不应包含 M3 的接口: {sorted(set(leaked))}"
+    documented = {
+        "/api/v1/admin/approvals",
+        "/api/v1/admin/approvals/batch-approve",
+        "/api/v1/admin/approvals/history",
+        "/api/v1/admin/approvals/{tool_id}/approve",
+        "/api/v1/admin/approvals/{tool_id}/reject",
+        "/api/v1/admin/approvals/{tool_id}/offline",
+        "/api/v1/admin/approvals/{tool_id}/relist",
+        "/api/v1/admin/approval-whitelist",
+        "/api/v1/admin/approval-whitelist/{user_id}",
+        "/api/v1/admin/settings",
+    } | {path for _m, path in M3_ENDPOINTS}
+    undeclared = sorted({p for _m, p, _r in ALL_ROUTES if "/admin/" in p} - documented)
+    assert not undeclared, f"docs/03 §2.5 未列出的 admin 路径: {undeclared}"
+
+
+def test_no_m4_endpoints() -> None:
+    """M4 是「打磨与交付」，**不新增接口**（prompts/backend-agent-m3.md 的明确边界）。"""
+    actual = {(method, path) for method, path, _ in ALL_ROUTES}
+    assert len(M3_TOTAL_ENDPOINTS) == 92
+    assert actual == set(M3_TOTAL_ENDPOINTS)
 
 
 def test_m2_portal_routes_are_read_only_except_ticket() -> None:

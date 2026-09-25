@@ -113,35 +113,78 @@ M1_ONLY_ENDPOINTS: frozenset[tuple[str, str]] = frozenset(
     }
 )
 
-#: **M3 的边界**：这些前缀在 M2 阶段必须完全不存在。
-#: 守卫测试逐条断言，防止有人「顺手」把 M3 的接口提前写进来。
-M3_FORBIDDEN_PREFIXES: tuple[str, ...] = (
-    "/api/v1/admin/tools",
-    "/api/v1/admin/users",
-    "/api/v1/admin/groups",
-    "/api/v1/admin/categories",
-    "/api/v1/admin/tags",
-    "/api/v1/admin/tokens",
-    "/api/v1/admin/import",
-    "/api/v1/admin/export",
-    "/api/v1/admin/stats",
-    "/api/v1/admin/overview",
-    "/api/v1/admin/recycle-bin",
-    "/api/v1/admin/roles",
+#: M2 实现后的接口面（50 个）= M1 的 12 + M2 的 38
+M2_TOTAL_ENDPOINTS: frozenset[tuple[str, str]] = M1_ONLY_ENDPOINTS | M2_ENDPOINTS
+
+
+#: M3 新增的 42 个接口（contracts §6.2 / docs/03 §2.5）。
+#: 实现后接口面总数 = 12（M1）+ 38（M2）+ 42（M3）= **92**。
+M3_ENDPOINTS: frozenset[tuple[str, str]] = frozenset(
+    {
+        # ---- 用户与角色（8）----
+        ("GET", "/api/v1/admin/users"),
+        ("POST", "/api/v1/admin/users"),
+        ("GET", "/api/v1/admin/users/{user_id}"),
+        ("PATCH", "/api/v1/admin/users/{user_id}"),
+        ("POST", "/api/v1/admin/users/{user_id}/reset-password"),
+        ("PUT", "/api/v1/admin/users/{user_id}/roles"),
+        ("POST", "/api/v1/admin/users/{user_id}/revoke-sessions"),
+        ("GET", "/api/v1/admin/roles"),
+        # ---- 用户组（7）----
+        ("GET", "/api/v1/admin/groups"),
+        ("POST", "/api/v1/admin/groups"),
+        ("PATCH", "/api/v1/admin/groups/{group_id}"),
+        ("DELETE", "/api/v1/admin/groups/{group_id}"),
+        ("GET", "/api/v1/admin/groups/{group_id}/members"),
+        ("POST", "/api/v1/admin/groups/{group_id}/members"),
+        ("DELETE", "/api/v1/admin/groups/{group_id}/members/{user_id}"),
+        # ---- 分类与标签（9）----
+        ("GET", "/api/v1/admin/categories"),
+        ("POST", "/api/v1/admin/categories"),
+        ("PATCH", "/api/v1/admin/categories/{category_id}"),
+        ("DELETE", "/api/v1/admin/categories/{category_id}"),
+        ("PUT", "/api/v1/admin/categories/order"),
+        ("GET", "/api/v1/admin/tags"),
+        ("PATCH", "/api/v1/admin/tags/{tag_id}"),
+        ("POST", "/api/v1/admin/tags/merge"),
+        ("POST", "/api/v1/admin/tags/cleanup"),
+        # ---- 全站工具与回收站（7）----
+        ("GET", "/api/v1/admin/tools"),
+        ("POST", "/api/v1/admin/tools"),
+        ("POST", "/api/v1/admin/tools/{tool_id}/versions"),
+        ("POST", "/api/v1/admin/tools/{tool_id}/transfer"),
+        ("POST", "/api/v1/admin/tools/{tool_id}/restore"),
+        ("DELETE", "/api/v1/admin/tools/{tool_id}/purge"),
+        ("GET", "/api/v1/admin/recycle-bin"),
+        # ---- API Token（4）----
+        ("GET", "/api/v1/admin/tokens"),
+        ("POST", "/api/v1/admin/tokens"),
+        ("POST", "/api/v1/admin/tokens/{token_id}/revoke"),
+        ("DELETE", "/api/v1/admin/tokens/{token_id}"),
+        # ---- 统计（3）----
+        ("GET", "/api/v1/admin/overview"),
+        ("GET", "/api/v1/admin/stats/tools"),
+        ("GET", "/api/v1/admin/stats/storage"),
+        # ---- 导入导出（4）----
+        ("POST", "/api/v1/admin/import/users"),
+        ("GET", "/api/v1/admin/export/users"),
+        ("POST", "/api/v1/admin/import/tools"),
+        ("GET", "/api/v1/admin/export/tools"),
+    }
 )
 
 
-#: M2 实现后的**全部**接口面（50 个）
-M2_TOTAL_ENDPOINTS: frozenset[tuple[str, str]] = (
-    M1_ONLY_ENDPOINTS | M2_ENDPOINTS
-)
+#: M3 实现后的**全部**接口面（92 个）。**多一个都不许有** ——
+#: docs/03 §2.5 未列出的路径不得出现（守卫测试反向断言）。
+M3_TOTAL_ENDPOINTS: frozenset[tuple[str, str]] = M2_TOTAL_ENDPOINTS | M3_ENDPOINTS
 
 
 __all__ = [
     "M1_ONLY_ENDPOINTS",
     "M2_ENDPOINTS",
     "M2_TOTAL_ENDPOINTS",
-    "M3_FORBIDDEN_PREFIXES",
+    "M3_ENDPOINTS",
+    "M3_TOTAL_ENDPOINTS",
     "NON_SPA_PREFIXES",
     "PASSWORD_GATE_EXEMPT_PREFIXES",
     "PUBLIC_ENDPOINTS",
