@@ -316,7 +316,7 @@ function MyToolRow({
               alt={`${tool.name} 封面`}
               loading="lazy"
               decoding="async"
-              className="size-full object-cover"
+              className="cover-media size-full object-cover"
             />
           ) : (
             <div
@@ -344,7 +344,9 @@ function MyToolRow({
               {tool.status_label}
             </Badge>
             {tool.pending_version ? (
-              <Badge variant="warning">新版 {tool.pending_version} 待审</Badge>
+              <Badge variant="warning" data-status="pending">
+                新版 {tool.pending_version} 待审
+              </Badge>
             ) : null}
           </div>
 

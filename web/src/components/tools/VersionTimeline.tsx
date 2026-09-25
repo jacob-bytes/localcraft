@@ -109,12 +109,23 @@ export function VersionTimeline({ slug, fallbackCount }: VersionTimelineProps) {
                 data-testid="version-item"
                 data-version={version.version}
                 data-status={version.status}
-                className="relative space-y-2 pl-5"
+                data-current={version.status === "approved" && version.is_current ? "true" : undefined}
+                className={cn(
+                  "relative space-y-2 pl-5",
+                  // V5（docs/12 §6.2）：当前版本是用户最关心的那一条，
+                  // 但此前只靠徽标文字区分，在长列表里不够显眼。
+                  // 加一条左侧强调条 + 极淡底色，扫视时一眼能定位。
+                  version.status === "approved" &&
+                    version.is_current &&
+                    "-ml-2 rounded-r-md border-l-2 border-success bg-success/[0.04] py-1.5 pr-2 pl-4",
+                )}
               >
                 <span
                   aria-hidden="true"
                   className={cn(
                     "absolute left-0 top-1.5 size-2 rounded-full ring-4 ring-background",
+                    // 当前版本的圆点用成功色 ring，与左侧强调条呼应
+                    version.status === "approved" && version.is_current && "ring-success/15",
                     status.dotClass,
                   )}
                 />

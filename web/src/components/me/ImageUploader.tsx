@@ -246,7 +246,7 @@ export function ImageUploader({
               <img
                 src={item.previewUrl}
                 alt={`待上传截图 ${index + 1}`}
-                className="aspect-[16/9] w-full object-cover"
+                className="cover-media aspect-[16/9] w-full object-cover"
               />
               <div className="flex items-center justify-between gap-1 p-1">
                 <span className="truncate px-1 text-xs text-muted-foreground">
@@ -277,7 +277,7 @@ export function ImageUploader({
                   alt={image.alt_text ?? `工具截图 ${index + 1}`}
                   loading="lazy"
                   decoding="async"
-                  className="aspect-[16/9] w-full object-cover"
+                  className="cover-media aspect-[16/9] w-full object-cover"
                 />
                 {cover?.id === image.id ? (
                   <span className="absolute left-1 top-1 rounded bg-background/90 px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset ring-border">

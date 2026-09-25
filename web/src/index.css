@@ -149,6 +149,44 @@
   }
 }
 
+/* V6（docs/12 §6.2）：待审状态的极轻呼吸感。
+   「等待处理」是平台的核心流程状态，但此前只是一个静态黄色徽标，
+   在长列表里很容易被忽略。这里只动 opacity、不改几何尺寸（避免布局抖动），
+   幅度也刻意压得很小（1 → 0.78），是「提示」而不是「闪烁」。
+   选择器限定为 span，避免作用到同样带 data-status 的 <li> 上（那会整行闪）。
+   注意：下面 @media (prefers-reduced-motion: reduce) 的全局规则会把它自动停掉。 */
+@keyframes status-pending-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.78;
+  }
+}
+
+span[data-status="pending"] {
+  animation: status-pending-pulse 2.4s ease-in-out infinite;
+}
+
+/* V7（docs/12 §6.2）：深色主题下压一档图片亮度。
+   平台上的截图与封面多为浅色背景，直接放在深色卡片上会「发光」刺眼，
+   长时间浏览（管理台、详情页图集）尤其明显。压 10% 亮度即可消除这种不适，
+   hover 时恢复 —— 让用户知道这是刻意的处理，而不是图片没加载好。
+   用 .dark 而非 prefers-color-scheme：本项目的主题是类名驱动 + 三态切换
+   （docs/04 §3.4），系统偏好只是三态中的一种。 */
+.cover-media {
+  transition: filter 150ms ease;
+}
+
+.dark .cover-media {
+  filter: brightness(0.9);
+}
+
+.dark .cover-media:hover {
+  filter: brightness(1);
+}
+
 /* Respect users who ask for less motion. */
 @media (prefers-reduced-motion: reduce) {
   *,

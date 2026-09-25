@@ -79,7 +79,7 @@ function ToolCover({ tool }: { tool: ToolListItem }) {
           loading="lazy"
           decoding="async"
           onError={() => setCoverFailed(true)}
-          className="size-full object-cover transition-transform duration-150 group-hover:scale-105"
+          className="cover-media size-full object-cover transition-transform duration-150 group-hover:scale-105"
         />
       ) : (
         <div

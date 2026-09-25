@@ -79,7 +79,7 @@ export function RecycleBinTable({
                         <img
                           src={tool.cover_url}
                           alt={`${tool.name} 的封面`}
-                          className="size-full object-cover"
+                          className="cover-media size-full object-cover"
                         />
                       ) : (
                         <TypeIcon aria-hidden="true" className="size-4 text-foreground/70" />

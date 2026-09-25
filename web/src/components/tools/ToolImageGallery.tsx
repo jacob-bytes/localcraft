@@ -90,7 +90,7 @@ export function ToolImageGallery({
             alt={current.alt_text ?? `${toolName} ${index + 1}`}
             decoding="async"
             onError={() => markFailed(current.id)}
-            className="size-full object-contain"
+            className="cover-media size-full object-contain"
           />
         ) : (
           <GalleryPlaceholder toolType={toolType} categorySlug={categorySlug} />
@@ -154,7 +154,7 @@ export function ToolImageGallery({
                       loading="lazy"
                       decoding="async"
                       onError={() => markFailed(image.id)}
-                      className="size-full object-cover"
+                      className="cover-media size-full object-cover"
                     />
                   )}
                 </button>

@@ -104,7 +104,9 @@ export function ToolStatusBadge({
   className?: string;
 }) {
   return (
-    <Badge variant={TOOL_STATUS_VARIANTS[status]} className={className}>
+    // data-status 供 index.css 的 V6 规则识别：待审状态会有极轻的呼吸感提示。
+    // 放在共享组件上，管理台各处用到它的地方一并生效。
+    <Badge variant={TOOL_STATUS_VARIANTS[status]} data-status={status} className={className}>
       {TOOL_STATUS_LABELS[status]}
     </Badge>
   );
@@ -251,7 +253,7 @@ function CoverThumb({ url }: { url: string | null }) {
       loading="lazy"
       decoding="async"
       onError={() => setFailed(true)}
-      className="size-9 shrink-0 rounded-md border object-cover"
+      className="cover-media size-9 shrink-0 rounded-md border object-cover"
     />
   );
 }
