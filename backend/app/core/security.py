@@ -248,6 +248,59 @@ def derive_subkey(purpose: str, *, length: int = 32) -> bytes:
     return okm[:length]
 
 
+# ---------------------------------------------------------------------------
+# 图片能力签名（契约 §14.3）
+# ---------------------------------------------------------------------------
+# 为什么要签名：图片 URL 是**原样下发给前端**的（前端只做 onError 占位降级），
+# <img> 标签带不上 Authorization 头。若不做能力签名，就只能二选一：
+#   - 图片接口要求 Header → 前端所有图片都加载不出来
+#   - 图片接口完全公开 → 猜到 ID 就能看 private 工具的截图
+# 签名 URL 把「访问能力」编码进 URL 本身：拿到 URL 就能取图，URL 过期即失效。
+#
+# 子密钥同样是**派生**的，不复用 SECRET_KEY（与下载票据同理，用途隔离）。
+IMAGE_SIGNATURE_PURPOSE = "image-signature"
+
+#: 签名有效期默认 168 小时 = 7 天（可由设置项 `images.signature_ttl_hours` 覆盖）
+IMAGE_SIGNATURE_DEFAULT_TTL_HOURS = 168
+
+
+def image_signature(image_id: int, variant: str, *, ttl_hours: int) -> str:
+    """生成图片 URL 的能力签名。
+
+    签名内容刻意**只含** `image_id|variant`，不含过期时间：
+    过期由 URL 上的 `exp` 参数表达并在校验时比对。这样同一张图在同一有效期内
+    生成的 URL 是稳定的（便于浏览器缓存与前端去重）。
+    """
+    exp = int((datetime.now(UTC) + timedelta(hours=ttl_hours)).timestamp())
+    message = f"{image_id}|{variant}|{exp}".encode()
+    mac = hmac.new(derive_subkey(IMAGE_SIGNATURE_PURPOSE), message, hashlib.sha256).digest()
+    return f"{_b64url_encode(mac)}.{exp}"
+
+
+def verify_image_signature(image_id: int, variant: str, sig: str | None) -> bool:
+    """校验图片签名。**常量时间比较**，且对格式错误一律返回 False（不抛异常）。"""
+    if not sig or "." not in sig:
+        return False
+    mac_part, _, exp_part = sig.partition(".")
+    try:
+        exp = int(exp_part)
+    except ValueError:
+        return False
+    if exp <= int(datetime.now(UTC).timestamp()):
+        return False
+    expected = hmac.new(
+        derive_subkey(IMAGE_SIGNATURE_PURPOSE),
+        f"{image_id}|{variant}|{exp}".encode(),
+        hashlib.sha256,
+    ).digest()
+    try:
+        provided = _b64url_decode(mac_part)
+    except Exception:
+        return False
+    # compare_digest：不能用 == （会因短路比较泄露时序信息）
+    return hmac.compare_digest(expected, provided)
+
+
 DOWNLOAD_TICKET_PURPOSE = "download-ticket"
 
 #: 票据有效期（秒）—— docs/03 §3.15 规定 60 秒

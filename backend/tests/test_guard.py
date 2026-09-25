@@ -238,8 +238,10 @@ def test_frozen_surface_matches_docs_03_section_2_5_row_by_row() -> None:
     from tests.m4_helpers import parse_docs_03_section_2_5
 
     rows = parse_docs_03_section_2_5()
-    assert len(rows) == 52, (
-        f"docs/03 §2.5 应当有 52 行接口，解析出 {len(rows)} 行 —— "
+    # M4 时是 52 行；M5 监控方把两个「管理侧代创建/代上传」接口回填进总表后为 54 行。
+    # 这个数字变了就必须有人看一眼 —— 它同时是「接口面是否漂移」的第一道信号。
+    assert len(rows) == 54, (
+        f"docs/03 §2.5 应当有 54 行接口，解析出 {len(rows)} 行 —— "
         "文档改了或解析逻辑失效，两种都要有人看一眼"
     )
     assert len(set(rows)) == len(rows), "§2.5 总表里出现了重复行"

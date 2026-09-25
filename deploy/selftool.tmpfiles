@@ -1,0 +1,56 @@
+# ============================================================
+# selftool 运行目录创建规则（systemd-tmpfiles）
+#
+# 用途：用声明式规则创建/修正运行时目录与属主权限，替代安装脚本里的一串
+#       `install -d`。好处是：机器重启、目录被误删、权限被改动后，
+#       执行 `systemd-tmpfiles --create` 即可一键恢复到声明状态。
+# 依据：docs/05《部署与运维方案》§4.1（deploy/selftool.tmpfiles）、§5.2
+#       §12.6（权限问题的排查与修正）
+#
+# 安装位置：/usr/lib/tmpfiles.d/selftool.conf
+# 权限：0644 root:root
+# 发布包内路径：deploy/selftool.tmpfiles
+# 立即应用：systemd-tmpfiles --create /usr/lib/tmpfiles.d/selftool.conf
+# 校验：systemd-tmpfiles --cat-config | grep -A2 selftool
+#
+# 权限值刻意与 scripts/install.sh 的 `install -d -m 0750 -o selftool -g selftool`
+# 保持**逐字一致**；两处不一致会导致"安装时正常、tmpfiles 修正后又坏掉"。
+#
+# 字段格式：类型 路径 权限 属主 属组 年龄 参数
+#   d = 目录不存在则创建；已存在时按声明修正属主与权限（不动内容）
+#   z = 已存在的文件/目录，只修正属主与权限（不存在则跳过）
+# 这里统一用 d：即使目录已存在，也要把权限拉回声明值。
+# ============================================================
+
+# ---------- 数据根目录 ----------
+# 0750 selftool:selftool —— 组外用户连列目录都不行（数据目录里有工具包原件）
+d /var/lib/selftool                    0750 selftool selftool -
+# 上传/解压落盘区（docs/05 §9.2.5 的临时空间也在这棵树下）
+d /var/lib/selftool/files              0750 selftool selftool -
+d /var/lib/selftool/files/uploads      0750 selftool selftool -
+d /var/lib/selftool/files/images       0750 selftool selftool -
+# 备份产物目录（backup.sh 会在其下再建 db/ 与 files/）
+d /var/lib/selftool/backups            0750 selftool selftool -
+d /var/lib/selftool/backups/db         0750 selftool selftool -
+d /var/lib/selftool/backups/files      0750 selftool selftool -
+
+# ---------- 日志目录 ----------
+# 应用默认走 journald，这里保留给 SELTOOL_LOG_TO_FILE=true 的可选文件日志，
+# 以及演练模式（SELTOOL_SKIP_SYSTEMD=1）下 nohup 重定向的 stdout。
+d /var/log/selftool                    0750 selftool selftool -
+
+# ---------- 配置目录 ----------
+# 0750 root:selftool —— 服务只读，root 可写；用 root:selftool 而不是 selftool:selftool，
+# 是为了让"改配置"这件事必须经过 root，减少服务被篡改后自我提权的面。
+d /etc/selftool                        0750 root     selftool     -
+
+# ---------- 代码与运行目录 ----------
+# /opt/selftool 及子目录由 root 拥有、0755 只读（docs/05 §13.2 第 3 条：
+# 脚本目录不能被 selftool 用户写，否则被篡改后会被 systemd 以更高权限执行）。
+# 注意：这里**不声明** /opt/selftool/app/current —— 它是安装/升级脚本维护的
+# 软链，用 tmpfiles 的 d 类型去"修正"一个软链会得到意外结果（软链缺失时
+# 会被建成真目录，升级脚本随后的 ln -sfn 反而要跟它纠缠）。
+d /opt/selftool                        0755 root     root         -
+d /opt/selftool/app                    0755 root     root         -
+d /opt/selftool/releases               0755 root     root         -
+d /opt/selftool/scripts                0755 root     root         -

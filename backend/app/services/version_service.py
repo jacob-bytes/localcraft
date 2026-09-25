@@ -336,7 +336,10 @@ async def _persist_version(
 
     if auto_submit:
         decision = await settings_service.evaluate_auto_approval(
-            session, user_id=uploader_id
+            session,
+            user_id=uploader_id,
+            # 传「提交前」的工具状态：只有已发布工具才适用「新版本免审」
+            tool_status=from_status,
         )
         auto_approved = decision.approved
         auto_rule = decision.rule
@@ -385,7 +388,11 @@ async def _persist_version(
     record_row = None
     if auto_submit or auto_approved:
         if auto_approved:
-            note = "上传后自动放行"
+            note = (
+                "已发布工具的新版本免审（approval.version_reapproval=false）"
+                if auto_rule == "version_reapproval_off"
+                else "上传后自动放行"
+            )
         elif from_status == ToolStatus.REJECTED.value:
             note = "修改后重新提交"
         else:

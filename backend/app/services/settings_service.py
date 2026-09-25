@@ -210,20 +210,59 @@ async def check_storage_quota(
             )
 
 
+#: 存储水位告警的默认阈值（百分比）——设置项 `quota.warn_threshold_pct`
+STORAGE_WARNING_DEFAULT_PCT = 85
+
+
+def storage_warning(used_bytes: int, quota_bytes: int, threshold_pct: int) -> bool:
+    """是否应当就存储水位告警。
+
+    **这是全项目唯一的判断口径**（契约 §18.6）：
+    `GET /admin/overview` 的 `storage_warning` 与 `scripts/disk-alert.sh`
+    都复用它 —— 一个用 Python、一个用 shell，靠这个函数的语义对齐，
+    而不是各写一份阈值比较（那样迟早会漂移）。
+
+    边界：`quota_bytes <= 0` 表示「不限配额」，此时永不告警。
+    """
+    if quota_bytes <= 0:
+        return False
+    return used_bytes * 100 >= quota_bytes * threshold_pct
+
+
 async def evaluate_auto_approval(
-    session: AsyncSession, *, user_id: int, now=None
+    session: AsyncSession,
+    *,
+    user_id: int,
+    tool_status: str | None = None,
+    now=None,
 ) -> AutoApprovalDecision:
     """判断本次提交是否命中自动放行（FR-APPR-01 / FR-APPR-03）。
 
-    两条规则，先看全局开关再看白名单：
-      - `approval.mode == auto_approve_all`  → 全部放行
-      - `approval.whitelist_enabled` 且该用户在有效白名单内 → 放行
+    三条规则，从「最具体」到「最宽泛」：
+
+      1. `approval.version_reapproval == false` **且**工具已处于 `approved`
+         → 放行，规则 `version_reapproval_off`。
+         这是契约 §18.6 的裁定：`approval.mode` 管的是**首次发布**是否需审，
+         `version_reapproval` 管的是**已发布工具的新版本**是否需再审，
+         两者是不同的策略维度（「可信工具，更新免审」）。
+      2. `approval.mode == auto_approve_all` → 全部放行
+      3. `approval.whitelist_enabled` 且该用户在有效白名单内 → 放行
+
+    注意 `tool_status` 是**本次提交前**的状态：只有已经发布过的工具才谈得上
+    「新版本免审」。draft 首次发布仍然照 `approval.mode` 走。
     """
     from app.core.timeutil import utcnow
-    from app.models.enums import ApprovalMode
+    from app.models.enums import ApprovalMode, ToolStatus
     from app.repositories import approvals as approvals_repo
 
     moment = now or utcnow()
+
+    # 规则 1：已发布工具的新版本免审（默认开启「需再审」，所以默认不命中）
+    reapproval_required = await settings_repo.get_effective_bool(
+        session, "approval.version_reapproval", True
+    )
+    if not reapproval_required and tool_status == ToolStatus.APPROVED.value:
+        return AutoApprovalDecision(approved=True, rule="version_reapproval_off")
 
     mode = await settings_repo.get_effective_str(session, "approval.mode", "require")
     if mode == ApprovalMode.AUTO_APPROVE_ALL.value:

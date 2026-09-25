@@ -142,6 +142,20 @@ build_one() {
         --disable-pip-version-check \
         pip setuptools wheel
 
+    # PostgreSQL 驱动（契约 §18.5）：默认不装，但离线环境要能按需装上。
+    # 它是 optional extra（pyproject 的 [project.optional-dependencies] pg），
+    # 所以不在 requirements.lock 里，必须在这里单独下。
+    log "  补齐 PostgreSQL 驱动（psycopg[binary]）"
+    "$PYTHON_BIN" -m pip download \
+        --dest "$dest" \
+        --only-binary=:all: \
+        --python-version 3.11 \
+        --implementation cp \
+        "${args[@]}" \
+        --no-cache-dir \
+        --disable-pip-version-check \
+        "psycopg[binary]"
+
     # ---- 门禁 1：绝不能出现 sdist ----
     local sdists
     sdists="$(find "$dest" -maxdepth 1 -type f ! -name '*.whl' -print)"
@@ -152,7 +166,8 @@ build_one() {
 
     # ---- 门禁 2：包数量要与 lock 对得上 ----
     local n_lock n_wheel
-    n_lock=$(( $(grep -cE '^[A-Za-z0-9._-]+==' "$LOCK" || true) + 3 ))  # +3 = bootstrap
+    # +3 = bootstrap（pip/setuptools/wheel）；psycopg 是 extra，不在 lock 里，单独核
+    n_lock=$(( $(grep -cE '^[A-Za-z0-9._-]+==' "$LOCK" || true) + 3 ))
     n_wheel="$(find "$dest" -maxdepth 1 -name '*.whl' | wc -l | tr -d ' ')"
     printf '  lock 中包数=%s  wheel 数=%s\n' "$n_lock" "$n_wheel"
 

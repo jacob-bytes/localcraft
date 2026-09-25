@@ -66,6 +66,7 @@ SETTING_DEFAULTS: tuple[tuple[str, Any, str, bool, str], ...] = (
     ("portal.page_size", 24, "int", True, "门户每页条数"),
     ("stats.download_log_retention_days", 180, "int", False, "下载明细保留天数"),
     ("stats.view_dedup_minutes", 60, "int", False, "浏览去重窗口（分钟）"),
+    ("images.signature_ttl_hours", 168, "int", False, "图片签名 URL 有效期（小时），默认 7 天"),
     ("webapp.health_check_enabled", False, "bool", False, "在线工具探活（二期）"),
     ("api.docs_enabled", False, "bool", False, "是否开放 /docs"),
 )
@@ -158,6 +159,7 @@ SETTING_SPECS: dict[str, SettingSpec] = {
     "quota.per_user_mb": SettingSpec(minimum=0, maximum=1024 * 1024),
     "quota.total_mb": SettingSpec(minimum=0, maximum=1024 * 1024),
     "quota.warn_threshold_pct": SettingSpec(minimum=1, maximum=100),
+    "images.signature_ttl_hours": SettingSpec(minimum=1, maximum=8760),
     "security.access_token_minutes": SettingSpec(minimum=1, maximum=1440),
     "security.refresh_token_days": SettingSpec(minimum=1, maximum=365),
     "security.login_max_failures": SettingSpec(minimum=1, maximum=20),

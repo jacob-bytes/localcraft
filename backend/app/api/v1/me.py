@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
@@ -54,6 +53,7 @@ from app.services import (
     acl_service,
     approval_service,
     image_service,
+    image_signature_service,
     skill_service,
     version_service,
 )
@@ -63,6 +63,7 @@ from app.services.tool_service import (
     build_detail,
     build_image_out,
 )
+from app.services.upload_stream import settings_unzip_limits, stream_upload
 
 logger = logging.getLogger(__name__)
 
@@ -216,7 +217,8 @@ async def list_my_tools(
         tool_types=list(tool_type) if tool_type else None,
         category_slugs=sorted({c for c in (category or []) if c}) or None,
     )
-    items = [_build_my_item(tool) for tool in rows]
+    ttl_hours = await image_signature_service.get_ttl_hours(session)
+    items = [_build_my_item(tool, ttl_hours=ttl_hours) for tool in rows]
     return MyToolListResponse(
         items=items,
         total=total,
@@ -226,7 +228,7 @@ async def list_my_tools(
     )
 
 
-def _build_my_item(tool) -> MyToolListItem:
+def _build_my_item(tool, *, ttl_hours: int) -> MyToolListItem:
     from app.schemas.taxonomy import CategoryBrief
 
     return MyToolListItem(
@@ -248,11 +250,9 @@ def _build_my_item(tool) -> MyToolListItem:
             else None
         ),
         tags=[t.display_name for t in tool.tags],
-        # 列表只给缩略图（FR-FILE-10：避免列表页加载原图）
-        cover_url=(
-            f"/api/v1/images/{tool.cover_image_id}?variant=thumb"
-            if tool.cover_image_id
-            else None
+        # 列表只给缩略图（FR-FILE-10：避免列表页加载原图）；URL 带能力签名
+        cover_url=image_signature_service.cover_url_for(
+            tool.cover_image_id, ttl_hours=ttl_hours
         ),
         current_version=tool.current_version.version if tool.current_version else None,
         pending_version=None,
@@ -535,7 +535,7 @@ async def upload_version(
         changelog_md=changelog_md,
         uploader_id=principal.user_id,
         uploader_label=principal.display_name,
-        stream=_stream_upload(file) if file is not None else None,
+        stream=stream_upload(file) if file is not None else None,
         file_name=file_name,
         prompt_content=prompt_content,
         webapp_url=webapp_url,
@@ -728,7 +728,7 @@ async def upload_image(
         tool.cover_image_id = image.id
     tool.updated_at = now
     await session.commit()
-    return build_image_out(image)
+    return build_image_out(image, ttl_hours=await image_signature_service.get_ttl_hours(session))
 
 
 @router.patch(
@@ -755,7 +755,7 @@ async def patch_image(
         tool.cover_image_id = image.id
     tool.updated_at = utcnow()
     await session.commit()
-    return build_image_out(image)
+    return build_image_out(image, ttl_hours=await image_signature_service.get_ttl_hours(session))
 
 
 @router.delete("/tools/{tool_id}/images/{image_id}", summary="删除图片")
@@ -984,24 +984,6 @@ def _skill_info(record: ToolVersion):
         parse_error=record.skill_parse_error,
         file_tree_truncated=bool(record.skill_tree_truncated),
     )
-
-
-def settings_unzip_limits() -> dict[str, int]:
-    from app.core.config import settings as env_settings
-
-    return env_settings.unzip_limits
-
-
-async def _stream_upload(upload: UploadFile) -> AsyncIterator[bytes]:
-    """把 `UploadFile` 变成异步分块迭代器（1 MiB/块）。
-
-    这样 `storage.stage()` 可以边收边写边算哈希，**不会把整个文件读进内存**。
-    """
-    while True:
-        chunk = await upload.read(CHUNK_SIZE)
-        if not chunk:
-            break
-        yield chunk
 
 
 __all__ = ["router"]

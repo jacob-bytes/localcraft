@@ -19,6 +19,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# PostgreSQL 驱动（契约 §18.5）。
+# 为什么是 optional extra 而不是默认依赖：默认走 SQLite 的部署不该被强装一个
+# PG 驱动；但「切 PG 只改连接串」这条承诺要成立，驱动必须**声明在案**且
+# 离线 wheelhouse 里能按需装上 —— 否则干净安装的机器上这句承诺是假的。
+pg = ["psycopg[binary]"]
 dev = [
     "pytest",
     "pytest-asyncio",

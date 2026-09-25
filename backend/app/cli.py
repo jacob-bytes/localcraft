@@ -50,6 +50,7 @@ from app.models.tool import Tool, ToolImage, ToolTag, ToolVersion
 from app.models.user import Role, User, UserRole
 from app.repositories.tags import normalize_tag_name
 from app.search import get_search_backend
+from app.storage import get_storage
 
 cli = typer.Typer(
     add_completion=False,
@@ -317,6 +318,17 @@ SEED_RANDOM_SEED = 20250101
 
 DEMO_ADMIN = ("admin", "Admin@12345", "管理员")
 DEMO_NEWBIE = ("newbie", "Newbie@12345", "新人小张")
+#: 只读访客（契约 §17.8）。与前端 mock 对齐 —— mock 比真实种子更完整是一种倒挂。
+DEMO_VIEWER = ("viewer", "Viewer@12345", "只读访客")
+#: 三个作者账号（契约 §14.6）。与前端 mock 对齐，也让「多作者」这一维度在种子里真实存在。
+DEMO_AUTHORS: tuple[tuple[str, str, str], ...] = (
+    ("zhangsan", "Author@12345", "张三"),
+    ("lisi", "Author@12345", "李四"),
+    ("wangwu", "Author@12345", "王五"),
+)
+#: 26 个工具的分配：前 8 个是边界子集（历史保留，含 2 个无封面、1 个超长名称），
+#: 其余 18 个是普通工具。按顺序轮流分给 admin / 三个作者，保证「多作者」可见。
+BOUNDARY_TOOL_COUNT = 8
 
 DEMO_CATEGORIES: tuple[tuple[str, str, str, str, int], ...] = (
     ("dev-tools", "研发工具", "面向研发日常的工具与脚手架", "wrench", 10),
@@ -324,6 +336,65 @@ DEMO_CATEGORIES: tuple[tuple[str, str, str, str, int], ...] = (
     ("skills", "Skill", "Agent Skill 包", "puzzle", 30),
     ("prompts", "提示词", "可复用的 Prompt 模板", "message-square", 40),
 )
+
+# ---------------------------------------------------------------------------
+# 契约 §14.6：种子扩到 26 个工具
+# ---------------------------------------------------------------------------
+# 目的：让 page_size 12 / 24 / 48 分别得到 3 / 2 / 1 页，分页在真实数据上可验证；
+# 同时让「多作者、多分类、多类型」这三个维度都有足量样本。
+# 这 18 个用**参数化生成**而不是手写 18 段字面量 —— 它们的差异只在类型/分类/作者，
+# 手写会带来 500 行噪声，且改一个字段要改 18 处。
+_EXTRA_TOOL_BLUEPRINT: tuple[tuple[str, str, str, str], ...] = (
+    # (中文名, tool_type, category, 主要标签)
+    ("接口压测台", "webapp", "dev-tools", "perf"),
+    ("依赖漏洞扫描", "file", "dev-tools", "security"),
+    ("SQL 慢查询分析", "file", "dev-tools", "database"),
+    ("前端脚手架", "file", "dev-tools", "frontend"),
+    ("代码规范检查器", "file", "dev-tools", "lint"),
+    ("提交信息生成器", "prompt", "prompts", "git"),
+    ("技术方案评审 Prompt", "prompt", "prompts", "review"),
+    ("故障复盘模板", "prompt", "prompts", "postmortem"),
+    ("周报汇总 Prompt", "prompt", "prompts", "report"),
+    ("日志聚类巡检", "file", "ops-tools", "log"),
+    ("证书到期巡检", "webapp", "ops-tools", "tls"),
+    ("磁盘水位看板", "webapp", "ops-tools", "storage"),
+    ("容器镜像瘦身", "file", "ops-tools", "docker"),
+    ("变更窗口检查", "file", "ops-tools", "change"),
+    ("需求拆解 Skill", "skill", "skills", "planning"),
+    ("单元测试生成 Skill", "skill", "skills", "testing"),
+    ("文档翻译 Skill", "skill", "skills", "i18n"),
+    ("接口文档校对 Skill", "skill", "skills", "openapi"),
+)
+
+
+def _extra_tool_specs() -> tuple[dict[str, Any], ...]:
+    """按蓝图生成 18 个普通工具定义（字段齐全，可直接交给播种逻辑）。"""
+    specs: list[dict[str, Any]] = []
+    for index, (name, tool_type, category, tag) in enumerate(_EXTRA_TOOL_BLUEPRINT, start=1):
+        slug = f"demo-tool-{index:02d}"
+        is_webapp = tool_type == "webapp"
+        specs.append(
+            {
+                "slug": slug,
+                "name": name,
+                "summary": f"{name}：面向内网的{name}，开箱即用，含使用说明与示例。",
+                "description_md": (
+                    f"# {name}\n\n## 用途\n\n{name}。\n\n"
+                    f"## 快速开始\n\n```bash\n{slug} --help\n```\n"
+                ),
+                "tool_type": tool_type,
+                "category": category,
+                "tags": [tag, "demo"],
+                "cover": index % 5 != 0,  # 每 5 个留 1 个无封面，让占位色块也有样本
+                "version": f"1.{index % 10}.0",
+                "webapp_url": f"http://{slug}.intra.example.com" if is_webapp else None,
+                "changelog": f"{name} 首次发布。",
+            }
+        )
+    return tuple(specs)
+
+
+DEMO_TOOLS_EXTRA: tuple[dict[str, Any], ...] = _extra_tool_specs()
 
 #: 8 个工具，覆盖全部 4 种类型、跨全部 4 个分类。
 #: `cover=False` 的两个（db-backup-toolkit / sql-optimize-prompt）用于验证占位色块。
@@ -498,6 +569,10 @@ DEMO_TOOLS: tuple[dict[str, Any], ...] = (
     },
 )
 
+#: 全部种子工具 = 8 个边界工具 + 18 个普通工具 = 26（契约 §14.6）
+#: 放在 DEMO_TOOLS 之后，因为 DEMO_TOOLS_EXTRA 由蓝图生成、定义在前面。
+ALL_DEMO_TOOLS: tuple[dict[str, Any], ...] = DEMO_TOOLS + DEMO_TOOLS_EXTRA
+
 
 @cli.command("seed-demo")
 def seed_demo() -> None:
@@ -587,6 +662,52 @@ async def _get_or_create_tag(
     return tag
 
 
+def _build_seed_package(*, slug: str, version: str, tool_type: str) -> bytes:
+    """生成一个**真实的** zip 占位包（契约 §17.9）。
+
+    为什么必须真落盘：种子里 file/skill 工具的版本原先只有 `file_size` 没有
+    `storage_path`/`sha256`，于是接口向用户与验收测试广告「可下载、有大小」，
+    点下去必然失败 —— 这比诚实地说「不可下载」更有害。
+    """
+    import io
+    import zipfile
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        if tool_type == ToolType.SKILL.value:
+            archive.writestr(
+                "SKILL.md",
+                f"---\nname: {slug}\nversion: {version}\n---\n"
+                f"# {slug}\n\n演示用 Skill 包（seed-demo 生成）。\n",
+            )
+            archive.writestr("scripts/run.py", "print('demo skill')\n")
+        else:
+            archive.writestr(
+                "README.md",
+                f"# {slug}\n\n版本 {version}，由 seed-demo 生成的演示包。\n",
+            )
+            archive.writestr("bin/run.sh", "#!/bin/sh\necho demo\n")
+    return buffer.getvalue()
+
+
+def _build_seed_png(seed: int, *, width: int = 64, height: int = 36) -> bytes:
+    """生成一张真实的小 PNG（纯色），用于种子封面。
+
+    同样必须真落盘：`/api/v1/images/{id}` 会检查文件是否存在，
+    只写数据库路径的话，所有种子封面都会 404 —— 而前端会把它当成破图。
+    用 Pillow 生成，不引入新的二进制资源文件。
+    """
+    from PIL import Image
+
+    color = ((seed * 53) % 256, (seed * 97) % 256, (seed * 193) % 256)
+    image = Image.new("RGB", (width, height), color)
+    import io
+
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
 async def _seed_demo() -> None:
     rng = random.Random(SEED_RANDOM_SEED)
     now = utcnow()
@@ -612,6 +733,34 @@ async def _seed_demo() -> None:
             must_change_password=True,
             now=now,
         )
+        # viewer（契约 §17.8）+ 三个作者（契约 §14.6）。
+        # 与前端 mock 对齐：mock 比真实种子更完整会掩盖端到端差异。
+        _viewer, viewer_created = await _upsert_user(
+            session,
+            username=DEMO_VIEWER[0],
+            password=DEMO_VIEWER[1],
+            display_name=DEMO_VIEWER[2],
+            role_code=RoleCode.VIEWER.value,
+            must_change_password=False,
+            now=now,
+        )
+        author_objs: list[User] = []
+        authors_created = 0
+        for username, password, display_name in DEMO_AUTHORS:
+            author, created = await _upsert_user(
+                session,
+                username=username,
+                password=password,
+                display_name=display_name,
+                role_code=RoleCode.USER.value,
+                must_change_password=False,
+                now=now,
+            )
+            author_objs.append(author)
+            authors_created += int(created)
+        # 26 个工具的归属：前 8 个边界工具归 admin，其余轮流给三个作者，
+        # 这样「按作者筛选」在种子上就有真实样本。
+        owner_pool: list[User] = [admin, *author_objs]
 
         # ---- 分类 ----
         categories: dict[str, Category] = {}
@@ -620,7 +769,7 @@ async def _seed_demo() -> None:
 
         # ---- 工具 ----
         created_tools = 0
-        for index, spec in enumerate(DEMO_TOOLS):
+        for index, spec in enumerate(ALL_DEMO_TOOLS):
             result = await session.execute(select(Tool).where(Tool.slug == spec["slug"]))
             if result.scalar_one_or_none() is not None:
                 continue
@@ -638,6 +787,11 @@ async def _seed_demo() -> None:
                     )
                 )
 
+            owner = owner_pool[0] if index < BOUNDARY_TOOL_COUNT else (
+                owner_pool[1 + (index - BOUNDARY_TOOL_COUNT) % len(owner_pool[1:])]
+                if len(owner_pool) > 1
+                else owner_pool[0]
+            )
             tool = Tool(
                 slug=spec["slug"],
                 name=spec["name"],
@@ -646,7 +800,7 @@ async def _seed_demo() -> None:
                 tool_type=spec["tool_type"],
                 visibility=ToolVisibility.PUBLIC.value,
                 status=ToolStatus.APPROVED.value,
-                owner_id=admin.id,
+                owner_id=owner.id,
                 category_id=categories[spec["category"]].id,
                 webapp_url=spec.get("webapp_url"),
                 download_count=download_count,
@@ -660,20 +814,43 @@ async def _seed_demo() -> None:
             session.add(tool)
             await session.flush()
 
+            # ---- 真实落盘（契约 §17.9）----
+            # file / skill 必须有真实包；webapp / prompt 本就无文件，
+            # 因此 file_size 一律为 None —— 不允许「有大小、可下载、但无文件」。
+            has_package = spec["tool_type"] in (
+                ToolType.FILE.value,
+                ToolType.SKILL.value,
+            )
+            stored_path: str | None = None
+            stored_size: int | None = None
+            stored_sha: str | None = None
+            stored_name: str | None = None
+            if has_package:
+                payload = _build_seed_package(
+                    slug=spec["slug"], version=spec["version"], tool_type=spec["tool_type"]
+                )
+                stored = await get_storage().write_bytes_atomic(
+                    payload,
+                    directory=f"tools/{tool.id}",
+                    file_name=f"{spec['slug']}-{spec['version']}.zip",
+                )
+                stored_path = stored.storage_path
+                stored_size = stored.size
+                stored_sha = stored.sha256
+                stored_name = f"{spec['slug']}-{spec['version']}.zip"
+
             version = ToolVersion(
                 tool_id=tool.id,
                 version=spec["version"],
                 changelog_md=spec["changelog"],
                 status=VersionStatus.APPROVED.value,
                 is_current=True,
-                file_name=(
-                    None
-                    if spec["tool_type"] == ToolType.WEBAPP.value
-                    else f"{spec['slug']}-{spec['version']}.zip"
-                ),
-                file_size=spec.get("file_size"),
-                file_ext=None if spec["tool_type"] == ToolType.WEBAPP.value else "zip",
-                mime_type=None if spec["tool_type"] == ToolType.WEBAPP.value else "application/zip",
+                storage_path=stored_path,
+                file_name=stored_name,
+                file_size=stored_size,
+                file_sha256=stored_sha,
+                file_ext="zip" if has_package else None,
+                mime_type="application/zip" if has_package else None,
                 prompt_content=(
                     spec["description_md"] if spec["tool_type"] == ToolType.PROMPT.value else None
                 ),
@@ -719,23 +896,30 @@ async def _seed_demo() -> None:
                 tag.usage_count = (tag.usage_count or 0) + 1
 
             if spec["cover"]:
+                # 真实 PNG（原图 + 缩略图都落盘），否则 /api/v1/images/{id} 会 404
+                cover_bytes = _build_seed_png(index, width=320, height=180)
+                thumb_bytes = _build_seed_png(index + 500, width=160, height=90)
+                cover_file = await get_storage().write_bytes_atomic(
+                    cover_bytes, directory=f"images/{tool.id}", file_name="cover.png"
+                )
+                thumb_file = await get_storage().write_bytes_atomic(
+                    thumb_bytes, directory=f"images/{tool.id}", file_name="cover.thumb.png"
+                )
                 image = ToolImage(
                     tool_id=tool.id,
                     version_id=version.id,
                     kind=ImageKind.COVER.value,
-                    # 相对 DATA_DIR 的路径；M1 尚未实现 /api/v1/images/{id}，
-                    # 详见 checkpoint 报告的「待裁决」条目
-                    storage_path=f"files/images/{tool.id}/cover.png",
-                    thumb_path=f"files/images/{tool.id}/cover.thumb.png",
+                    storage_path=cover_file.storage_path,
+                    thumb_path=thumb_file.storage_path,
                     file_name="cover.png",
                     mime_type="image/png",
-                    file_size=48_000 + index * 1_000,
-                    width=1280,
-                    height=720,
-                    sha256=f"{index:064d}",
+                    file_size=cover_file.size,
+                    width=320,
+                    height=180,
+                    sha256=cover_file.sha256,
                     sort_order=0,
                     alt_text=f"{spec['name']} 封面",
-                    uploaded_by_id=admin.id,
+                    uploaded_by_id=owner.id,
                     created_at=published_at,
                 )
                 session.add(image)
@@ -763,9 +947,21 @@ async def _seed_demo() -> None:
         f"        {DEMO_NEWBIE[0]} / {DEMO_NEWBIE[1]}"
         f"{'（新建）' if newbie_created else '（已存在，跳过）'}"
     )
+    typer.echo(
+        f"        {DEMO_VIEWER[0]} / {DEMO_VIEWER[1]}（角色 viewer）"
+        f"{'（新建）' if viewer_created else '（已存在，跳过）'}"
+    )
+    for username, password, _dn in DEMO_AUTHORS:
+        typer.echo(f"        {username} / {password}{'（新建）' if authors_created else ''}")
     typer.echo(f"  分类：{len(DEMO_CATEGORIES)} 个")
-    typer.echo(f"  工具：{created_tools} 个新建（共 {len(DEMO_TOOLS)} 个定义，已存在的跳过）")
-    typer.echo("  无封面工具：db-backup-toolkit-5e90、sql-optimize-prompt-4c02")
+    typer.echo(
+        f"  工具：{created_tools} 个新建（共 {len(ALL_DEMO_TOOLS)} 个定义，已存在的跳过）"
+    )
+    typer.echo(
+        "  边界工具 8 个：含 2 个无封面（db-backup-toolkit-5e90、"
+        "sql-optimize-prompt-4c02）与 1 个超长名称"
+    )
+    typer.echo("  file/skill 工具均已落盘真实占位包并写入 sha256（契约 §17.9）")
 
 
 def _search_doc(spec: dict[str, Any]) -> Any:

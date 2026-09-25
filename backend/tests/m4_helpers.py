@@ -13,15 +13,13 @@ DOCS_03 = (
     pathlib.Path(__file__).resolve().parents[2] / "docs" / "03-API接口清单.md"
 )
 
-#: §2.5 总表**刻意未单列**的两个接口（docs/03 第 1099 行有明确说明）：
-#: 「这两个接口在总表中未单列，属于 `/api/v1/admin/tools` 资源下的子操作，
-#:   实现时一并提供。」所以比对时要显式把它们排除在「多余」之外。
-DOCUMENTED_TABLE_OMISSIONS: frozenset[tuple[str, str]] = frozenset(
-    {
-        ("POST", "/api/v1/admin/tools"),
-        ("POST", "/api/v1/admin/tools/{id}/versions"),
-    }
-)
+#: §2.5 总表**刻意未单列**、但实现里有的接口。
+#:
+#: M4 时这里是那两个「管理侧代创建/代上传」接口（docs/03 第 1099 行说明它们
+#: 「在总表中未单列」）。**M5 起监控方已把它们回填进 §2.5**，所以这个豁免集
+#: 现在是空的 —— 保留这个常量是为了让「文档缺项」这件事一旦再次出现时，
+#: 必须显式登记到这里、并且报告里能看见，而不是悄悄放过。
+DOCUMENTED_TABLE_OMISSIONS: frozenset[tuple[str, str]] = frozenset()
 
 
 def normalized_omissions() -> set[tuple[str, str]]:

@@ -36,6 +36,7 @@ from app.schemas.tool import (
     ToolListResponse,
 )
 from app.schemas.version import SkillTreeSummary, SkillVersionInfo, VersionUploader
+from app.services import image_signature_service
 from app.services.markdown_service import render_markdown
 
 #: 能看到「有新版本待审」角标的角色（docs/03 §3.3，SRS 待确认 Q3）
@@ -44,12 +45,12 @@ PENDING_VISIBLE_ROLES: frozenset[str] = frozenset(
 )
 
 
-def cover_url_for(tool: Tool) -> str | None:
-    """封面图走 `/api/v1/images/{id}` 接口而不是静态路径 ——
+def cover_url_for(tool: Tool, *, ttl_hours: int) -> str | None:
+    """封面图走带签名的 `/api/v1/images/{id}` URL（契约 §14.3）。
     接口内做可见性校验，避免用裸 ID 枚举（docs/02 §1.4）。"""
     if tool.cover_image_id is None:
         return None
-    return f"/api/v1/images/{tool.cover_image_id}?variant=thumb"
+    return image_signature_service.cover_url_for(tool.cover_image_id, ttl_hours=ttl_hours)
 
 
 def build_list_item(
@@ -58,6 +59,7 @@ def build_list_item(
     viewer_user_id: int | None,
     viewer_roles: frozenset[str] | set[str],
     can_download: bool,
+    ttl_hours: int,
 ) -> ToolListItem:
     """ORM → 卡片。字段逐条对应 docs/03 §3.3 的响应示例。"""
     sees_pending = viewer_user_id == tool.owner_id or bool(
@@ -84,7 +86,7 @@ def build_list_item(
         # 展示用 display_name（保留原始大小写）；服务端对 `?tag=` 入参做同样的
         # 归一化，所以前端拿这个值回填 URL 依然能正确筛选（FR-TAX-03）。
         tags=[t.display_name for t in tool.tags],
-        cover_url=cover_url_for(tool),
+        cover_url=cover_url_for(tool, ttl_hours=ttl_hours),
         owner=UserBrief(
             id=tool.owner.id,
             username=tool.owner.username,
@@ -118,6 +120,8 @@ async def list_portal_tools(
     **`facets` 只在 `page == 1` 时返回**，翻页时整个键省略（docs/03 §3.3），
     避免每次翻页都重复算一遍聚合。
     """
+    # 每个请求解析一次签名 TTL（内部有 60 秒进程内缓存），避免逐条工具查设置
+    ttl_hours = await image_signature_service.get_ttl_hours(session)
     total = await tools_repo.count_portal_tools(session, visibility=visibility, filters=filters)
     rows = await tools_repo.list_portal_tools(
         session,
@@ -133,16 +137,17 @@ async def list_portal_tools(
             viewer_user_id=visibility.user_id,
             viewer_roles=viewer_roles,
             can_download=can_download,
+            ttl_hours=ttl_hours,
         )
         for tool in rows
     ]
 
     facets: ToolFacets | None = None
     if page == 1:
-        facets = ToolFacets(
-            categories=await tools_repo.build_category_facets(session, visibility=visibility),
-            types=await tools_repo.build_type_facets(session, visibility=visibility),
-        )
+        # M5：一次调用同时取回两组 facets（内部合成一条聚合 + 30 秒短时缓存）。
+        # 原先这里调两个函数，各自算一遍可见性聚合。
+        categories, types = await tools_repo.build_facets(session, visibility=visibility)
+        facets = ToolFacets(categories=categories, types=types)
 
     pages = math.ceil(total / page_size) if page_size else 0
     return ToolListResponse(
@@ -265,13 +270,16 @@ _SUBMITTABLE_STATUSES: frozenset[str] = frozenset(
 )
 
 
-def image_urls(image_id: int) -> tuple[str, str]:
-    """图片的访问与缩略图 URL（走接口而不是静态路径，接口内做可见性校验）。"""
-    return f"/api/v1/images/{image_id}", f"/api/v1/images/{image_id}?variant=thumb"
+def image_urls(image_id: int, *, ttl_hours: int) -> tuple[str, str]:
+    """图片的签名 URL（原图, 缩略图）。"""
+    return (
+        image_signature_service.image_url(image_id, "full", ttl_hours=ttl_hours),
+        image_signature_service.image_url(image_id, "thumb", ttl_hours=ttl_hours),
+    )
 
 
-def build_image_out(image: ToolImage) -> ImageOut:
-    url, thumb = image_urls(image.id)
+def build_image_out(image: ToolImage, *, ttl_hours: int) -> ImageOut:
+    url, thumb = image_urls(image.id, ttl_hours=ttl_hours)
     return ImageOut(
         id=image.id,
         kind=image.kind,
@@ -361,6 +369,7 @@ async def build_detail(
     include_acl: bool = False,
 ) -> ToolDetail:
     """组装 `GET /tools/{slug}` 的响应（docs/03 §3.4）。"""
+    ttl_hours = await image_signature_service.get_ttl_hours(session)
     images = await tool_images_repo.list_for_tool(session, tool.id)
     current = (
         await tool_versions_repo.get_by_id(session, tool.current_version_id)
@@ -416,7 +425,7 @@ async def build_detail(
             else None
         ),
         tags=[t.display_name for t in tool.tags],
-        images=[build_image_out(image) for image in images],
+        images=[build_image_out(image, ttl_hours=ttl_hours) for image in images],
         webapp_url=tool.webapp_url,
         current_version=build_version_detail(current),
         pending_version=(

@@ -64,7 +64,10 @@ run_maint() {
 }
 
 start_service() {
-    set -a; . "$VENVF"; set +a
+    set -a
+    # shellcheck disable=SC1090  # $VENVF 由命令行动态决定，shellcheck 无法静态跟踪
+    . "$VENVF"
+    set +a
     ( cd "$SANDBOX/opt/app/current" || exit 1
       nohup "$VPY" -m uvicorn app.main:app --host 127.0.0.1 --port "$PORT" --workers 1 \
           >> "$SANDBOX/log/selftool-stdout.log" 2>&1 &
@@ -97,7 +100,10 @@ start_service
 # 不能假设"上一步的备份演练已经造好数据"。
 ADMIN_PW="Drill@M4passw0rd"
 if [ "$(q 'SELECT COUNT(*) FROM users;')" -eq 0 ]; then
-    set -a; . "$VENVF"; set +a
+    set -a
+    # shellcheck disable=SC1090  # $VENVF 由命令行动态决定，shellcheck 无法静态跟踪
+    . "$VENVF"
+    set +a
     ( cd "$SANDBOX/opt/app/current" && \
       printf '%s\n%s\n' "$ADMIN_PW" "$ADMIN_PW" | \
       "$VPY" -m app.cli create-superadmin --username admin --email admin@drill.local \

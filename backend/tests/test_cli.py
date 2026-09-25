@@ -86,8 +86,8 @@ def test_seed_demo_creates_contract_fixture(cli_db) -> None:
     first = _run(["app.cli", "seed-demo"], env)
     assert first.returncode == 0, first.stderr
 
-    assert _query(db_path, "SELECT COUNT(*) FROM tools")[0][0] == 8
-    assert _query(db_path, "SELECT COUNT(*) FROM tool_versions")[0][0] == 8
+    assert _query(db_path, "SELECT COUNT(*) FROM tools")[0][0] == 26
+    assert _query(db_path, "SELECT COUNT(*) FROM tool_versions")[0][0] == 26
     assert _query(db_path, "SELECT COUNT(*) FROM categories")[0][0] == 4
 
     # 用户
@@ -98,12 +98,12 @@ def test_seed_demo_creates_contract_fixture(cli_db) -> None:
     assert users["newbie"] == 1, "newbie 必须 must_change_password=true（契约 §7）"
 
     # 四种类型、四个分类都要覆盖
-    assert dict(_query(db_path, "SELECT tool_type, COUNT(*) FROM tools GROUP BY tool_type")) == {
-        "file": 2,
-        "webapp": 2,
-        "skill": 2,
-        "prompt": 2,
-    }
+    # M5（契约 §14.6）：种子从 8 个扩到 26 个 —— 前 8 个是边界子集，另加 18 个普通工具。
+    # 这条断言真正想保证的是「四种类型都有样本」，数量本身由上面的总数断言覆盖。
+    by_type = dict(_query(db_path, "SELECT tool_type, COUNT(*) FROM tools GROUP BY tool_type"))
+    assert set(by_type) == {"file", "skill", "prompt", "webapp"}, by_type
+    assert sum(by_type.values()) == 26, by_type
+    assert all(count >= 2 for count in by_type.values()), by_type
     assert _query(
         db_path, "SELECT COUNT(DISTINCT category_id) FROM tools"
     )[0][0] == 4
@@ -113,7 +113,7 @@ def test_seed_demo_creates_contract_fixture(cli_db) -> None:
         db_path,
         "SELECT COUNT(*) FROM tools WHERE status='approved' AND visibility='public' "
         "AND deleted_at IS NULL",
-    )[0][0] == 8
+    )[0][0] == 26
 
     # 至少 2 个无封面
     assert _query(db_path, "SELECT COUNT(*) FROM tools WHERE cover_image_id IS NULL")[0][0] >= 2
@@ -178,7 +178,7 @@ def test_seed_demo_random_values_are_deterministic(cli_db, tmp_path_factory) -> 
 
 def test_seed_demo_populates_search_index(cli_db) -> None:
     db_path, _ = cli_db
-    assert _query(db_path, "SELECT COUNT(*) FROM tool_search_index")[0][0] == 8
+    assert _query(db_path, "SELECT COUNT(*) FROM tool_search_index")[0][0] == 26
 
 
 # ---------------------------------------------------------------------------

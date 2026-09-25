@@ -54,6 +54,29 @@ verify_one() {
     total="$(find "$dir" -maxdepth 1 -name '*.whl' | wc -l | tr -d ' ')"
     [ "$total" -gt 0 ] && ok "含 $total 个 wheel" || { bad "目录为空"; return; }
 
+    # ---- 1b) 关键包必须在场 ----
+    # 这些包缺了会导致特定路径不可用而非整体装不上，pip 解析不会报错，
+    # 所以必须显式点名检查（契约 §18.5 的 psycopg 就是这一类）。
+    local pkg missing_pkgs=""
+    for pkg in psycopg psycopg_binary pip setuptools wheel; do
+        if ! find "$dir" -maxdepth 1 -name "${pkg}-*.whl" | grep -q .; then
+            missing_pkgs="${missing_pkgs} ${pkg}"
+        fi
+    done
+    if [ -z "$missing_pkgs" ]; then
+        ok "关键包在场（psycopg / psycopg_binary / pip / setuptools / wheel）"
+    else
+        bad "缺少关键包：${missing_pkgs}（离线时相应路径不可用）"
+    fi
+    # 原生扩展重点核验（M4/M5 明确列出）
+    for pkg in pillow greenlet pydantic_core argon2_cffi_bindings; do
+        if find "$dir" -maxdepth 1 -name "${pkg}-*.whl" | grep -q .; then
+            ok "原生扩展在场：${pkg}"
+        else
+            bad "缺少原生扩展：${pkg}"
+        fi
+    done
+
     # ---- 2) 零 sdist ----
     local sdists
     sdists="$(find "$dir" -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.tgz' -o -name '*.zip' \) -exec basename {} \;)"

@@ -40,6 +40,10 @@ APP_LINK="$PREFIX/app/current"
 ENV_FILE="$ETC_DIR/selftool.env"
 SKIP_SYSTEMD="${SELTOOL_SKIP_SYSTEMD:-0}"
 PID_FILE="$DATA_DIR/selftool.pid"
+# systemd 相关落位。做成变量是为了让"演练/沙箱"也能验证安装链路，
+# 生产默认值与 docs/05 §4.2 的对应表完全一致。
+SYSTEMD_UNIT_DIR="${SELTOOL_SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
+TMPFILES_DIR="${SELTOOL_TMPFILES_DIR:-/usr/lib/tmpfiles.d}"
 
 log()  { printf '\n\033[1;32m==> %s\033[0m\n' "$*"; }
 warn() { printf '\n\033[1;33m[warn] %s\033[0m\n' "$*"; }
@@ -222,9 +226,30 @@ if [ "$SKIP_SYSTEMD" != "1" ]; then
     for unit in selftool.slice selftool.service selftool-backup.service \
                 selftool-backup.timer selftool-maintenance.service selftool-maintenance.timer; do
         if [ -f "$RELEASE_DIR/deploy/systemd/$unit" ]; then
-            install -m 0644 "$RELEASE_DIR/deploy/systemd/$unit" /etc/systemd/system/
+            install -m 0644 "$RELEASE_DIR/deploy/systemd/$unit" "$SYSTEMD_UNIT_DIR/"
         fi
     done
+    # 资源上限/加固片段必须装进 drop-in 目录：systemd 不支持 unit 之间 include，
+    # 只有 <unit>.d/*.conf 才会被自动叠加（详见 deploy/selftool-limits.conf 的文件头说明）。
+    if [ -f "$RELEASE_DIR/deploy/systemd/selftool.service.d/limits.conf" ]; then
+        install -d -m 0755 "$SYSTEMD_UNIT_DIR/selftool.service.d"
+        install -m 0644 "$RELEASE_DIR/deploy/systemd/selftool.service.d/limits.conf" \
+            "$SYSTEMD_UNIT_DIR/selftool.service.d/limits.conf"
+    else
+        warn "发布包内没有 deploy/systemd/selftool.service.d/limits.conf，跳过 drop-in 安装"
+    fi
+    # systemd-tmpfiles：声明式创建运行目录与权限；随后立刻 apply 一次，
+    # 免得"配置装了但要等下次开机才生效"。
+    if [ -f "$RELEASE_DIR/deploy/selftool.tmpfiles" ]; then
+        install -d -m 0755 "$TMPFILES_DIR"
+        install -m 0644 "$RELEASE_DIR/deploy/selftool.tmpfiles" "$TMPFILES_DIR/selftool.conf"
+        if command -v systemd-tmpfiles >/dev/null 2>&1; then
+            systemd-tmpfiles --create "$TMPFILES_DIR/selftool.conf" || \
+                warn "systemd-tmpfiles --create 返回非零（目录可能已由 install -d 建好），继续"
+        fi
+    else
+        warn "发布包内没有 deploy/selftool.tmpfiles，跳过 tmpfiles 安装"
+    fi
     if [ -f "$RELEASE_DIR/deploy/logrotate/selftool" ]; then
         install -m 0644 "$RELEASE_DIR/deploy/logrotate/selftool" /etc/logrotate.d/selftool
     fi
@@ -233,7 +258,10 @@ if [ "$SKIP_SYSTEMD" != "1" ]; then
     systemctl restart selftool.service
 else
     # 演练模式：没有 systemd，用 nohup 直接拉起同一个 uvicorn 命令（参数与 unit 一致）
-    set -a; . "$ENV_FILE"; set +a
+    set -a
+    # shellcheck disable=SC1090  # 动态路径 source，shellcheck 无法静态跟踪
+    . "$ENV_FILE"
+    set +a
     : > "$LOG_DIR/selftool-stdout.log"
     (
         cd "$APP_LINK"
@@ -279,6 +307,14 @@ cat <<EOF
 2) 配置 nginx（先用 HTTP 快速验证版）
    install -m 0644 $RELEASE_DIR/deploy/nginx/selftool-http.conf /etc/nginx/conf.d/selftool.conf
    nginx -t && systemctl reload nginx
+
+   验证通过后切生产 TLS（证书放到 $ETC_DIR/tls/）：
+     rm -f /etc/nginx/conf.d/selftool-http.conf
+     install -m 0644 $RELEASE_DIR/deploy/nginx/selftool-limits.conf /etc/nginx/conf.d/selftool-limits.conf
+     install -m 0644 $RELEASE_DIR/deploy/nginx/selftool.conf       /etc/nginx/conf.d/selftool.conf
+     nginx -t && systemctl reload nginx
+   （selftool-http.conf 自带一份 zone/log_format 定义，与 selftool-limits.conf 同名，
+     两者不能同时安装，否则 nginx 会因重复定义而启动失败）
 
 3) 验证
    curl -sS http://127.0.0.1:${SELTOOL_PORT:-8000}/healthz

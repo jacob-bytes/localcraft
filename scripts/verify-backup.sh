@@ -147,7 +147,7 @@ else
             CHECKED=$((CHECKED + 1))
             rel_in_snap="${rel#files/}"
             if [ ! -e "$LATEST_FILES/$rel_in_snap" ]; then
-                MISSING=$((MISSING + 1)); warn "文件快照里缺少: $rel（查的是 $rel_in_snap）"
+                MISSING=$((MISSING + 1)); warn "文件快照里缺少: ${rel}（查的是 ${rel_in_snap}）"
             fi
         done < <(sqlite3 "$CAND" "SELECT storage_path FROM tool_versions WHERE storage_path IS NOT NULL ORDER BY RANDOM() LIMIT ${SAMPLE_LIMIT};" 2>/dev/null)
         if [ "$CHECKED" -eq 0 ]; then
@@ -168,6 +168,24 @@ echo "-- 4) 保留份数与磁盘"
 N_DB="$(find "$DB_DIR" -maxdepth 1 \( -name 'selftool-*.db' -o -name 'selftool-*.db.gz' \) | wc -l | tr -d ' ')"
 N_FILES="$(find "$FILES_BACKUP_DIR" -maxdepth 1 -type d -name 'files-*' 2>/dev/null | wc -l | tr -d ' ')"
 ok "数据库快照 ${N_DB} 份 / 文件快照 ${N_FILES} 份"
+# --expect-files：把"文件快照里到底有多少个文件"与期望值对账。
+# 数量对不上通常意味着某次 rsync 中断或源目录被清理过，属于"备份存在但内容不完整"。
+case "$EXPECT_FILES" in
+    '') : ;;
+    *[!0-9]*) warn "忽略非数字的 --expect-files 取值: ${EXPECT_FILES}" ;;
+    *)
+        if [ -n "$LATEST_FILES" ]; then
+            GOT_FILES="$(find "$LATEST_FILES" -type f 2>/dev/null | wc -l | tr -d ' ')"
+            if [ "$GOT_FILES" -eq "$EXPECT_FILES" ]; then
+                ok "文件快照文件数符合期望：${GOT_FILES}"
+            else
+                bad "文件快照文件数不符：期望 ${EXPECT_FILES}，实际 ${GOT_FILES}"
+            fi
+        else
+            warn "没有文件快照，跳过 --expect-files 对账"
+        fi
+        ;;
+esac
 FREE_MB="$(df -Pk "$BACKUP_ROOT" | awk 'NR==2 {printf "%d", $4/1024}')"
 if [ "$FREE_MB" -lt 1024 ]; then bad "备份分区剩余仅 ${FREE_MB} MB"; else ok "备份分区剩余 ${FREE_MB} MB"; fi
 

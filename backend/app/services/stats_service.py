@@ -21,6 +21,7 @@ from app.models.taxonomy import Category, Tag
 from app.models.tool import Tool, ToolVersion
 from app.models.user import ApiToken, Group, User
 from app.repositories import api_tokens as tokens_repo
+from app.repositories import system_settings as settings_repo
 from app.schemas.admin import (
     AdminOverviewResponse,
     StatusCount,
@@ -29,6 +30,7 @@ from app.schemas.admin import (
     ToolRankItem,
     ToolRankResponse,
 )
+from app.services import settings_service
 
 #: 状态展示顺序（概览页按这个顺序列出，保证前端渲染稳定）
 STATUS_ORDER: tuple[str, ...] = (
@@ -107,6 +109,12 @@ async def overview(session: AsyncSession) -> AdminOverviewResponse:
         or 51200
     )
     quota_bytes = quota_mb * 1024 * 1024
+    # 告警阈值与判断口径统一走 settings_service（契约 §18.6：只写一处）
+    warn_pct = await settings_repo.get_effective_int(
+        session,
+        "quota.warn_threshold_pct",
+        settings_service.STORAGE_WARNING_DEFAULT_PCT,
+    )
     recycle_count = int(
         (
             await session.execute(
@@ -140,6 +148,8 @@ async def overview(session: AsyncSession) -> AdminOverviewResponse:
         used_bytes=used_bytes,
         quota_bytes=quota_bytes,
         used_percent=round(used_bytes / quota_bytes * 100, 2) if quota_bytes else 0.0,
+        storage_warning=settings_service.storage_warning(used_bytes, quota_bytes, warn_pct),
+        storage_warning_threshold_pct=warn_pct,
         downloads_last_7_days=last7,
         recycle_bin_count=recycle_count,
     )

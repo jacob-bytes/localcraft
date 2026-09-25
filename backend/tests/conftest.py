@@ -290,15 +290,35 @@ async def _seed() -> Seeded:
 
         # ---- 一张封面图，用于验证 cover_url ----
         cover_tool = data.tools["public-approved"]
+        # 封面必须是**真文件**：`/api/v1/images/{id}` 会检查磁盘上有没有它，
+        # 只写数据库路径的话，所有带封面的断言都会 404（M5 发现并修正）。
+        import io as _io
+
+        from PIL import Image as _Image
+
+        from app.storage import get_storage as _get_storage
+
+        def _png(color: tuple[int, int, int], size: tuple[int, int]) -> bytes:
+            buf = _io.BytesIO()
+            _Image.new("RGB", size, color).save(buf, format="PNG")
+            return buf.getvalue()
+
+        _storage = _get_storage()
+        _cover = await _storage.write_bytes_atomic(
+            _png((40, 90, 160), (320, 180)), directory="images/1", file_name="cover.png"
+        )
+        _thumb = await _storage.write_bytes_atomic(
+            _png((90, 140, 200), (160, 90)), directory="images/1", file_name="cover.thumb.png"
+        )
         image = ToolImage(
             tool_id=cover_tool,
             kind=ImageKind.COVER.value,
-            storage_path="files/images/1/cover.png",
-            thumb_path="files/images/1/cover.thumb.png",
+            storage_path=_cover.storage_path,
+            thumb_path=_thumb.storage_path,
             file_name="cover.png",
             mime_type="image/png",
-            file_size=1234,
-            sha256="a" * 64,
+            file_size=_cover.size,
+            sha256=_cover.sha256,
             uploaded_by_id=data.users["admin"],
             created_at=now,
         )

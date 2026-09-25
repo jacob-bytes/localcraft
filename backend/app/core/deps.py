@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import (
     AccountDisabledError,
     ForbiddenError,
+    NotFoundError,
     PasswordChangeRequiredError,
     ScopeMissingError,
     TokenExpiredError,
@@ -29,7 +30,12 @@ from app.core.errors import (
     UnauthenticatedError,
 )
 from app.core.permissions import ALL_PERMISSIONS, PERM_DOWNLOAD, permissions_for_roles
-from app.core.security import API_TOKEN_PREFIX, decode_access_token, hash_api_token
+from app.core.security import (
+    API_TOKEN_PREFIX,
+    decode_access_token,
+    hash_api_token,
+    verify_image_signature,
+)
 from app.core.timeutil import ensure_utc, utcnow
 from app.db.session import get_db
 from app.models.enums import ApiScope, UserStatus
@@ -364,17 +370,73 @@ async def portal_access(
     return PortalAccess(principal=principal, request_id=request.state.request_id)
 
 
+@_mark_auth
+async def image_access(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> PortalAccess:
+    """图片接口的鉴权依赖：**能力签名** 或 **Authorization 头**，二选一（契约 §14.3）。
+
+    为什么必须做成依赖而不是写在路由体里：守卫测试要求每个非公开路由都挂
+    带 `AUTH_DEP_ATTR` 的依赖。把这个判定放在这里，守卫测试才看得见它。
+
+    规则：
+      - `?sig=` 有效 → 放行。此时 `principal` 可能为 None（匿名拿签名 URL 取图），
+        路由体仍会照常做父工具可见性校验 —— **签名不是绕过可见性的后门**。
+      - 签名无效/缺失 → 回退到 `resolve_principal`；没有有效凭证就 404，
+        与「图片不存在」同码，避免用状态码差异探测资源。
+    """
+    image_id_raw = request.path_params.get("image_id")
+    variant = request.query_params.get("variant") or "full"
+    sig = request.query_params.get("sig")
+
+    signed_ok = False
+    if image_id_raw is not None and sig:
+        try:
+            signed_ok = verify_image_signature(int(image_id_raw), variant, sig)
+        except (TypeError, ValueError):
+            signed_ok = False
+
+    principal = await resolve_principal(request, session)
+
+    if not signed_ok and principal is None:
+        # 两条路径都不成立 —— 与「资源不存在」同码
+        raise NotFoundError(message="资源不存在")
+
+    if principal is not None:
+        if principal.must_change_password:
+            raise PasswordChangeRequiredError()
+        if (
+            principal.is_api_token
+            and ApiScope.TOOLS_READ.value not in principal.permissions
+        ):
+            raise ScopeMissingError([ApiScope.TOOLS_READ.value])
+
+    return PortalAccess(principal=principal, request_id=request.state.request_id)
+
+
+_mark_password_gate(image_access)
+
+
 _mark_password_gate(portal_access)
 
 
 async def get_visibility_context(
     session: Annotated[AsyncSession, Depends(get_db)],
-    access: Annotated[PortalAccess, Depends(portal_access)],
+    request: Request,
 ) -> Any:
-    """把 `PortalAccess` 编译成 SQL 可见性上下文（含所属用户组）。"""
+    """把当前请求的身份编译成 SQL 可见性上下文（含所属用户组）。
+
+    **刻意不依赖 `portal_access`**：图片路由走「能力签名」时是匿名的
+    （`<img>` 标签带不上 Authorization 头），而 `portal_access` 在
+    `portal.allow_anonymous_view=false` 时会直接 401 —— 那会让所有
+    签名图片全部加载失败。这里的职责只是「把已知身份翻译成可见性谓词」，
+    至于「能不能访问」由各路由自己的鉴权依赖（`portal_access` /
+    `image_access` / `download_access`）负责。
+    """
     from app.repositories.tools import VisibilityContext
 
-    principal = access.principal
+    principal = await resolve_principal(request, session)
     policy = await settings_service.get_security_policy(session)
     return await VisibilityContext.build(
         session,

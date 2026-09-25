@@ -102,16 +102,56 @@ fi
 log "5/7 复制运维产物（deploy/ 与 scripts/）"
 rsync -a --delete "$ROOT/scripts/" "$STAGE/scripts/"
 
-# deploy/ 在仓库里是平铺的，发布包里按 docs/05 §4.1 重新组织成分目录
-install -d "$STAGE/deploy/systemd" "$STAGE/deploy/nginx" "$STAGE/deploy/logrotate"
-install -m 0644 "$ROOT/deploy/selftool.service"  "$STAGE/deploy/systemd/selftool.service"
-install -m 0644 "$ROOT/deploy/selftool.slice"    "$STAGE/deploy/systemd/selftool.slice"
-install -m 0644 "$ROOT/deploy/nginx-selftool.conf" "$STAGE/deploy/nginx/selftool-http.conf"
-install -m 0644 "$ROOT/deploy/logrotate-selftool"  "$STAGE/deploy/logrotate/selftool"
-install -m 0644 "$ROOT/deploy/selftool.env.example" "$STAGE/deploy/selftool.env.example"
+# deploy/ 在仓库里是平铺的，发布包里按 docs/05 §4.1 重新组织成分目录。
+# 映射表（左=仓库平铺文件，右=发布包内路径）：
+#   deploy/selftool*.service|.timer|.slice  → deploy/systemd/
+#   deploy/selftool-limits.conf             → deploy/systemd/selftool.service.d/limits.conf
+#   deploy/nginx-selftool.conf              → deploy/nginx/selftool-http.conf   （HTTP 快速验证）
+#   deploy/nginx-selftool-tls.conf          → deploy/nginx/selftool.conf        （生产 TLS）
+#   deploy/nginx-selftool-limits.conf       → deploy/nginx/selftool-limits.conf （限流 zone）
+#   deploy/logrotate-selftool               → deploy/logrotate/selftool
+#   deploy/selftool.tmpfiles                → deploy/selftool.tmpfiles          （安装到 /usr/lib/tmpfiles.d/）
+install -d "$STAGE/deploy/systemd" "$STAGE/deploy/systemd/selftool.service.d" \
+           "$STAGE/deploy/nginx" "$STAGE/deploy/logrotate"
 
-# 发布包根目录的 install.sh（docs/05 §4.1 的入口），与 scripts/install.sh 同一份内容
-cp "$STAGE/scripts/install.sh" "$STAGE/install.sh"
+# systemd 单元：必须把 backup / maintenance 两套 oneshot+timer 一起打包，
+# 否则 install.sh 的单元分发循环会因文件缺失而静默跳过（它用 -f 做了保护），
+# 结果是"装完没有定时备份"——这种缺失在安装当天完全看不出来。
+for unit in selftool.service selftool.slice \
+            selftool-backup.service selftool-backup.timer \
+            selftool-maintenance.service selftool-maintenance.timer; do
+    if [ -f "$ROOT/deploy/$unit" ]; then
+        install -m 0644 "$ROOT/deploy/$unit" "$STAGE/deploy/systemd/$unit"
+    else
+        warn "缺少 deploy/${unit}（发布包将不含该单元）"
+    fi
+done
+
+# systemd drop-in：资源上限与加固片段
+if [ -f "$ROOT/deploy/selftool-limits.conf" ]; then
+    install -m 0644 "$ROOT/deploy/selftool-limits.conf" \
+        "$STAGE/deploy/systemd/selftool.service.d/limits.conf"
+else
+    warn "缺少 deploy/selftool-limits.conf（发布包将不含 drop-in 加固片段）"
+fi
+
+# nginx 三个配置：快速验证版、生产 TLS 版、限流 zone
+install -m 0644 "$ROOT/deploy/nginx-selftool.conf"        "$STAGE/deploy/nginx/selftool-http.conf"
+install -m 0644 "$ROOT/deploy/nginx-selftool-tls.conf"    "$STAGE/deploy/nginx/selftool.conf"
+install -m 0644 "$ROOT/deploy/nginx-selftool-limits.conf" "$STAGE/deploy/nginx/selftool-limits.conf"
+
+install -m 0644 "$ROOT/deploy/logrotate-selftool"   "$STAGE/deploy/logrotate/selftool"
+install -m 0644 "$ROOT/deploy/selftool.env.example" "$STAGE/deploy/selftool.env.example"
+install -m 0644 "$ROOT/deploy/selftool.tmpfiles"    "$STAGE/deploy/selftool.tmpfiles"
+
+# 发布包根目录的两个入口（docs/05 §4.1 的 install.sh / uninstall.sh），
+# 与 scripts/ 下的同名文件是同一份内容（rsync 之后从 STAGE 里取，保证不会不同步）
+cp "$STAGE/scripts/install.sh"   "$STAGE/install.sh"
+if [ -f "$STAGE/scripts/uninstall.sh" ]; then
+    cp "$STAGE/scripts/uninstall.sh" "$STAGE/uninstall.sh"
+else
+    warn "缺少 scripts/uninstall.sh（发布包根目录将不含卸载入口）"
+fi
 
 # ------------------------------------------------------------
 log "6/7 处理 wheelhouse 与随包文档"

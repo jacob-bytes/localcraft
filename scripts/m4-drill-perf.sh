@@ -37,7 +37,10 @@ die()  { printf '\n\033[1;31m[error] %s\033[0m\n' "$*" >&2; exit 1; }
 [ -x "$AB" ] || die "缺少 ab（httpd-tools / apache2-utils）"
 
 start_service() {
-    set -a; . "$VENVF"; set +a
+    set -a
+    # shellcheck disable=SC1090  # $VENVF 由命令行动态决定，shellcheck 无法静态跟踪
+    . "$VENVF"
+    set +a
     ( cd "$SANDBOX/opt/app/current" || exit 1
       nohup "$VPY" -m uvicorn app.main:app --host 127.0.0.1 --port "$PORT" --workers 1 \
           >> "$SANDBOX/log/selftool-stdout.log" 2>&1 &

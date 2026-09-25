@@ -34,6 +34,7 @@ from app.schemas.admin import (
     TransferOwnerRequest,
     TransferOwnerResponse,
 )
+from app.services import image_signature_service
 from app.services.tool_service import allocate_slug
 
 logger = logging.getLogger(__name__)
@@ -42,7 +43,7 @@ logger = logging.getLogger(__name__)
 RECYCLE_BIN_RETENTION_DAYS = 30
 
 
-def _to_item(tool: Tool) -> AdminToolItem:
+def _to_item(tool: Tool, *, ttl_hours: int) -> AdminToolItem:
     return AdminToolItem(
         id=tool.id,
         slug=tool.slug,
@@ -62,10 +63,8 @@ def _to_item(tool: Tool) -> AdminToolItem:
             else None
         ),
         tags=[t.display_name for t in tool.tags],
-        cover_url=(
-            f"/api/v1/images/{tool.cover_image_id}?variant=thumb"
-            if tool.cover_image_id
-            else None
+        cover_url=image_signature_service.cover_url_for(
+            tool.cover_image_id, ttl_hours=ttl_hours
         ),
         owner=(
             {
@@ -144,6 +143,8 @@ async def list_all_tools(
     if date_to is not None:
         stmt = stmt.where(Tool.created_at <= date_to)
 
+    # 签名 TTL 每请求解析一次（内部 60 秒进程内缓存）
+    ttl_hours = await image_signature_service.get_ttl_hours(session)
     total = int(
         (await session.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
     )
@@ -158,7 +159,7 @@ async def list_all_tools(
         .all()
     )
     return AdminToolListResponse(
-        items=[_to_item(t) for t in rows],
+        items=[_to_item(t, ttl_hours=ttl_hours) for t in rows],
         total=total,
         page=offset // limit + 1 if limit else 1,
         page_size=limit,
@@ -239,7 +240,7 @@ async def create_tool_as_admin(
 
     tool = await tools_repo.get_by_id(session, tool.id)
     assert tool is not None
-    return _to_item(tool)
+    return _to_item(tool, ttl_hours=await image_signature_service.get_ttl_hours(session))
 
 
 async def transfer_owner(
@@ -375,7 +376,7 @@ async def restore_tool(session: AsyncSession, *, tool_id: int) -> AdminToolItem:
     await session.commit()
     tool = await tools_repo.get_by_id(session, tool_id)
     assert tool is not None
-    return _to_item(tool)
+    return _to_item(tool, ttl_hours=await image_signature_service.get_ttl_hours(session))
 
 
 async def purge_tool(session: AsyncSession, *, tool_id: int) -> PurgeToolResponse:

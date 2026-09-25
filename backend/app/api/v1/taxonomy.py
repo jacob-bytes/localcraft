@@ -23,9 +23,15 @@ router = APIRouter(tags=["portal"])
 )
 async def list_categories(
     session: Annotated[AsyncSession, Depends(get_db)],
+    # M5：`get_visibility_context` 不再传递依赖 `portal_access`（图片签名路径需要匿名），
+    # 所以「匿名能不能看门户」这条判定必须在每个门户路由上**显式**声明。
+    access: Annotated[PortalAccess, Depends(portal_access)],
     visibility: Annotated[VisibilityContext, Depends(get_visibility_context)],
 ) -> list[CategoryOut]:
     """FR-TAX-07：每个分类带上**当前用户可见的**工具数量。
+
+    `access` 只用于强制匿名可见性策略（`portal.allow_anonymous_view`），
+    路由体不需要它 —— 但**必须声明**，否则守卫测试会认为这条路由没有鉴权。
 
     计数与 `GET /tools` 的 `facets.categories[].count` 共用同一段聚合 SQL，
     保证左侧导航的计数与实际能看到的卡片数一致。

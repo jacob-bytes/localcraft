@@ -59,6 +59,24 @@ class VisibilityContext:
     is_superadmin: bool = False
     allow_admin_view_private: bool = True
 
+    def cache_key(self) -> str:
+        """facet 缓存的键（M5 性能优化）。
+
+        **必须包含全部影响可见性的输入**（易错点清单第 3 条）：
+        缓存跨用户复用会直接造成越权 —— 把 A 用户能看到的工具名与计数泄露给 B。
+        这里把 user_id / group_ids / roles / 超管位 / 私有可见开关全部编进键，
+        任何一个不同就是不同的缓存条目。
+        """
+        return "|".join(
+            (
+                str(self.user_id),
+                ",".join(str(g) for g in sorted(self.group_ids)),
+                ",".join(sorted(self.roles)),
+                "1" if self.is_superadmin else "0",
+                "1" if self.allow_admin_view_private else "0",
+            )
+        )
+
     @property
     def sees_everything(self) -> bool:
         """超管 + `portal.allow_admin_view_private` → 可见全部工具（D32）。"""
@@ -308,45 +326,140 @@ async def category_tool_counts(
     return {int(row[0]): int(row[1]) for row in result.all()}
 
 
-async def type_tool_counts(
+async def combined_tool_counts(
     session: AsyncSession, *, visibility: VisibilityContext
-) -> dict[str, int]:
-    """按 `tool_type` 的可见工具数，用于 `facets.types`。"""
+) -> tuple[dict[int | None, int], dict[str, int]]:
+    """**一次查询**同时算出「按分类」与「按类型」的可见计数。
+
+    M5 性能优化点之一：原先 `category_tool_counts` 与 `type_tool_counts`
+    各发一条聚合查询，两条都要重算一遍可见性 EXISTS 子查询。
+    合成 `GROUP BY category_id, tool_type` 后只有一条，
+    行数上限是「分类数 × 类型数」（个位数 × 4），在 Python 里再汇总即可。
+    """
     vis = visibility.clause()
     stmt = (
-        select(Tool.tool_type, func.count(Tool.id))
+        select(Tool.category_id, Tool.tool_type, func.count(Tool.id))
         .select_from(Tool)
         .where(_base_clause())
-        .group_by(Tool.tool_type)
+        .group_by(Tool.category_id, Tool.tool_type)
     )
     if vis is not None:
         stmt = stmt.where(vis)
     result = await session.execute(stmt)
-    return {str(row[0]): int(row[1]) for row in result.all()}
+
+    by_category: dict[int | None, int] = {}
+    by_type: dict[str, int] = {}
+    for category_id, tool_type, count in result.all():
+        value = int(count)
+        key = int(category_id) if category_id is not None else None
+        by_category[key] = by_category.get(key, 0) + value
+        by_type[str(tool_type)] = by_type.get(str(tool_type), 0) + value
+    return by_category, by_type
+
+
+async def type_tool_counts(
+    session: AsyncSession, *, visibility: VisibilityContext
+) -> dict[str, int]:
+    """按 `tool_type` 的可见工具数，用于 `facets.types`。"""
+    _by_category, by_type = await combined_tool_counts(session, visibility=visibility)
+    return by_type
+
+
+#: facet 短时缓存（M5 性能优化点之二）
+#:
+#: 为什么值得缓存：facets 是两次聚合（现在合成一次），且**只在 `page == 1` 时**才需要。
+#: 它在门户首页每次刷新都跑一遍，而结果只在「工具有增删改」时才变。
+#:
+#: 缓存键：`VisibilityContext.cache_key()` —— 含 user_id / group_ids / roles /
+#:   超管位 / 私有可见开关。**任何影响可见性的输入变化都会落到不同条目**，
+#:   绝不复用（易错点清单第 3 条：跨用户复用会越权泄露）。
+#: TTL：30 秒。选 30 秒的理由：这是「管理员刚发布一个工具，首页 facet 计数多久跟上」
+#:   的上界。30 秒对计数类展示完全可接受，而它把首页的聚合查询摊薄到约 1/30。
+#: 失效条件：**只有 TTL**。不按写入失效是刻意的 —— 要在所有工具写路径上挂失效钩子，
+#:   耦合面大且容易漏（漏一处就是脏缓存）。代价是「最多 30 秒的计数陈旧」，
+#:   而列表与详情**不走这个缓存**，所以用户点进去看到的永远是最新的。
+_FACET_CACHE: dict[str, tuple[float, list[CategoryFacet], list[TypeFacet]]] = {}
+
+
+def _cache_enabled() -> bool:
+    """缓存开关。`SELTOOL_DISABLE_FACET_CACHE=1` 时绕过缓存。
+
+    存在的意义有两个：
+      1) **可验证性** —— 没有开关就没法在同一份构建上做「开/关缓存」的 A/B 对比，
+         性能结论就只能靠跨版本比较，容易被环境差异干扰；
+      2) 排障 —— 怀疑 facet 计数陈旧时，临时关掉即可确认是不是缓存造成的。
+    生产默认开启。
+    """
+    import os
+
+    return os.environ.get("SELTOOL_DISABLE_FACET_CACHE") != "1"
+
+
+_FACET_CACHE_TTL_SECONDS = 30.0
+#: 缓存条目上限。超过就整体清空（简单的防膨胀策略；门户的可见性组合数远小于此）
+_FACET_CACHE_MAX_ENTRIES = 256
+
+
+def clear_facet_cache() -> None:
+    """清空 facet 缓存。测试用；也供将来「立刻刷新」的管理动作调用。"""
+    _FACET_CACHE.clear()
+
+
+def facet_cache_stats() -> dict[str, int]:
+    """缓存规模，供排查与测试断言。"""
+    return {
+        "entries": len(_FACET_CACHE),
+        "ttl_seconds": int(_FACET_CACHE_TTL_SECONDS),
+        "enabled": int(_cache_enabled()),
+    }
+
+
+async def build_facets(
+    session: AsyncSession, *, visibility: VisibilityContext
+) -> tuple[list[CategoryFacet], list[TypeFacet]]:
+    """`facets.categories` + `facets.types`（带 30 秒短时缓存）。"""
+    import time
+
+    key = visibility.cache_key()
+    now = time.monotonic()
+    if _cache_enabled():
+        cached = _FACET_CACHE.get(key)
+        if cached is not None and now - cached[0] < _FACET_CACHE_TTL_SECONDS:
+            return cached[1], cached[2]
+
+    counts, type_counts = await combined_tool_counts(session, visibility=visibility)
+    result = await session.execute(
+        select(Category.id, Category.slug, Category.name)
+        .where(Category.is_active.is_(True))
+        .order_by(Category.sort_order.asc(), Category.id.asc())
+    )
+    categories = [
+        CategoryFacet(slug=row[1], name=row[2], count=counts.get(int(row[0]), 0))
+        for row in result.all()
+    ]
+    types = [TypeFacet(value=t.value, count=type_counts.get(t.value, 0)) for t in ToolType]
+
+    if _cache_enabled():
+        if len(_FACET_CACHE) >= _FACET_CACHE_MAX_ENTRIES:
+            _FACET_CACHE.clear()
+        _FACET_CACHE[key] = (now, categories, types)
+    return categories, types
 
 
 async def build_category_facets(
     session: AsyncSession, *, visibility: VisibilityContext
 ) -> list[CategoryFacet]:
     """全部分类（含 0）的可见计数，顺序与 `GET /categories` 一致。"""
-    counts = await category_tool_counts(session, visibility=visibility)
-    result = await session.execute(
-        select(Category.id, Category.slug, Category.name)
-        .where(Category.is_active.is_(True))
-        .order_by(Category.sort_order.asc(), Category.id.asc())
-    )
-    return [
-        CategoryFacet(slug=row[1], name=row[2], count=counts.get(int(row[0]), 0))
-        for row in result.all()
-    ]
+    categories, _types = await build_facets(session, visibility=visibility)
+    return categories
 
 
 async def build_type_facets(
     session: AsyncSession, *, visibility: VisibilityContext
 ) -> list[TypeFacet]:
     """四种类型全部返回（含 0），顺序固定为 `ToolType` 的定义顺序。"""
-    counts = await type_tool_counts(session, visibility=visibility)
-    return [TypeFacet(value=t.value, count=counts.get(t.value, 0)) for t in ToolType]
+    _categories, types = await build_facets(session, visibility=visibility)
+    return types
 
 
 async def get_by_id(session: AsyncSession, tool_id: int) -> Tool | None:

@@ -421,6 +421,12 @@ class AdminOverviewResponse(BaseModel):
     used_bytes: int = 0
     quota_bytes: int = 0
     used_percent: float = 0.0
+    #: 存储水位是否超过 `quota.warn_threshold_pct`（契约 §18.6）。
+    #: 判断口径在 `settings_service.storage_warning()` 里只写一份，
+    #: `scripts/disk-alert.sh` 复用同一语义。
+    storage_warning: bool = False
+    #: 当前生效的告警阈值（百分比），便于前端显示「85%」而不是硬编码
+    storage_warning_threshold_pct: int = 85
     downloads_last_7_days: int = 0
     recycle_bin_count: int = 0
 

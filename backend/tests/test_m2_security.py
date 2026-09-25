@@ -1144,7 +1144,9 @@ async def test_image_upload_and_serving(client, seeded) -> None:
     image = uploaded.json()
     assert image["kind"] == "cover"
     assert image["width"] == 1200
-    assert image["thumb_url"].endswith("?variant=thumb")
+    # M5：图片 URL 带能力签名（契约 §14.3），校验前缀而非精确结尾
+    assert "?variant=thumb" in image["thumb_url"]
+    assert "sig=" in image["thumb_url"]
 
     # 草稿状态：只有 owner 能看自己的图（编辑器要能预览）；
     # 其他人 404 —— 未发布工具的任何资源都不该外泄。

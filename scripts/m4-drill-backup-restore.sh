@@ -48,7 +48,10 @@ FAIL=0
 [ -x "$VPY" ] || die "沙箱 venv 不存在，请先执行 scripts/m4-drill-install.sh"
 
 start_service() {
-    set -a; . "$VENVF"; set +a
+    set -a
+    # shellcheck disable=SC1090  # $VENVF 由命令行动态决定，shellcheck 无法静态跟踪
+    . "$VENVF"
+    set +a
     ( cd "$SANDBOX/opt/app/current"
       nohup "$VPY" -m uvicorn app.main:app --host 127.0.0.1 --port "$PORT" --workers 1 \
           >> "$SANDBOX/log/selftool-stdout.log" 2>&1 &
@@ -80,7 +83,10 @@ start_service
 
 step "创建超级管理员（--password-stdin，密码不进 shell 历史）"
 ADMIN_PW="Drill@M4passw0rd"
-set -a; . "$VENVF"; set +a
+set -a
+# shellcheck disable=SC1090  # $VENVF 由命令行动态决定，shellcheck 无法静态跟踪
+. "$VENVF"
+set +a
 ( cd "$SANDBOX/opt/app/current" && \
   printf '%s\n%s\n' "$ADMIN_PW" "$ADMIN_PW" | \
   "$VPY" -m app.cli create-superadmin --username admin --email admin@drill.local \

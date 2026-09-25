@@ -410,7 +410,9 @@ async def test_cover_url_present_only_when_cover_exists(client, seeded) -> None:
     by_slug = {item["slug"]: item for item in response.json()["items"]}
 
     with_cover = by_slug["public-approved"]
-    assert with_cover["cover_url"] == f"/api/v1/images/{seeded.tools['public-approved']}?variant=thumb"
+    # M5 起封面 URL 带能力签名（契约 §14.3）：形如 <path>?variant=thumb&sig=<b64url>.<exp>
+    url = with_cover["cover_url"]
+    assert url.startswith("/api/v1/images/1?variant=thumb&sig="), url
     assert by_slug["public-approved-2"]["cover_url"] is None
 
 
