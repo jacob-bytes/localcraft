@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import io
 import os
+import sys
 import zipfile
 
 import pytest
@@ -144,7 +145,9 @@ async def test_skill_tree_truncated_migration_roundtrip() -> None:
         "DATA_DIR": str(tmp.parent / "data"),
         "SECRET_KEY": "migration-test-secret-0123456789",
     }
-    python = backend / ".venv" / "bin" / "python"
+    # 用当前解释器，不写死 backend/.venv/bin/python —— 后者的后果是这套测试
+    # 只在开发者本机建过 venv 时才跑得过，CI 与全新 clone 上直接找不到文件。
+    python = Path(sys.executable)
 
     def run(*args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(

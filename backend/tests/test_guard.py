@@ -18,6 +18,8 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi.routing import APIRoute
+from starlette.routing import Match
+from starlette.routing import Route as StarletteRoute
 
 from app.api.public import (
     M1_ONLY_ENDPOINTS,
@@ -41,9 +43,15 @@ HTTP_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
 # ---------------------------------------------------------------------------
 # 路由遍历
 # ---------------------------------------------------------------------------
-def iter_api_routes(routes: Any, prefix: str = "") -> list[tuple[str, str, APIRoute]]:
-    """递归展开路由树，返回 `(method, full_path, route)`。"""
-    collected: list[tuple[str, str, APIRoute]] = []
+def iter_api_routes(routes: Any, prefix: str = "") -> list[tuple[str, str, Any]]:
+    """递归展开路由树，返回 `(method, full_path, route)`。
+
+    收 `APIRoute`，也收普通 `starlette.routing.Route` —— SPA 兜底是后者。
+    如果只收 `APIRoute`，兜底路由一旦从 `APIRoute` 换成 `Route`，
+    下面 `test_spa_fallback_is_the_only_non_api_catch_all` 就会在**空集合**上
+    空转通过，守卫静默失效（这正是它想防的那类事）。
+    """
+    collected: list[tuple[str, str, Any]] = []
     for route in routes:
         original_router = getattr(route, "original_router", None)
         if original_router is not None:
@@ -51,7 +59,8 @@ def iter_api_routes(routes: Any, prefix: str = "") -> list[tuple[str, str, APIRo
             sub_prefix = getattr(include_context, "prefix", "") or ""
             collected.extend(iter_api_routes(original_router.routes, prefix + sub_prefix))
             continue
-        if not isinstance(route, APIRoute):
+        # APIRoute 是 Route 的子类，判 Route 即可；Mount（如 /assets）不是 Route，被排除。
+        if not isinstance(route, StarletteRoute):
             continue
         for method in sorted(route.methods or ()):
             if method in HTTP_METHODS:
@@ -86,12 +95,16 @@ def _dependant_tree_flags(route: APIRoute) -> tuple[bool, bool]:
 SPA_FALLBACK_PATH = "/{full_path:path}"
 
 
-def _api_routes() -> list[tuple[str, str, APIRoute]]:
-    """只保留真正的 API 路由（排除 SPA 回退与文档路由）。"""
+def _api_routes() -> list[tuple[str, str, Any]]:
+    """只保留真正的 API 路由（排除 SPA 回退与文档路由）。
+
+    普通 `Route` 没有 `include_in_schema` 属性，用 `getattr` 取默认 False ——
+    即「不是 API 面的一部分」。
+    """
     return [
         (method, path, route)
         for method, path, route in iter_api_routes(app.routes)
-        if path != SPA_FALLBACK_PATH and route.include_in_schema
+        if path != SPA_FALLBACK_PATH and getattr(route, "include_in_schema", False)
     ]
 
 
@@ -184,18 +197,43 @@ def test_endpoint_total_is_exactly_92() -> None:
 
 
 def test_spa_fallback_is_the_only_non_api_catch_all() -> None:
-    """SPA 回退只能有一个，且必须由 `_mount_spa` 注册、不参与 API 面。"""
+    """SPA 回退只能有一个，且必须由 `_mount_spa` 注册、不参与 API 面。
+
+    另外钉住一条**与环境无关**的不变量：兜底路由不得匹配非 SPA 前缀
+    （`api/`、`docs`、`openapi.json` …）。理由见 `_SpaFallbackRoute` 的 docstring：
+
+    一个无差别的 GET 兜底会把 API 的 405 吃掉变成 404，而它**只在 `web/dist`
+    存在时才注册**，于是同一个请求的状态码取决于前端构建产物在不在 ——
+    CI 没有 dist、开发者本机有，两边 API 行为不一致，本地「全绿」是假的。
+    """
     catch_alls = [
         (method, path, route)
         for method, path, route in iter_api_routes(app.routes)
         if path == SPA_FALLBACK_PATH
     ]
+
+    # `iter_api_routes` 是按方法展开的，而 starlette 的 `Route(methods=["GET"])`
+    # 会自动补上 HEAD，因此要按**路由**去重后再数个数，不能按 (方法, 路径) 数。
+    unique_routes = {id(route) for _m, _p, route in catch_alls}
+    # web/dist 不存在时不注册兜底（优雅降级），存在时必须恰好一个。
+    assert len(unique_routes) <= 1, f"SPA 兜底出现多个：{[r for _m, _p, r in catch_alls]}"
+
     for method, _path, route in catch_alls:
-        assert method == "GET"
-        assert route.include_in_schema is False, "SPA 回退不应出现在 OpenAPI 里"
-    # 无论 web/dist 在不在，未匹配的 API 路径都必须是 JSON 404。
-    # （web/dist 不存在时由框架默认 404 兜底，也存在时由 catch-all 抛 DomainError）
-    assert all(not path.startswith("/api") for _m, path, _r in catch_alls)
+        assert method in ("GET", "HEAD"), f"SPA 兜底只应处理 GET/HEAD，出现 {method}"
+        assert not getattr(route, "include_in_schema", False), "SPA 回退不应出现在 OpenAPI 里"
+
+    # 关键不变量：非 SPA 前缀一律不匹配（无论 dist 在不在，都该如此）。
+    for _method, _path, route in catch_alls:
+        for probe in (
+            "/api/v1/admin/groups/999999",
+            "/api/v1/does-not-exist",
+            "/docs",
+            "/openapi.json",
+            "/healthz",
+        ):
+            scope = {"type": "http", "method": "GET", "path": probe, "headers": []}
+            match, _child = route.matches(scope)  # type: ignore[arg-type]
+            assert match is Match.NONE, f"SPA 兜底不应匹配 {probe}（得到 {match}）"
 
 
 def test_no_undeclared_admin_paths() -> None:

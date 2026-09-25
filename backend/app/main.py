@@ -27,11 +27,13 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.routing import Match, Route
+from starlette.types import Scope
 
 from app.api.public import NON_SPA_PREFIXES
 from app.api.v1 import api_router
 from app.core.config import settings
-from app.core.errors import DomainError, NotFoundError, code_for_status, message_for_code
+from app.core.errors import DomainError, code_for_status, message_for_code
 from app.core.logging import configure_logging
 from app.core.request_id import resolve_request_id
 from app.core.timeutil import utcnow
@@ -299,6 +301,30 @@ app.include_router(api_router, prefix="/api/v1")
 # ---------------------------------------------------------------------------
 # 前端静态产物 + SPA fallback
 # ---------------------------------------------------------------------------
+class _SpaFallbackRoute(Route):
+    """SPA 兜底路由：非 SPA 前缀（`api/`、`docs` 等）**不参与匹配**。
+
+    Starlette 的路由匹配语义是：先找「路径 + 方法」都匹配的路由；全都匹配不上时，
+    如果存在「路径匹配但方法不匹配」的路由，返回 **405**，否则 **404**。
+
+    一个无差别的 `GET /{full_path:path}` 兜底路由会让**所有** GET 请求都在兜底处
+    匹配成功，于是 API 的 405 再也没机会产生 —— 一个 `GET` 打到只支持
+    `PATCH`/`DELETE` 的 `/api/v1/admin/groups/{id}` 会得到 404 而不是 405。
+
+    要命的是这个差异**只在 `web/dist` 存在时才出现**：dist 不存在就不注册兜底路由，
+    同一个请求于是返回 405。也就是说 API 的可观察行为取决于前端构建产物在不在，
+    而 CI 上没有 dist、开发者本机通常有 —— 两边行为不一致，「本机全绿」是假的。
+
+    在**匹配阶段**就排除非 SPA 前缀，状态码便与构建产物无关。未匹配的 API 路径
+    仍然返回 JSON 404（docs/03 §6.5 的要求不变）。
+    """
+
+    def matches(self, scope: Scope) -> tuple[Match, Scope]:
+        if scope["type"] == "http" and scope["path"].lstrip("/").startswith(NON_SPA_PREFIXES):
+            return Match.NONE, {}
+        return super().matches(scope)
+
+
 def _mount_spa(application: FastAPI) -> None:
     """挂载 `web/dist`。
 
@@ -317,14 +343,10 @@ def _mount_spa(application: FastAPI) -> None:
     if assets_dir.is_dir():
         application.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
-    # 静态根下的散装文件（favicon.ico、robots.txt 等）
-    @application.get("/{full_path:path}", include_in_schema=False)
-    async def spa_fallback(full_path: str) -> Response:
-        # 未匹配的 API/文档路径必须返回 JSON 404。
-        # 这正是不能用 StaticFiles(html=True) 挂根路径的原因（docs/03 §6.5）。
-        if full_path.startswith(NON_SPA_PREFIXES):
-            raise NotFoundError()
-
+    # 静态根下的散装文件（favicon.ico、robots.txt 等）与前端路由兜底。
+    # 为什么不能用 `@application.get(...)`：见 `_SpaFallbackRoute` 的 docstring。
+    async def spa_fallback(request: Request) -> Response:
+        full_path = request.path_params["full_path"]
         candidate = (web_dist / full_path).resolve()
         try:
             candidate.relative_to(web_dist.resolve())
@@ -334,6 +356,16 @@ def _mount_spa(application: FastAPI) -> None:
         if candidate.is_file():
             return FileResponse(candidate)
         return FileResponse(index_file)
+
+    application.router.routes.append(
+        _SpaFallbackRoute(
+            "/{full_path:path}",
+            spa_fallback,
+            methods=["GET"],
+            name="spa",
+            include_in_schema=False,
+        )
+    )
 
 
 _mount_spa(app)

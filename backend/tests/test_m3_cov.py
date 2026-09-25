@@ -374,7 +374,15 @@ async def test_group_empty_filter_returns_empty_page(client, seeded) -> None:
 async def test_group_missing_and_duplicate_paths(client, seeded) -> None:
     headers = await _admin_headers(client)
 
-    assert (await client.get("/api/v1/admin/groups/999999", headers=headers)).status_code == 404
+    # `GET /admin/groups/{id}` 这个端点**不存在**：docs/03 §4.4 对单组只定义了
+    # PATCH 与 DELETE（列表用 GET /admin/groups，成员用 .../members）。
+    # 所以对不存在的方法，Starlette 返回 405 而不是 404 —— 这是正确的 HTTP 语义。
+    #
+    # 这里曾经写成断言 404，而且**在本机一直是绿的**：因为 web/dist 存在时，
+    # SPA fallback 的 `GET /{full_path:path}` 会把这条请求接走，对 /api 前缀
+    # 返回 JSON 404，于是掩盖了真实状态码。CI 上没有构建产物，断言立刻暴露。
+    # 教训：测试不能依赖未入库的构建产物 —— 否则「本机全绿」是假的。
+    assert (await client.get("/api/v1/admin/groups/999999", headers=headers)).status_code == 405
     assert (
         await client.patch(
             "/api/v1/admin/groups/999999", json={"name": "x"}, headers=headers

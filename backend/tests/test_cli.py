@@ -21,7 +21,15 @@ from app.cli import cli
 from app.core.security import password_strength_errors
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
-VENV_PYTHON = BACKEND_DIR / ".venv" / "bin" / "python"
+
+#: CLI 子进程使用的解释器 —— **当前解释器**，而不是写死的 `backend/.venv/bin/python`。
+#:
+#: 原先写死 venv 路径，导致这套测试**只在开发者本机建过 venv 时才跑得过**：
+#: CI（setup-python 提供解释器，没有 .venv）与全新 clone 上全部直接
+#: FileNotFoundError。而这条依赖从来不是测试的本意 —— 真正要守的不变量是
+#: 「CLI 跑在与目标机一致的 Python 3.11 上」（README D34），
+#: 这一点用当前解释器同样能断言，且在哪里、由谁安装都不影响。
+PYTHON = Path(sys.executable)
 
 runner = CliRunner()
 
@@ -42,7 +50,7 @@ def _cli_env(db_path: Path, data_dir: Path) -> dict[str, str]:
 
 def _run(args: list[str], env: dict[str, str], *, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [str(VENV_PYTHON), "-m", *args],
+        [str(PYTHON), "-m", *args],
         cwd=str(BACKEND_DIR),
         env=env,
         input=input_text,
@@ -348,11 +356,15 @@ def test_cli_help_lists_m1_commands() -> None:
         assert command in result.stdout
 
 
-def test_venv_python_is_311() -> None:
-    """CLI 子进程用的解释器必须是 3.11（README D34）。"""
-    assert VENV_PYTHON.is_file(), f"未找到 venv 解释器: {VENV_PYTHON}"
+def test_cli_python_is_311() -> None:
+    """CLI 子进程用的解释器必须是 3.11（README D34）。
+
+    注意断言的是**运行测试的这个解释器**，不是某个固定的 venv 路径 ——
+    目标机 openEuler 自带 3.11，CI 也用 3.11，这里守的是同一件事。
+    """
+    assert PYTHON.is_file(), f"未找到解释器: {PYTHON}"
     result = subprocess.run(
-        [str(VENV_PYTHON), "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
+        [str(PYTHON), "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
         capture_output=True,
         text=True,
         check=False,

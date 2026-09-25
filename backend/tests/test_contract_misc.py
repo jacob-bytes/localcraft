@@ -392,6 +392,18 @@ async def test_spa_fallback_serves_index_for_client_routes(tmp_path, monkeypatch
         assert api.headers["content-type"].startswith("application/json")
         assert "spa" not in api.text
 
+        # 路径存在但方法不对 → 405，同样不能被 SPA 兜底吃成 404。
+        # 这条断言钉的是「API 的可观察行为不得随 web/dist 是否存在而变化」：
+        # 兜底路由若参与匹配，就会把 405 变成 404，而它只在 dist 存在时才注册，
+        # 于是 CI（无 dist）与开发者本机（有 dist）对同一个请求给出不同状态码。
+        # 本用例自建 dist，因此两种环境下都真正跑得到这条断言。
+        wrong_method = await c.get("/api/v1/admin/groups/999999")
+        assert wrong_method.status_code == 405, (
+            f"应为 405（方法不允许），实际 {wrong_method.status_code} —— "
+            "SPA 兜底是否把 API 的 405 吃成了 404？"
+        )
+        assert wrong_method.headers["content-type"].startswith("application/json")
+
 
 # ===========================================================================
 # 配置层：弱 SECRET_KEY 必须显式告警
