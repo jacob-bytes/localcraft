@@ -204,8 +204,8 @@
 | PUT | `/api/v1/me/tools/{id}/acl` | 全量替换可见性授权列表 |
 | GET | `/api/v1/me/tools/{id}/versions` | 我的工具版本列表（含待审与已驳回） |
 | POST | `/api/v1/me/tools/{id}/versions` | 上传新版本（multipart） |
-| PATCH | `/api/v1/me/tools/{id}/versions/{version_id}` | 修改版本变更说明 |
-| DELETE | `/api/v1/me/tools/{id}/versions/{version_id}` | 删除未过审的版本 |
+| PATCH | `/api/v1/me/tools/{id}/versions/{version}` | 修改版本变更说明 |
+| DELETE | `/api/v1/me/tools/{id}/versions/{version}` | 删除未过审的版本 |
 | POST | `/api/v1/me/tools/{id}/images` | 上传封面或截图 |
 | PATCH | `/api/v1/me/tools/{id}/images/{image_id}` | 更新排序、alt 文本、设为封面 |
 | DELETE | `/api/v1/me/tools/{id}/images/{image_id}` | 删除图片 |

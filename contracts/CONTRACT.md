@@ -219,6 +219,60 @@ selftool/
 
 前端在 M1 阶段通过 **MSW mock** 覆盖自己的全部页面，**不阻塞**等后端。
 
+### 6.1 M2 冻结接口清单（后端先开工，前端在 M2 阶段消费）
+
+M1 的 12 个接口保持不变。M2 新增以下 **38** 个，实现后接口面总数应为 **50**。
+
+**门户 / 阅读侧（7）**
+
+| 方法 | 路径 |
+| --- | --- |
+| GET | `/api/v1/tools/{slug}` |
+| GET | `/api/v1/tools/{slug}/versions` |
+| GET | `/api/v1/tools/{slug}/versions/{version}/skill-preview` |
+| POST | `/api/v1/tools/{slug}/download-ticket` |
+| GET | `/api/v1/tools/{slug}/download` |
+| GET | `/api/v1/tools/{slug}/stats` |
+| GET | `/api/v1/images/{image_id}` |
+
+**个人中心（19）**
+
+| 方法 | 路径 |
+| --- | --- |
+| GET / PATCH | `/api/v1/me/profile` |
+| GET | `/api/v1/me/stats` |
+| GET / POST | `/api/v1/me/tools` |
+| GET / PATCH / DELETE | `/api/v1/me/tools/{tool_id}` |
+| POST | `/api/v1/me/tools/{tool_id}/submit` |
+| POST | `/api/v1/me/tools/{tool_id}/withdraw` |
+| PUT | `/api/v1/me/tools/{tool_id}/acl` |
+| GET / POST | `/api/v1/me/tools/{tool_id}/versions` |
+| PATCH / DELETE | `/api/v1/me/tools/{tool_id}/versions/{version}` |
+| POST | `/api/v1/me/tools/{tool_id}/images` |
+| PATCH / DELETE | `/api/v1/me/tools/{tool_id}/images/{image_id}` |
+| GET | `/api/v1/me/downloads` |
+
+**审批与治理（12）**
+
+| 方法 | 路径 |
+| --- | --- |
+| GET | `/api/v1/admin/approvals` |
+| POST | `/api/v1/admin/approvals/{tool_id}/approve` |
+| POST | `/api/v1/admin/approvals/{tool_id}/reject` |
+| POST | `/api/v1/admin/approvals/{tool_id}/offline` |
+| POST | `/api/v1/admin/approvals/{tool_id}/relist` |
+| POST | `/api/v1/admin/approvals/batch-approve` |
+| GET | `/api/v1/admin/approvals/history` |
+| GET / POST | `/api/v1/admin/approval-whitelist` |
+| DELETE | `/api/v1/admin/approval-whitelist/{user_id}` |
+| GET / PUT | `/api/v1/admin/settings` |
+
+**路径参数裁定（监控方）**：版本相关路径**一律用版本字符串**（`{version}`，如 `1.2.0`），不用整数 id。理由：版本号是用户可见、可手写、稳定的标识，`docs/03` §3.5 的 skill-preview 已是此形状。整数 `version_id` 仅作为**请求体字段**或**查询参数**出现（如批准时 `{"version_id": 346}`、下载时 `?version_id=`），不进入路径。`docs/03` §2.4 已据此修订。
+
+**M2 不做**（留给 M3）：`/api/v1/admin/tools*`、`/api/v1/admin/users*`、`/api/v1/admin/groups*`、`/api/v1/admin/categories*`、`/api/v1/admin/tags*`、`/api/v1/admin/tokens*`、`/api/v1/admin/import|export*`、`/api/v1/admin/stats/*`、`/api/v1/admin/overview`、`/api/v1/admin/recycle-bin`。
+
+> `docs/03` §5.2 脚本示例里的 `POST /admin/tools` 与 `POST /admin/tools/{id}/versions`（管理侧代创建）**属于 M3**，是给脚本批量导入用的另一组路径，与 `/me/tools` 并存。
+
 ---
 
 ## 7. 种子数据（M1 联调必需）
