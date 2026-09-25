@@ -1,0 +1,250 @@
+# ==============================================================================
+# selftool 仓库根级 .gitignore
+#
+# 维护者：监控方。开发 agent 请勿修改本文件（各自目录内的 .gitignore 归各自所有）。
+#
+# 说明：web/ 下另有一份由 Vite 模板生成的 .gitignore，与本文件有意重叠。
+#       重叠无害，本文件覆盖 backend/、deploy/、scripts/ 与仓库根。
+# ==============================================================================
+
+
+# ------------------------------------------------------------------------------
+# macOS 开发残留（本文件存在的首要原因）
+# ------------------------------------------------------------------------------
+
+# Finder 在每个浏览过的目录写入的元数据缓存。会在 macOS 上无限重生，
+# 只能靠忽略；一旦被提交过就会反复产生"已修改"噪音，且会污染 Linux 侧目录。
+.DS_Store
+
+# AppleDouble 文件：macOS 在非 HFS+/APFS 卷（含网络盘、exFAT U 盘、
+# 以及被打进 zip 时）为每个文件生成的资源分叉伴生文件，形如 ._foo.py。
+# 在 Linux 上没有任何意义，只会出现在仓库里碍眼。
+._*
+.AppleDouble
+.LSOverride
+
+# Finder/系统在卷根写入的元数据目录
+.Spotlight-V100
+.Trashes
+.fseventsd
+.TemporaryItems
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+.NetworkTrashFolder
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# 系统版本管理目录（极少见，但出现在 / 或外置卷时会被扫到）
+.DocumentRevisions-V100
+.PKInstallSandboxManager*
+
+# macOS 上创建 zip 时混入的 __MACOSX 目录。本平台处理用户上传的 zip，
+# 测试夹具解压后可能带出这个目录，一律忽略。
+__MACOSX/
+
+
+# ------------------------------------------------------------------------------
+# 编辑器 / IDE
+# ------------------------------------------------------------------------------
+.idea/
+*.swp
+*.swo
+*.sw?
+*~
+.history/
+
+# VS Code：忽略个人配置，但保留团队共享的推荐扩展与设置
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/tasks.json
+
+
+# ------------------------------------------------------------------------------
+# Windows / Linux 侧同类残留
+# ------------------------------------------------------------------------------
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.directory
+
+
+# ------------------------------------------------------------------------------
+# Python / 后端
+# ------------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# 虚拟环境（后端 agent 使用 backend/.venv）
+.venv/
+venv/
+ENV/
+env/
+.conda/
+
+# 打包与构建产物
+build/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+sdist/
+wheels/
+*.egg-info/
+*.egg
+.installed.cfg
+MANIFEST
+
+# 注意：.python-version 是刻意不忽略的。
+# 如果后端用 pyenv 固定 3.11，这个文件必须提交，否则其他人会拿到错误的解释器。
+
+
+# ------------------------------------------------------------------------------
+# 测试与静态检查缓存
+# ------------------------------------------------------------------------------
+.pytest_cache/
+.mypy_cache/
+.dmypy.json
+.pytype/
+.pyre/
+.ruff_cache/
+.tox/
+.nox/
+.hypothesis/
+.coverage
+.coverage.*
+coverage.xml
+junit.xml
+htmlcov/
+
+# 前端 E2E（Playwright）
+playwright-report/
+blob-report/
+.playwright/
+test-results/
+
+
+# ------------------------------------------------------------------------------
+# 数据库文件（本地开发库绝对不入库）
+#
+# 生产库在 /var/lib/selftool/，不会出现在仓库里；但这些是本地跑 seed-demo
+# 与 alembic upgrade 后必然产生的文件，必须忽略。
+# WAL 模式下 -wal / -shm 是配套文件，只忽略 .db 会留下孤儿。
+# ------------------------------------------------------------------------------
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+selftool.db*
+
+
+# ------------------------------------------------------------------------------
+# 运行时数据目录
+#
+# 生产是 /var/lib/selftool；开发时若把 DATA_DIR 指到仓库内，产物不能入库。
+# 上传的工具包体积可达上百 MB，一旦误提交会让仓库永久膨胀。
+# ------------------------------------------------------------------------------
+/data/
+/backend/data/
+/backend/.data/
+/backups/
+/storage/
+
+
+# ------------------------------------------------------------------------------
+# 密钥与证书 —— 绝不入库
+# ------------------------------------------------------------------------------
+.secrets/
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.crt
+*.csr
+
+
+# ------------------------------------------------------------------------------
+# 环境变量
+#
+# 规则：
+#   .env / .env.local / *.local        → 忽略（可能含 SECRET_KEY、密码）
+#   *.example                          → 强制保留（模板必须入库）
+#   web/.env.development, .production  → 保留（仅含 VITE_* 构建开关，非密钥）
+# ------------------------------------------------------------------------------
+.env
+.env.local
+.env.*.local
+*.local
+
+# deploy 下的真实生产配置含 SECRET_KEY，只提交 example
+/deploy/selftool.env
+/deploy/*.env
+
+# 覆盖上面可能被误伤的模板文件，确保模板一定入库（顺序必须在忽略规则之后）
+!.env.example
+!*.env.example
+!/backend/.env.example
+!/deploy/selftool.env.example
+
+
+# ------------------------------------------------------------------------------
+# 离线打包与发布产物（M4 会大量产生，体积大且可复现）
+# ------------------------------------------------------------------------------
+wheelhouse/
+wheelhouse-*/
+/release/
+/releases/
+*.whl
+*.tar.gz
+*.tgz
+
+# 注意：*.zip 与 *.tar 不忽略。
+# 测试夹具可能需要提交 zip 样本（例如用于验证 SKILL.md 解析与
+# 压缩炸弹防护的用例），因此只忽略明确的发布产物后缀。
+
+
+# ------------------------------------------------------------------------------
+# 日志与临时文件
+# ------------------------------------------------------------------------------
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.cache/
+.tmp/
+tmp/
+temp/
+
+
+# ------------------------------------------------------------------------------
+# 前端 / Node
+# ------------------------------------------------------------------------------
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.tsbuildinfo
+.eslintcache
+.oxlintcache
+npm-debug.log*
+
+# 注意：backend/openapi.json 是刻意不忽略的。
+# 它是接口契约的真源，监控方要靠它的 diff 来发现前后端漂移，
+# 因此必须入库（属于生成物，但需要可审阅的历史）。

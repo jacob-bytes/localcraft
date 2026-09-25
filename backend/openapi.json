@@ -1,0 +1,1325 @@
+{
+  "components": {
+    "schemas": {
+      "AuthProviderResponse": {
+        "description": "`GET /api/v1/auth/provider`（FR-AUTH-09）——\n\n返回当前启用的认证方式与登录页需要渲染的字段，供前端适配 OIDC 等可插拔方式。\n\n`login_fields` 是**结构化字段描述**而不是字符串数组：FR-AUTH-09 要求前端按\n后端返回的字段动态渲染登录表单，将来接 OIDC 时不用改前端代码。\n`display_name` 是 `web/src/api/types.ts` 已声明的字段，这里补上以避免\n三方比对（docs/03 ↔ openapi.json ↔ types.ts）出现缺失项。",
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "login_fields": {
+            "items": {
+              "$ref": "#/components/schemas/LoginField"
+            },
+            "title": "Login Fields",
+            "type": "array"
+          },
+          "password_change_supported": {
+            "default": true,
+            "title": "Password Change Supported",
+            "type": "boolean"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/AuthSource"
+          },
+          "refresh_supported": {
+            "default": true,
+            "title": "Refresh Supported",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "display_name",
+          "login_fields"
+        ],
+        "title": "AuthProviderResponse",
+        "type": "object"
+      },
+      "AuthSource": {
+        "description": "docs/02 §3.1 `users.auth_source`",
+        "enum": [
+          "local",
+          "oidc"
+        ],
+        "title": "AuthSource",
+        "type": "string"
+      },
+      "CategoryBrief": {
+        "description": "工具卡片里的分类（docs/03 §3.3 `category`）。",
+        "properties": {
+          "icon": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Icon"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name"
+        ],
+        "title": "CategoryBrief",
+        "type": "object"
+      },
+      "CategoryFacet": {
+        "description": "`facets.categories[]`（docs/03 §3.3）。",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "name",
+          "count"
+        ],
+        "title": "CategoryFacet",
+        "type": "object"
+      },
+      "CategoryOut": {
+        "description": "`GET /api/v1/categories` 列表项。\n\n`tool_count` 是**当前用户可见的**工具数量（FR-TAX-07）——\n与门户 `facets.categories[].count` 同源同算法，保证左侧导航的计数\n和实际能看到的卡片数一致。",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "icon": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Icon"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "sort_order": {
+            "title": "Sort Order",
+            "type": "integer"
+          },
+          "tool_count": {
+            "default": 0,
+            "title": "Tool Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "sort_order",
+          "is_active"
+        ],
+        "title": "CategoryOut",
+        "type": "object"
+      },
+      "ChangePasswordRequest": {
+        "properties": {
+          "new_password": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "New Password",
+            "type": "string"
+          },
+          "old_password": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Old Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "old_password",
+          "new_password"
+        ],
+        "title": "ChangePasswordRequest",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "default": "ok",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "title": "HealthResponse",
+        "type": "object"
+      },
+      "LoginField": {
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "required": {
+            "default": true,
+            "title": "Required",
+            "type": "boolean"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "label",
+          "type"
+        ],
+        "title": "LoginField",
+        "type": "object"
+      },
+      "LoginRequest": {
+        "example": {
+          "password": "Str0ng!Passw0rd",
+          "username": "zhangsan"
+        },
+        "properties": {
+          "password": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Password",
+            "type": "string"
+          },
+          "username": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "password"
+        ],
+        "title": "LoginRequest",
+        "type": "object"
+      },
+      "MetaFeatures": {
+        "description": "前端据此决定是否渲染某些区块，避免前后端发布不同步时的白屏（docs/03 §3.1）。",
+        "properties": {
+          "anonymous_view": {
+            "default": false,
+            "title": "Anonymous View",
+            "type": "boolean"
+          },
+          "change_password": {
+            "default": true,
+            "title": "Change Password",
+            "type": "boolean"
+          },
+          "skill_preview": {
+            "default": true,
+            "title": "Skill Preview",
+            "type": "boolean"
+          },
+          "webapp_health_check": {
+            "default": false,
+            "title": "Webapp Health Check",
+            "type": "boolean"
+          }
+        },
+        "title": "MetaFeatures",
+        "type": "object"
+      },
+      "MetaResponse": {
+        "description": "`GET /api/v1/meta`（docs/03 §3.1）—— **只返回 `is_public = true` 的设置项**。",
+        "properties": {
+          "allow_anonymous_view": {
+            "title": "Allow Anonymous View",
+            "type": "boolean"
+          },
+          "announcement_md": {
+            "title": "Announcement Md",
+            "type": "string"
+          },
+          "api_version": {
+            "default": "v1",
+            "title": "Api Version",
+            "type": "string"
+          },
+          "app_version": {
+            "title": "App Version",
+            "type": "string"
+          },
+          "auth_provider": {
+            "title": "Auth Provider",
+            "type": "string"
+          },
+          "default_sort": {
+            "title": "Default Sort",
+            "type": "string"
+          },
+          "features": {
+            "$ref": "#/components/schemas/MetaFeatures"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "site_name": {
+            "title": "Site Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "site_name",
+          "announcement_md",
+          "auth_provider",
+          "allow_anonymous_view",
+          "default_sort",
+          "page_size",
+          "app_version",
+          "features"
+        ],
+        "title": "MetaResponse",
+        "type": "object"
+      },
+      "TagOut": {
+        "description": "`GET /api/v1/tags` 列表项。\n\n`name` 是归一化后的键（小写、全角转半角），`display_name` 是首次创建时的\n原始写法（FR-TAX-03）。前端联想框展示 `display_name`，提交筛选时用任一个\n都可以 —— 服务端对 `?tag=` 入参会做同样的归一化。",
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "usage_count": {
+            "title": "Usage Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "display_name",
+          "usage_count"
+        ],
+        "title": "TagOut",
+        "type": "object"
+      },
+      "TokenResponse": {
+        "description": "登录与 refresh 的统一成功响应（契约 §3.2）。",
+        "properties": {
+          "access_token": {
+            "title": "Access Token",
+            "type": "string"
+          },
+          "expires_in": {
+            "description": "access token 剩余有效秒数",
+            "title": "Expires In",
+            "type": "integer"
+          },
+          "token_type": {
+            "default": "bearer",
+            "title": "Token Type",
+            "type": "string"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserMe"
+          }
+        },
+        "required": [
+          "access_token",
+          "expires_in",
+          "user"
+        ],
+        "title": "TokenResponse",
+        "type": "object"
+      },
+      "ToolFacets": {
+        "description": "分类与类型的计数**已按当前用户可见性过滤**（FR-TAX-07）。\n\n**只在 `page == 1` 时返回**，翻页时整个 `facets` 键省略（docs/03 §3.3）。",
+        "properties": {
+          "categories": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CategoryFacet"
+            },
+            "title": "Categories",
+            "type": "array"
+          },
+          "types": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TypeFacet"
+            },
+            "title": "Types",
+            "type": "array"
+          }
+        },
+        "title": "ToolFacets",
+        "type": "object"
+      },
+      "ToolListItem": {
+        "description": "门户卡片。字段与 docs/03 §3.3 的响应示例逐字段对应。\n\n`has_pending_version` 仅当请求者是 owner 或 approver/superadmin 时为 `true`，\n对其他用户恒为 `false`（docs/03 §3.3「`has_pending_version` 的可见性」，SRS Q3）。",
+        "properties": {
+          "can_download": {
+            "default": true,
+            "title": "Can Download",
+            "type": "boolean"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CategoryBrief"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cover_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cover Url"
+          },
+          "current_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Version"
+          },
+          "download_count": {
+            "title": "Download Count",
+            "type": "integer"
+          },
+          "file_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Size"
+          },
+          "has_pending_version": {
+            "default": false,
+            "title": "Has Pending Version",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/UserBrief"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "tags": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "tool_type": {
+            "$ref": "#/components/schemas/ToolType"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "view_count": {
+            "title": "View Count",
+            "type": "integer"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/ToolVisibility"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "summary",
+          "tool_type",
+          "visibility",
+          "owner",
+          "download_count",
+          "view_count"
+        ],
+        "title": "ToolListItem",
+        "type": "object"
+      },
+      "ToolListResponse": {
+        "properties": {
+          "facets": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ToolFacets"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ToolListItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size",
+          "pages"
+        ],
+        "title": "ToolListResponse",
+        "type": "object"
+      },
+      "ToolType": {
+        "description": "docs/02 §3.8 `tools.tool_type`（D1：四种工具形态）",
+        "enum": [
+          "file",
+          "webapp",
+          "skill",
+          "prompt"
+        ],
+        "title": "ToolType",
+        "type": "string"
+      },
+      "ToolVisibility": {
+        "description": "docs/02 §3.8 `tools.visibility`（D5：三级可见性）",
+        "enum": [
+          "public",
+          "restricted",
+          "private"
+        ],
+        "title": "ToolVisibility",
+        "type": "string"
+      },
+      "TypeFacet": {
+        "description": "`facets.types[]`（docs/03 §3.3）。",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "count"
+        ],
+        "title": "TypeFacet",
+        "type": "object"
+      },
+      "UserBrief": {
+        "description": "工具卡片里的作者信息（docs/03 §3.3 `owner`）。",
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "username",
+          "display_name"
+        ],
+        "title": "UserBrief",
+        "type": "object"
+      },
+      "UserMe": {
+        "description": "`user` 对象 —— 登录、refresh、`/auth/me` 都返回这个形状。\n\n契约 §3.3：`POST /auth/refresh` **也要返回 `user` 对象**，前端靠它恢复\n用户态，避免额外再调 `/auth/me`。",
+        "properties": {
+          "auth_source": {
+            "$ref": "#/components/schemas/AuthSource"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "last_login_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Login At"
+          },
+          "must_change_password": {
+            "title": "Must Change Password",
+            "type": "boolean"
+          },
+          "permissions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Permissions",
+            "type": "array"
+          },
+          "roles": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Roles",
+            "type": "array"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "username",
+          "display_name",
+          "must_change_password",
+          "auth_source",
+          "status"
+        ],
+        "title": "UserMe",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "selftool — 内网工具 / Skill 共享平台后端",
+    "title": "selftool API",
+    "version": "1.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/auth/change-password": {
+      "post": {
+        "description": "校验旧密码 → 强度校验 → 更新哈希 → 清 `must_change_password`\n→ 吊销该用户**全部其他 session**（FR-AUTH-10 / 契约 §3.2 ⑥）。\n\n同时清掉当前 refresh Cookie：契约 §3.2 ⑥ 要求「改密成功后强制用新密码\n重新登录」，而登录页挂载时会尝试 refresh。若 Cookie 还在，refresh 会成功\n并把用户静默弹回门户，与契约 §8 验收第 11 条冲突。",
+        "operationId": "change_password_api_v1_auth_change_password_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangePasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Change Password Api V1 Auth Change Password Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "修改自己的密码",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "description": "登录成功 → 返回 access token + `user`，并 `Set-Cookie` 下发 refresh token。\n\n失败：\n  - 用户名或密码错误 → 401 `INVALID_CREDENTIALS`（**同一个码、同一句文案**）\n  - 账号禁用 → 403 `ACCOUNT_DISABLED`\n  - 账号锁定 → 423 `ACCOUNT_LOCKED`（`details.retry_after_seconds`）",
+        "operationId": "login_api_v1_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "登录",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "description": "吊销该 session 行并清 Cookie（FR-AUTH-07）。\n\n幂等，且**不要求 Bearer 头** —— access token 过期后用户仍应能可靠登出。",
+        "operationId": "logout_api_v1_auth_logout_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Logout Api V1 Auth Logout Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "登出并吊销 refresh token",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/me": {
+      "get": {
+        "description": "含 `roles`、`permissions`、`must_change_password`。",
+        "operationId": "me_api_v1_auth_me_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserMe"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "当前用户信息",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/provider": {
+      "get": {
+        "description": "FR-AUTH-09：本地账号体系下返回用户名 + 密码两个字段。\n\n将来接 OIDC 时只改这里，前端按 `login_fields` 渲染，业务代码不动\n（FR-AUTH-08 的可插拔认证）。",
+        "operationId": "auth_provider_api_v1_auth_provider_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthProviderResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "当前认证方式与登录表单字段",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/refresh": {
+      "post": {
+        "description": "契约 §3.3：**必须同时返回 `user` 对象**，前端靠它恢复用户态，\n避免额外再调 `/auth/me`。\n\nrefresh token **不轮换**（契约未要求；轮换会让并发刷新互相踩踏）。\n失败一律 401，前端据此视为未登录。",
+        "operationId": "refresh_api_v1_auth_refresh_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "用 refresh cookie 换新 access token",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/categories": {
+      "get": {
+        "description": "FR-TAX-07：每个分类带上**当前用户可见的**工具数量。\n\n计数与 `GET /tools` 的 `facets.categories[].count` 共用同一段聚合 SQL，\n保证左侧导航的计数与实际能看到的卡片数一致。\n\n只返回 `is_active = true` 的分类（契约 §6）。",
+        "operationId": "list_categories_api_v1_categories_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CategoryOut"
+                  },
+                  "title": "Response List Categories Api V1 Categories Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "分类列表（含当前用户可见工具数）",
+        "tags": [
+          "portal"
+        ]
+      }
+    },
+    "/api/v1/meta": {
+      "get": {
+        "description": "无需鉴权。\n\n**只返回 `is_public = true` 的设置项**（FR-CFG-03）—— 配额、审批开关、\n白名单等私有项绝不通过这个匿名接口外泄。",
+        "operationId": "get_meta_api_v1_meta_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetaResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "公开配置",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/v1/tags": {
+      "get": {
+        "description": "标签列表按 `usage_count` 降序，方便联想框把常用标签排在前面。\n\n`q` 是**前缀**匹配（docs/03 §2.3），不是模糊包含。",
+        "operationId": "list_tags_api_v1_tags_get",
+        "parameters": [
+          {
+            "description": "前缀搜索关键词，用于输入联想",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "前缀搜索关键词，用于输入联想",
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TagOut"
+                  },
+                  "title": "Response List Tags Api V1 Tags Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "标签列表（支持 ?q= 前缀搜索）",
+        "tags": [
+          "portal"
+        ]
+      }
+    },
+    "/api/v1/tools": {
+      "get": {
+        "description": "门户主列表。\n\n几个要点：\n\n- **`sort` 白名单校验**，非法值返回 400 `INVALID_SORT` 而不是 500；\n  排序表达式从 `SORT_EXPRESSIONS` 查表得到，**绝不把 `sort` 拼进 SQL**\n  （docs/03 §1.6）。\n- **`facets` 只在 `page == 1` 时返回**，翻页时整个键省略（docs/03 §3.3）。\n- 可见性判定下推到 SQL（EXISTS 子查询），不在 Python 里过滤\n  （docs/01 §4.3 性能要求）。\n- 未登录用户由 `portal.allow_anonymous_view` 决定 401 还是返回公开数据\n  （契约 §6），该判断在 `portal_access` 依赖里完成。",
+        "operationId": "list_tools_api_v1_tools_get",
+        "parameters": [
+          {
+            "description": "关键词，搜索名称、简介、详情、标签",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "关键词，搜索名称、简介、详情、标签",
+              "title": "Q"
+            }
+          },
+          {
+            "description": "分类 slug，可重复传",
+            "in": "query",
+            "name": "category",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "分类 slug，可重复传",
+              "title": "Category"
+            }
+          },
+          {
+            "description": "标签名，可重复传",
+            "in": "query",
+            "name": "tag",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "标签名，可重复传",
+              "title": "Tag"
+            }
+          },
+          {
+            "description": "file/webapp/skill/prompt，可重复传",
+            "in": "query",
+            "name": "type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "file/webapp/skill/prompt，可重复传",
+              "title": "Type"
+            }
+          },
+          {
+            "description": "按作者 username 筛选",
+            "in": "query",
+            "name": "owner",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "按作者 username 筛选",
+              "title": "Owner"
+            }
+          },
+          {
+            "description": "hot（默认）/ new / name / -updated_at",
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "hot（默认）/ new / name / -updated_at",
+              "title": "Sort"
+            }
+          },
+          {
+            "description": "页码，从 1 开始",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "description": "页码，从 1 开始",
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "每页条数，1~200",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "description": "每页条数，1~200",
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "门户工具列表",
+        "tags": [
+          "portal"
+        ]
+      }
+    },
+    "/healthz": {
+      "get": {
+        "description": "只回答「进程活着」，不碰数据库。",
+        "operationId": "healthz_healthz_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "存活探针",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/readyz": {
+      "get": {
+        "description": "真的探测：数据库 `SELECT 1` 能通 + `DATA_DIR` 可写。\n\n任一失败返回 **503**，这样 systemd 的 `ExecStartPost=wait-healthy.sh`\n与 nginx 的 upstream 摘除都能据此判断。",
+        "operationId": "readyz_readyz_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "就绪探针",
+        "tags": [
+          "system"
+        ]
+      }
+    }
+  }
+}

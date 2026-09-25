@@ -1,0 +1,32 @@
+# selftool 后端直接依赖（人手维护，宽松版本约束）
+#
+# 说明：
+#   - 这是「人维护」的清单，只列直接依赖，不锁死小版本。
+#   - 生产离线安装使用 requirements.lock（全量锁定，含传递依赖），
+#     见 docs/05《部署与运维方案》§3.3。
+#   - Python 目标版本 3.11（README D34）。生成 lock 时必须带
+#     --python-version 3.11，否则会把 3.12+ 专属的包版本锁进来。
+
+# ---------- Web 框架 ----------
+fastapi
+uvicorn[standard]
+
+# ---------- 数据库 ----------
+sqlalchemy[asyncio]>=2.0
+aiosqlite
+alembic
+
+# ---------- 配置与校验 ----------
+pydantic>=2
+pydantic-settings
+
+# ---------- 安全 ----------
+argon2-cffi
+pyjwt
+
+# ---------- CLI ----------
+typer
+
+# ---------- 文件与流式 IO ----------
+aiofiles
+python-multipart

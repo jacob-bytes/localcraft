@@ -1,0 +1,15 @@
+# ============================================================
+# selftool 服务 slice
+# 安装位置: /etc/systemd/system/selftool.slice
+# 用途: 把 selftool.service 放进独立 cgroup，便于对整套服务做资源限额
+#       （selftool.service 里通过 `Slice=selftool.slice` 引用）
+# 来源: docs/05《部署与运维方案》§6.6（示例值，按机器规格调整）
+# ============================================================
+[Unit]
+Description=selftool service slice
+
+[Slice]
+# 整组服务的总资源上限（示例值，按机器规格调整）
+CPUQuota=400%
+MemoryMax=4G
+TasksMax=8192

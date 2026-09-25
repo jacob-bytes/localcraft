@@ -1,0 +1,148 @@
+# ============================================================
+# selftool 主服务单元
+# 安装位置: /etc/systemd/system/selftool.service
+# 权限: 0644 root:root
+# 依赖文件: /etc/selftool/selftool.env (0640 root:selftool)
+# 来源: docs/05《部署与运维方案》§6.2（按仓库布局调整了 Documentation 路径）
+# ============================================================
+[Unit]
+Description=selftool - 内网工具与 Skill 共享平台
+Documentation=file:/opt/selftool/app/current/docs/05-部署与运维方案.md
+# 网络与文件系统就绪后再启动，避免首次运行时挂载点尚未可用
+After=network-online.target local-fs.target
+Wants=network-online.target
+# 依赖 nginx 时不要在 unit 里强绑定，避免 nginx 重启连带重启应用；
+# 若确实需要"nginx 先起"，把下一行取消注释
+# After=nginx.service
+# 使用独立的 slice，便于对整套服务做 CPU/内存限额
+Slice=selftool.slice
+
+[Service]
+# 启动完成判定：uvicorn 不发送 sd_notify，故使用 simple
+# （如需精确就绪语义，见 docs/05 §6.4 的 Type=notify 变体）
+Type=simple
+
+# ---------- 运行身份 ----------
+# 专用系统用户，无登录 shell，最小权限原则
+User=selftool
+Group=selftool
+# 关键目录：代码与 venv 在 /opt/selftool，运行数据在 /var/lib/selftool
+WorkingDirectory=/opt/selftool/app/current
+
+# ---------- 配置 ----------
+# 环境变量文件：systemd 会在启动时读取并注入进程环境
+# 注意：文件内容不会出现在 systemctl show 的 Environment 里（更安全）
+EnvironmentFile=/etc/selftool/selftool.env
+# 兜底 PYTHONPATH，保证 `python -m app.cli` 能找到包
+Environment=PYTHONPATH=/opt/selftool/app/current
+# 关闭 .pyc 写入（配合 ProtectSystem=strict，避免只读文件系统报错）
+Environment=PYTHONDONTWRITEBYTECODE=1
+# 让 Python 立即刷新 stdout/stderr，日志在 journal 中按行及时可见
+Environment=PYTHONUNBUFFERED=1
+
+# ---------- 启动命令 ----------
+# 指向 venv 内的 uvicorn；显式使用 venv 的 python，避免误用系统 Python
+# --workers 1：SQLite WAL 单写者，多 worker 只会加剧写锁竞争（docs/05 §6.3）
+# --proxy-headers + --forwarded-allow-ips：信任 nginx 传来的 X-Forwarded-*
+# --timeout-graceful-shutdown：收到 SIGTERM 后给在途请求（含大文件下载）留出收尾时间
+ExecStart=/opt/selftool/venv/bin/python -m uvicorn app.main:app \
+    --host ${SELTOOL_HOST} \
+    --port ${SELTOOL_PORT} \
+    --workers 1 \
+    --proxy-headers \
+    --forwarded-allow-ips=127.0.0.1 \
+    --timeout-keep-alive 15 \
+    --timeout-graceful-shutdown 30 \
+    --no-server-header \
+    --log-level ${SELTOOL_LOG_LEVEL}
+
+# 启动后等待就绪探针通过；失败则单元进入 failed，便于监控发现
+ExecStartPost=/opt/selftool/scripts/wait-healthy.sh --url http://127.0.0.1:${SELTOOL_PORT}/readyz --timeout 60
+
+# ---------- 重启策略 ----------
+# 只在异常退出时重启（正常 stop 不重启）
+Restart=on-failure
+# 重启前等待 3 秒，避免配置类错误导致疯狂重启刷日志
+RestartSec=3s
+# 5 分钟内最多重启 10 次，超过则放弃并保持在 failed
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+# ---------- 停止行为 ----------
+# 收到 stop 时先发 SIGTERM，uvicorn 会优雅关闭在途请求
+KillSignal=SIGTERM
+# 优雅关闭最多等 45 秒；仍不退出则 SIGKILL
+TimeoutStopSec=45s
+# 给进程组发信号，确保子进程一并退出
+KillMode=mixed
+
+# ---------- 日志 ----------
+StandardOutput=journal
+StandardError=journal
+# 日志标识，便于 journalctl -t selftool 精确过滤
+SyslogIdentifier=selftool
+
+# ---------- 资源限制 ----------
+# 文件描述符上限。原因见 docs/05 §6.5：每个并发连接 + 每个正在 sendfile 的
+# 大文件下载都会占用 fd，100 并发用户 × 浏览器多连接 × 若干内部 fd，
+# 默认 1024 在下载高峰会直接 EMFILE 报 "Too many open files"
+LimitNOFILE=65536
+# 允许创建较多线程（SQLAlchemy 同步驱动的线程池 + 可能存在的线程后端）
+TasksMax=4096
+# 内存上限：防止异常积累；可按机器内存调整（百人规模 2G 足够）
+MemoryMax=2G
+# CPU 权重（相对值，仅在同机存在竞争时生效）
+CPUWeight=200
+
+# ---------- 安全加固 ----------
+# 禁止通过 setuid/setgid 提权
+NoNewPrivileges=true
+# 私有 /tmp，服务看到的 /tmp 与宿主隔离
+PrivateTmp=true
+# 私有 /dev（只保留最低限度的设备节点）
+PrivateDevices=true
+# 整个文件系统只读
+ProtectSystem=strict
+# 家目录不可访问（防止读取 /root、/home 下的敏感文件）
+ProtectHome=true
+# 禁止读取内核环形缓冲区（dmesg），减少信息泄露面
+ProtectKernelLogs=true
+# 禁止修改 /proc/sys 与 /sys 中的内核可调参数
+ProtectKernelTunables=true
+# 禁止加载/卸载内核模块
+ProtectKernelModules=true
+# 禁止写 cgroup 控制文件
+ProtectControlGroups=true
+# 禁止修改系统时钟
+ProtectClock=true
+# 禁止修改主机名
+ProtectHostname=true
+# 让 /proc 中其他用户的进程对服务不可见
+ProtectProc=invisible
+# 只允许本机原生架构的系统调用（防止用 32 位 ABI 绕过 SystemCallFilter）
+SystemCallArchitectures=native
+# 限制进程可见的地址族，只保留必要的 unix/inet/inet6/netlink
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+# 禁止创建命名空间（服务本身不需要）
+RestrictNamespaces=true
+# 禁止实时调度（防止服务抢占系统实时优先级）
+RestrictRealtime=true
+# 禁止使用 SUID/SGID 二进制（与 NoNewPrivileges 叠加）
+RestrictSUIDSGID=true
+# 禁止修改进程的执行域（personality），防某些提权手法
+LockPersonality=true
+# 禁止可写且可执行的内存映射。
+# 这里显式保持 false：Python 及其原生扩展（greenlet、pydantic-core 等）
+# 在部分实现下需要 W+X 的内存页，置 true 可能导致启动失败。
+# 若确认依赖不依赖该特性，可改为 true 进一步加固。
+MemoryDenyWriteExecute=false
+# 只允许调用白名单系统调用集（@system-service 覆盖了正常的网络/文件操作）
+SystemCallFilter=@system-service
+# 被拒绝的系统调用返回 EPERM 而不是直接杀进程，便于定位问题
+SystemCallErrorNumber=EPERM
+# 关键：ProtectSystem=strict 让整个文件系统只读，
+# 因此必须显式列出服务需要写入的路径，否则应用启动会因 EROFS 失败
+ReadWritePaths=/var/lib/selftool /var/log/selftool
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,97 @@
+[project]
+name = "selftool-backend"
+version = "1.0.0"
+description = "selftool — 内网工具 / Skill 共享平台后端"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "sqlalchemy[asyncio]",
+    "aiosqlite",
+    "alembic",
+    "pydantic",
+    "pydantic-settings",
+    "argon2-cffi",
+    "pyjwt",
+    "typer",
+    "python-multipart",
+    "aiofiles",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "httpx",
+    "ruff",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["app"]
+
+# ---------------------------------------------------------------------------
+# Ruff —— 第一道 Python 3.11 语法兼容防线（README「Python 版本策略」三道防线的第 1 道）
+# target-version = "py311" 是防线的核心：它让 ruff 在编写时就标出 PEP 695 泛型、
+# `type` 别名语句等 3.12+ 才有的写法，避免「本地 3.13 全绿、部署到 openEuler 3.11
+# 直接 SyntaxError」。
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = [".venv", "migrations/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+# RUF001/002/003 会检查「易混淆的 Unicode 字符」——把中文全角标点（，。：（）「」）
+# 报成问题。本项目是中文代码库，注释与文案**刻意**使用中文标点，
+# 这三条规则的信号为纯噪声，因此关闭。其余 RUF 规则保持开启。
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.per-file-ignores]
+# 迁移脚本由 alembic 模板生成，导入顺序与未使用参数是模板固有的
+"migrations/*" = ["E501", "F401", "I001"]
+"tests/*" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = ["ignore::DeprecationWarning"]
+addopts = "-q"
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/tasks/*", "*/__init__.py"]
+# SQLAlchemy 的 AsyncSession 通过 greenlet 桥接同步 DBAPI 调用。
+# 不开 greenlet 并发模式的话，**在 HTTP 请求路径里执行的协程完全不被统计**
+# （直接 await 服务函数却能被统计），覆盖率会低到 37% 这种明显失真的数字。
+# thread 用于任何可能的后台线程，greenlet 是这里的关键。
+concurrency = ["thread", "greenlet"]
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@abstractmethod",
+]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI / Typer 的标准写法就是在默认值里调用 Depends()/Query()/Option()，
+# 这些调用是声明式的、无副作用，B008 在这类框架下是误报。
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Body",
+    "fastapi.Header",
+    "fastapi.Form",
+    "fastapi.File",
+    "typer.Option",
+    "typer.Argument",
+]

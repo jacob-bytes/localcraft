@@ -1,0 +1,30 @@
+# ============================================================
+# selftool 日志轮转
+# 安装位置: /etc/logrotate.d/selftool
+# 说明: 应用日志默认走 journald（StandardOutput=journal），本文件覆盖
+#       nginx 侧与可选的 SELTOOL_LOG_TO_FILE=true 场景。
+# ============================================================
+/var/log/nginx/selftool.access.log /var/log/nginx/selftool.error.log {
+    daily
+    rotate 30
+    missingok
+    notifempty
+    compress
+    delaycompress
+    sharedscripts
+    postrotate
+        # nginx 收到 USR1 后重新打开日志文件
+        [ -s /run/nginx.pid ] && kill -USR1 "$(cat /run/nginx.pid)" 2>/dev/null || true
+    endscript
+}
+
+/var/log/selftool/*.log {
+    daily
+    rotate 30
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    su selftool selftool
+}
