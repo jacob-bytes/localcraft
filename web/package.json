@@ -9,7 +9,13 @@
     "lint": "oxlint --deny-warnings src",
     "preview": "vite preview",
     "typecheck": "tsc -b",
-    "e2e": "playwright test"
+    "check:primitives": "node scripts/check-ui-primitives.mjs",
+    "check:dist": "node scripts/check-dist-clean.mjs",
+    "verify": "npm run typecheck && npm run lint && npm run check:primitives && npm run build && npm run check:dist",
+    "e2e": "playwright test",
+    "e2e:real": "playwright test --config playwright.real.config.ts",
+    "evidence": "node scripts/collect-evidence.mjs",
+    "backend:isolated": "bash scripts/start-isolated-backend.sh"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

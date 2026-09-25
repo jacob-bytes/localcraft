@@ -663,7 +663,20 @@ Skill 的 `readme_md` 正文与完整文件树**不在此接口返回**（可能
 
 ### 3.8 `GET /api/v1/admin/approvals`
 
-**查询参数**：`status`（默认 `pending`）、`tool_type`、`owner`、`page`、`page_size`、`sort`（默认 `created_at`，正序，先提交先处理）。
+**查询参数**：`status`、`tool_type`、`owner`、`page`、`page_size`、`sort`（默认 `created_at`，正序，先提交先处理）。
+
+**`status` 的取值（M2 checkpoint 补入，2025-03）**：
+
+| 取值 | 含义 |
+| --- | --- |
+| `pending` | **仅**首次提交待审（`tools.status = 'pending'`） |
+| `pending_update` | **仅**已发布工具的新版本待审 |
+| `pending_all` | **两者并集**；**省略 `status` 时等价于此，也是默认语义** |
+
+> **这是一个会咬人的坑**：本节早先版本写「默认 `pending`」。若客户端照此传 `status=pending`，
+> **新版本待审的条目不会出现在队列里** —— 已发布工具发新版本后将无人审批，而门户仍在正常服务，
+> 管理员很难察觉。前端在 M2 联调时发现并改为 `pending_all`。
+> 后端 `app/repositories/approvals.py` 三个取值都支持。
 
 **响应**：
 

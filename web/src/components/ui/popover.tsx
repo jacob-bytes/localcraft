@@ -42,38 +42,53 @@ function PopoverAnchor({
   return <PopoverPrimitive.Anchor data-slot="popover-anchor" {...props} />
 }
 
-function PopoverHeader({ className, ...props }: React.ComponentProps<"div">) {
+const PopoverHeader = React.forwardRef<
+  HTMLDivElement,
+  React.ComponentPropsWithoutRef<"div">
+>(({ className, ...props }, ref) => {
   return (
     <div
+      ref={ref}
       data-slot="popover-header"
       className={cn("flex flex-col gap-1 text-sm", className)}
       {...props}
     />
   )
-}
+})
+PopoverHeader.displayName = "PopoverHeader"
 
-function PopoverTitle({ className, ...props }: React.ComponentProps<"h2">) {
+const PopoverTitle = React.forwardRef<
+  HTMLDivElement,
+  React.ComponentPropsWithoutRef<"h2">
+>(({ className, ...props }, ref) => {
   return (
     <div
+      ref={ref}
       data-slot="popover-title"
       className={cn("font-medium", className)}
       {...props}
     />
   )
-}
+})
+PopoverTitle.displayName = "PopoverTitle"
 
-function PopoverDescription({
+const PopoverDescription = React.forwardRef<
+  HTMLParagraphElement,
+  React.ComponentPropsWithoutRef<"p">
+>(({
   className,
   ...props
-}: React.ComponentProps<"p">) {
+}, ref) => {
   return (
     <p
+      ref={ref}
       data-slot="popover-description"
       className={cn("text-muted-foreground", className)}
       {...props}
     />
   )
-}
+})
+PopoverDescription.displayName = "PopoverDescription"
 
 export {
   Popover,

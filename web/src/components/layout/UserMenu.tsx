@@ -1,4 +1,11 @@
-import { ChevronDown, KeyRound, LogOut, ShieldCheck, User as UserIcon } from "lucide-react";
+import {
+  ChevronDown,
+  KeyRound,
+  LogOut,
+  Package as PackageIcon,
+  ShieldCheck,
+  User as UserIcon,
+} from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
@@ -81,14 +88,31 @@ export function UserMenu({ minimal = false }: { minimal?: boolean }) {
           </DropdownMenuLabel>
         ) : (
           <>
-            <DropdownMenuItem disabled>
+            {/* M2 启用：个人中心 / 我的工具 / 管理后台（审批台已在 M2 落地） */}
+            <DropdownMenuItem
+              onSelect={() => {
+                navigate("/me");
+              }}
+            >
               <UserIcon aria-hidden="true" className="size-4" />
-              个人中心（M2）
+              个人中心
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={() => {
+                navigate("/me/tools");
+              }}
+            >
+              <PackageIcon aria-hidden="true" className="size-4" />
+              我的工具
             </DropdownMenuItem>
             {canApprove(user) ? (
-              <DropdownMenuItem disabled>
+              <DropdownMenuItem
+                onSelect={() => {
+                  navigate("/admin/approvals");
+                }}
+              >
                 <ShieldCheck aria-hidden="true" className="size-4" />
-                管理后台（M3）
+                管理后台
               </DropdownMenuItem>
             ) : null}
           </>

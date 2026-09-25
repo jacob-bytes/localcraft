@@ -20,9 +20,9 @@ import { useDebounce } from "@/hooks/useDebounce";
  * Global search in the top bar: a Command palette opened with ⌘K / Ctrl+K
  * (docs/04 §5.1, §6.3).
  *
- * M1 note: selecting a result lands on the portal filtered to that tool, because
- * `/tools/:slug` is an M2 route (CONTRACT §12). Swap the navigation target for
- * `/tools/${slug}` once M2 lands.
+ * Selecting a result opens `/tools/:slug` (CONTRACT §14.10 — M2 landed the detail
+ * page). The "在门户中搜索" row still jumps to the portal with `?q=` for free-text
+ * searches that match nothing by name.
  */
 export function GlobalSearch() {
   const [open, setOpen] = React.useState(false);
@@ -53,6 +53,12 @@ export function GlobalSearch() {
     if (!q) return;
     setOpen(false);
     navigate(`/?q=${encodeURIComponent(q)}`);
+  }
+
+  /** M2：详情页已落地，选中结果直接跳 /tools/:slug（CONTRACT §14.10）。 */
+  function goToTool(slug: string) {
+    setOpen(false);
+    navigate(`/tools/${encodeURIComponent(slug)}`);
   }
 
   const items = data?.items ?? [];
@@ -110,7 +116,7 @@ export function GlobalSearch() {
                 <CommandItem
                   key={tool.id}
                   value={tool.name}
-                  onSelect={() => goToPortal(tool.name)}
+                  onSelect={() => goToTool(tool.slug)}
                 >
                   <ToolTypeBadge type={tool.tool_type} />
                   <span className="min-w-0 flex-1 truncate">{tool.name}</span>

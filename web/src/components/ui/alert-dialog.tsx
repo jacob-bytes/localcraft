@@ -67,12 +67,16 @@ function AlertDialogContent({
   )
 }
 
-function AlertDialogHeader({
+const AlertDialogHeader = React.forwardRef<
+  HTMLDivElement,
+  React.ComponentPropsWithoutRef<"div">
+>(({
   className,
   ...props
-}: React.ComponentProps<"div">) {
+}, ref) => {
   return (
     <div
+      ref={ref}
       data-slot="alert-dialog-header"
       className={cn(
         "grid grid-rows-[auto_1fr] place-items-center gap-1.5 text-center has-data-[slot=alert-dialog-media]:grid-rows-[auto_auto_1fr] has-data-[slot=alert-dialog-media]:gap-x-6 sm:group-data-[size=default]/alert-dialog-content:place-items-start sm:group-data-[size=default]/alert-dialog-content:text-left sm:group-data-[size=default]/alert-dialog-content:has-data-[slot=alert-dialog-media]:grid-rows-[auto_1fr]",
@@ -81,14 +85,19 @@ function AlertDialogHeader({
       {...props}
     />
   )
-}
+})
+AlertDialogHeader.displayName = "AlertDialogHeader"
 
-function AlertDialogFooter({
+const AlertDialogFooter = React.forwardRef<
+  HTMLDivElement,
+  React.ComponentPropsWithoutRef<"div">
+>(({
   className,
   ...props
-}: React.ComponentProps<"div">) {
+}, ref) => {
   return (
     <div
+      ref={ref}
       data-slot="alert-dialog-footer"
       className={cn(
         "flex flex-col-reverse gap-2 group-data-[size=sm]/alert-dialog-content:grid group-data-[size=sm]/alert-dialog-content:grid-cols-2 sm:flex-row sm:justify-end",
@@ -97,7 +106,8 @@ function AlertDialogFooter({
       {...props}
     />
   )
-}
+})
+AlertDialogFooter.displayName = "AlertDialogFooter"
 
 function AlertDialogTitle({
   className,
@@ -128,12 +138,16 @@ function AlertDialogDescription({
   )
 }
 
-function AlertDialogMedia({
+const AlertDialogMedia = React.forwardRef<
+  HTMLDivElement,
+  React.ComponentPropsWithoutRef<"div">
+>(({
   className,
   ...props
-}: React.ComponentProps<"div">) {
+}, ref) => {
   return (
     <div
+      ref={ref}
       data-slot="alert-dialog-media"
       className={cn(
         "mb-2 inline-flex size-16 items-center justify-center rounded-md bg-muted sm:group-data-[size=default]/alert-dialog-content:row-span-2 *:[svg:not([class*='size-'])]:size-8",
@@ -142,7 +156,8 @@ function AlertDialogMedia({
       {...props}
     />
   )
-}
+})
+AlertDialogMedia.displayName = "AlertDialogMedia"
 
 function AlertDialogAction({
   className,

@@ -354,3 +354,112 @@ export function acceptTokenPair(pair: TokenPair): User {
 export function clearSession(): void {
   setAccessToken(null);
 }
+
+/* -------------------------------------------------------------------------- */
+/* Multipart upload with progress (docs/04 §6.7 "上传中：进度条 + 取消")        */
+/* -------------------------------------------------------------------------- */
+
+export interface UploadOptions {
+  /** `multipart/form-data` body. */
+  formData: FormData;
+  onProgress?: (loadedBytes: number, totalBytes: number) => void;
+  signal?: AbortSignal;
+  /** @internal set after the first 401 replay. */
+  retried?: boolean;
+}
+
+/**
+ * `fetch` cannot report upload progress, so multipart uploads go through
+ * `XMLHttpRequest`. Auth, error normalisation and the silent-refresh-then-replay
+ * contract are kept identical to `request()` (CONTRACT §3.2 ④).
+ */
+export function upload<T>(path: string, options: UploadOptions): Promise<T> {
+  const { formData, onProgress, signal, retried = false } = options;
+
+  return new Promise<T>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", buildUrl(path), true);
+    xhr.withCredentials = true;
+    xhr.responseType = "text";
+    xhr.setRequestHeader("Accept", "application/json");
+    if (accessToken) xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
+
+    const onAbort = () => xhr.abort();
+    signal?.addEventListener("abort", onAbort, { once: true });
+
+    const cleanup = () => {
+      signal?.removeEventListener("abort", onAbort);
+    };
+
+    xhr.upload.onprogress = (event) => {
+      if (!onProgress || !event.lengthComputable) return;
+      onProgress(event.loaded, event.total);
+    };
+
+    xhr.onerror = () => {
+      cleanup();
+      reject(
+        new ApiError({
+          status: 0,
+          code: CLIENT_ERROR_CODES.network,
+          message: "网络连接失败，请检查网络后重试",
+          details: null,
+          requestId: null,
+        }),
+      );
+    };
+
+    xhr.onabort = () => {
+      cleanup();
+      reject(new DOMException("Upload aborted", "AbortError"));
+    };
+
+    xhr.onload = () => {
+      cleanup();
+      let payload: unknown = null;
+      if (xhr.responseText) {
+        try {
+          payload = JSON.parse(xhr.responseText) as unknown;
+        } catch {
+          payload = xhr.responseText;
+        }
+      }
+
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(payload as T);
+        return;
+      }
+
+      const response = new Response(xhr.responseText, {
+        status: xhr.status,
+        headers: { "X-Request-Id": xhr.getResponseHeader("X-Request-Id") ?? "" },
+      });
+      const error = toApiError(response, payload, `上传失败（HTTP ${xhr.status}）`);
+
+      if (xhr.status === 401 && !retried) {
+        void (async () => {
+          try {
+            await refreshSession();
+          } catch {
+            sessionExpiredHandler?.();
+            reject(error);
+            return;
+          }
+          try {
+            resolve(await upload<T>(path, { ...options, retried: true }));
+          } catch (replayError) {
+            reject(replayError);
+          }
+        })();
+        return;
+      }
+
+      if (error.is("PASSWORD_CHANGE_REQUIRED")) {
+        passwordChangeRequiredHandler?.();
+      }
+      reject(error);
+    };
+
+    xhr.send(formData);
+  });
+}

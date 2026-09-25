@@ -2,6 +2,7 @@ import { Boxes, KeyRound } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { GlobalSearch } from "@/components/layout/GlobalSearch";
+import { Badge } from "@/components/ui/badge";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { UserMenu } from "@/components/layout/UserMenu";
 import { useAuth } from "@/hooks/useAuth";
@@ -37,10 +38,10 @@ export function TopNav() {
         </Link>
 
         {minimal ? (
-          <span className="ml-1 inline-flex items-center gap-1.5 rounded-md bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900 dark:bg-amber-950/70 dark:text-amber-200">
+          <Badge variant="warning" className="ml-1 gap-1.5 py-1">
             <KeyRound aria-hidden="true" className="size-3.5" />
             需先修改密码
-          </span>
+          </Badge>
         ) : (
           <div className="ml-2 flex flex-1 justify-start sm:justify-center">
             <GlobalSearch />

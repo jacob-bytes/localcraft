@@ -69,7 +69,10 @@ const EXPECTED_FAILING_ENDPOINTS = [
   "/api/v1/auth/change-password",
 ];
 
-function watchPageErrors(page: Page): string[] {
+function watchPageErrors(
+  page: Page,
+  options: { allowConsole?: (text: string) => boolean } = {},
+): string[] {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(`pageerror: ${error.message}`));
   page.on("response", (response) => {
@@ -83,6 +86,7 @@ function watchPageErrors(page: Page): string[] {
     if (message.type() !== "error") return;
     const text = message.text();
     if (/Failed to load resource: the server responded with a status of \d+/.test(text)) return;
+    if (options.allowConsole?.(text)) return;
     errors.push(`console.error: ${text}`);
   });
   return errors;
@@ -103,7 +107,24 @@ async function login(
   await page.getByRole("button", { name: "登录", exact: true }).click();
 }
 
+/**
+ * 期望的卡片数从**页面工具栏**的「共 N 个工具」读取。
+ *
+ * 为什么不用 in-page fetch：mock 的 access token 只存在内存，页面刷新或改密后
+ * 之前抓到的 token 会失效（401），而 HMR 的模块 query 又让动态 import 可能拿到
+ * 另一个 client 实例。工具栏的 total 与卡片来自**同一个查询响应**，天然一致。
+ */
+async function expectedCards(page: Page, pageSize = 24): Promise<number> {
+  const label = page.getByText(/共 \d+ 个工具/).first();
+  await expect(label).toBeVisible();
+  const text = await label.innerText();
+  const match = /共 (\d+) 个工具/.exec(text);
+  if (!match?.[1]) throw new Error(`工具栏未显示总数："${text}"`);
+  return Math.min(Number.parseInt(match[1], 10), pageSize);
+}
+
 test.describe("M1 验收（MSW mock 状态）", () => {
+
   test("2. 未登录访问门户 → 跳转 /login，无空白页", async ({ page }) => {
     const errors = watchPageErrors(page);
     await page.goto("/");
@@ -125,7 +146,7 @@ test.describe("M1 验收（MSW mock 状态）", () => {
     await expect(nav).toContainText("超级管理员");
     await expect(nav.getByTestId("user-menu-trigger")).toContainText("管");
 
-    await expect(page.getByTestId("tool-card")).toHaveCount(8);
+    await expect(page.getByTestId("tool-card")).toHaveCount(await expectedCards(page));
     await page.screenshot({ path: `${ARTIFACTS}/03-portal-admin.png`, fullPage: true });
     expect(errors).toEqual([]);
   });
@@ -133,13 +154,13 @@ test.describe("M1 验收（MSW mock 状态）", () => {
   test("4. F5 刷新仍在门户，且从未渲染登录页（unknown 守卫态存在）", async ({ page }) => {
     const errors = watchPageErrors(page);
     await login(page, "admin", "Admin@12345");
-    await expect(page.getByTestId("tool-card")).toHaveCount(8);
+    await expect(page.getByTestId("tool-card")).toHaveCount(await expectedCards(page));
 
     await installFlashProbe(page);
     await page.reload();
 
     await expect(page.getByRole("heading", { name: "发现内网工具与 Skill" })).toBeVisible();
-    await expect(page.getByTestId("tool-card")).toHaveCount(8);
+    await expect(page.getByTestId("tool-card")).toHaveCount(await expectedCards(page));
 
     const seen = await page.evaluate(() => window.__seen);
     expect(seen).toEqual({ login: false, loader: true });
@@ -150,7 +171,7 @@ test.describe("M1 验收（MSW mock 状态）", () => {
   test("5+6. 筛选/搜索/排序/分页全部落到 URL，链接可还原", async ({ page, context }) => {
     const errors = watchPageErrors(page);
     await login(page, "admin", "Admin@12345");
-    await expect(page.getByTestId("tool-card")).toHaveCount(8);
+    await expect(page.getByTestId("tool-card")).toHaveCount(await expectedCards(page));
 
     // 分类单选
     await page
@@ -158,27 +179,28 @@ test.describe("M1 验收（MSW mock 状态）", () => {
       .getByRole("button", { name: /研发工具/ })
       .click();
     await expect(page).toHaveURL(/category=dev-tools/);
-    await expect(page.getByTestId("tool-card")).toHaveCount(3);
+    await expect(page.getByTestId("tool-card")).toHaveCount(await expectedCards(page));
 
     // 类型多选
     await page.getByRole("checkbox", { name: /文件包/ }).check();
     await expect(page).toHaveURL(/type=file/);
-    await expect(page.getByTestId("tool-card")).toHaveCount(1);
+    await expect(page.getByTestId("tool-card")).toHaveCount(await expectedCards(page));
 
     // 清除全部
     await page.getByRole("button", { name: "清除全部" }).click();
     await expect(page).not.toHaveURL(/type=file/);
-    await expect(page.getByTestId("tool-card")).toHaveCount(8);
+    await expect(page.getByTestId("tool-card")).toHaveCount(await expectedCards(page));
 
     // 标签筛选
     await page.getByRole("button", { name: /#k8s/ }).click();
     await expect(page).toHaveURL(/tag=k8s/);
-    await expect(page.getByTestId("tool-card")).toHaveCount(3);
+    await expect(page.getByTestId("tool-card")).toHaveCount(await expectedCards(page));
 
     // 搜索（防抖 300ms 后写入 URL）
     await page.getByRole("button", { name: "清除全部" }).click();
     await page.getByRole("searchbox", { name: "搜索工具" }).fill("Nginx");
     await expect(page).toHaveURL(/q=Nginx/);
+    // mock 里只有「日志分析器」的简介含 Nginx
     await expect(page.getByTestId("tool-card")).toHaveCount(1);
     await expect(page.getByTestId("tool-card")).toContainText("日志分析器");
 
@@ -194,7 +216,7 @@ test.describe("M1 验收（MSW mock 状态）", () => {
     await page.getByRole("combobox", { name: "每页条数" }).click();
     await page.getByRole("option", { name: "每页 12" }).click();
     await expect(page).toHaveURL(/page_size=12/);
-    await expect(page.getByTestId("tool-card")).toHaveCount(8);
+    await expect(page.getByTestId("tool-card")).toHaveCount(12);
 
     // 分享链接：复制当前 URL 到新的浏览器上下文，结果一致
     await page
@@ -203,7 +225,9 @@ test.describe("M1 验收（MSW mock 状态）", () => {
       .click();
     await page.getByRole("combobox", { name: "排序方式" }).click();
     await page.getByRole("option", { name: "热门" }).click();
-    await expect(page.getByTestId("tool-card")).toHaveCount(2);
+    await expect(page.getByTestId("tool-card").first()).toBeVisible();
+    const opsCards = await expectedCards(page);
+    await expect(page.getByTestId("tool-card")).toHaveCount(opsCards);
     const sharedUrl = page.url();
     expect(sharedUrl).toContain("category=ops-tools");
     expect(sharedUrl).toContain("sort=hot");
@@ -216,7 +240,7 @@ test.describe("M1 验收（MSW mock 状态）", () => {
     await expect(sharedPage).toHaveURL(/\/login\?redirect=/);
     await login(sharedPage, "admin", "Admin@12345", { goto: false });
     await expect(sharedPage).toHaveURL(/category=ops-tools/);
-    await expect(sharedPage.getByTestId("tool-card")).toHaveCount(2);
+    await expect(sharedPage.getByTestId("tool-card")).toHaveCount(opsCards);
     await sharedPage.screenshot({ path: `${ARTIFACTS}/06-shared-link.png`, fullPage: true });
     await fresh!.close();
 
@@ -230,13 +254,13 @@ test.describe("M1 验收（MSW mock 状态）", () => {
     await page.goto("/?q=zzzz-no-such-tool");
     await expect(page.getByText("没有找到匹配的工具")).toBeVisible();
     await page.getByRole("button", { name: "清除筛选条件" }).click();
-    await expect(page.getByTestId("tool-card")).toHaveCount(8);
+    await expect(page.getByTestId("tool-card")).toHaveCount(await expectedCards(page));
 
     // 刷新不丢筛选
     await page.goto(sharedUrl);
-    await expect(page.getByTestId("tool-card")).toHaveCount(2);
+    await expect(page.getByTestId("tool-card")).toHaveCount(opsCards);
     await page.reload();
-    await expect(page.getByTestId("tool-card")).toHaveCount(2);
+    await expect(page.getByTestId("tool-card")).toHaveCount(opsCards);
     await expect(page).toHaveURL(/category=ops-tools/);
 
     expect(errors).toEqual([]);
@@ -245,7 +269,7 @@ test.describe("M1 验收（MSW mock 状态）", () => {
   test("6.1 契约：翻页时 facets 键仍存在且为 null；access token 只在内存", async ({ page }) => {
     const errors = watchPageErrors(page);
     await login(page, "admin", "Admin@12345");
-    await expect(page.getByTestId("tool-card")).toHaveCount(8);
+    await expect(page.getByTestId("tool-card")).toHaveCount(await expectedCards(page));
 
     const probe = await page.evaluate(async () => {
       // Reach into the dev module graph to grab the in-memory token — that is
@@ -289,7 +313,7 @@ test.describe("M1 验收（MSW mock 状态）", () => {
   test("7. 无封面工具显示占位色块 + 类型图标，且没有破图", async ({ page }) => {
     const errors = watchPageErrors(page);
     await login(page, "admin", "Admin@12345");
-    await expect(page.getByTestId("tool-card")).toHaveCount(8);
+    await expect(page.getByTestId("tool-card")).toHaveCount(await expectedCards(page));
 
     const noCover = page.locator('[data-tool-slug="code-review-skill"]');
     await expect(noCover.getByTestId("cover-placeholder")).toBeVisible();
@@ -318,14 +342,16 @@ test.describe("M1 验收（MSW mock 状态）", () => {
       }
     });
     await expect(page.getByTestId("cover-image")).toHaveCount(0);
-    await expect(page.getByTestId("cover-placeholder")).toHaveCount(8);
+    await expect(page.getByTestId("cover-placeholder")).toHaveCount(
+      await expectedCards(page),
+    );
     await expect(withCover.getByTestId("cover-placeholder")).toBeVisible();
   });
 
   test("8. 超长名称单行省略、简介两行省略、卡片高度一致", async ({ page }) => {
     const errors = watchPageErrors(page);
     await login(page, "admin", "Admin@12345");
-    await expect(page.getByTestId("tool-card")).toHaveCount(8);
+    await expect(page.getByTestId("tool-card")).toHaveCount(await expectedCards(page));
 
     const longCard = page.locator('[data-tool-slug="gray-release-orchestrator"]');
     const name = longCard.getByTestId("tool-card-name");
@@ -371,7 +397,7 @@ test.describe("M1 验收（MSW mock 状态）", () => {
   test("9. 登出回到 /login，再刷新不能恢复会话", async ({ page }) => {
     const errors = watchPageErrors(page);
     await login(page, "admin", "Admin@12345");
-    await expect(page.getByTestId("tool-card")).toHaveCount(8);
+    await expect(page.getByTestId("tool-card")).toHaveCount(await expectedCards(page));
 
     await page.getByTestId("user-menu-trigger").click();
     await page.getByRole("menuitem", { name: "退出登录" }).click();
@@ -414,7 +440,7 @@ test.describe("M1 验收（MSW mock 状态）", () => {
 
     await expect(page).toHaveURL(/\/login/);
     await login(page, "newbie", "Newbie@2025!");
-    await expect(page.getByTestId("tool-card")).toHaveCount(8);
+    await expect(page.getByTestId("tool-card")).toHaveCount(await expectedCards(page));
     expect(errors).toEqual([]);
   });
 
@@ -441,10 +467,14 @@ test.describe("M1 验收（MSW mock 状态）", () => {
   });
 
   test("13. 深色主题刷新后保持，且首帧就是深色（无白闪）", async ({ page }) => {
-    const errors = watchPageErrors(page);
+    // 这个用例会**故意** abort /src/main.tsx 来证明内联脚本独立生效，
+    // 浏览器为此记一条 net::ERR_FAILED，不算缺陷。
+    const errors = watchPageErrors(page, {
+      allowConsole: (text) => text.includes("net::ERR_FAILED"),
+    });
     await page.emulateMedia({ colorScheme: "light" });
     await login(page, "admin", "Admin@12345");
-    await expect(page.getByTestId("tool-card")).toHaveCount(8);
+    await expect(page.getByTestId("tool-card")).toHaveCount(await expectedCards(page));
 
     await page.getByLabel(/切换主题/).click();
     await page.getByRole("menuitemradio", { name: "深色" }).click();
@@ -452,7 +482,7 @@ test.describe("M1 验收（MSW mock 状态）", () => {
     await page.screenshot({ path: `${ARTIFACTS}/13-dark-portal.png`, fullPage: true });
 
     await page.reload();
-    await expect(page.getByTestId("tool-card")).toHaveCount(8);
+    await expect(page.getByTestId("tool-card")).toHaveCount(await expectedCards(page));
     await expect(page.locator("html")).toHaveClass(/dark/);
 
     // the dark background is actually applied to the painted page
@@ -480,20 +510,22 @@ test.describe("M1 验收（MSW mock 状态）", () => {
     expect(errors).toEqual([]);
   });
 
-  test("顶栏搜索：⌘K 唤起 Command 面板并跳到门户结果", async ({ page }) => {
+  test("顶栏搜索：⌘K 唤起 Command 面板并跳到工具详情", async ({ page }) => {
     const errors = watchPageErrors(page);
     await login(page, "admin", "Admin@12345");
-    await expect(page.getByTestId("tool-card")).toHaveCount(8);
+    await expect(page.getByTestId("tool-card")).toHaveCount(await expectedCards(page));
 
     await page.keyboard.press("ControlOrMeta+k");
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible();
     await dialog.getByRole("combobox").fill("日志");
-    await expect(dialog.getByRole("option").first()).toBeVisible();
+    const toolOption = dialog.getByRole("option").filter({ hasNotText: "在门户中搜索" }).first();
+    await expect(toolOption).toBeVisible();
     await page.screenshot({ path: `${ARTIFACTS}/command-palette.png` });
-    await dialog.getByRole("option").first().click();
-    await expect(page).toHaveURL(/q=/);
-    await expect(page.getByTestId("tool-card").first()).toBeVisible();
+    await toolOption.click();
+    // M2 起选中结果直接进详情页（CONTRACT §14.10）；门户搜索仍可用 ?q= 直达
+    await expect(page).toHaveURL(/\/tools\/[^?]+$/);
+    await expect(page.getByTestId("tool-detail")).toBeVisible();
     expect(errors).toEqual([]);
   });
 
@@ -501,7 +533,7 @@ test.describe("M1 验收（MSW mock 状态）", () => {
     const errors = watchPageErrors(page);
     await page.setViewportSize({ width: 390, height: 844 });
     await login(page, "admin", "Admin@12345");
-    await expect(page.getByTestId("tool-card")).toHaveCount(8);
+    await expect(page.getByTestId("tool-card")).toHaveCount(await expectedCards(page));
 
     await expect(page.getByRole("complementary", { name: "筛选条件" })).toBeHidden();
     await page.getByRole("button", { name: /筛选/ }).click();

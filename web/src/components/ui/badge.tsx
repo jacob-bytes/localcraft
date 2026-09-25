@@ -17,6 +17,16 @@ const badgeVariants = cva(
           "border-border text-foreground [a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
         ghost: "[a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
         link: "text-primary underline-offset-4 [a&]:hover:underline",
+        /**
+         * Project variants (CONTRACT §14.7). docs/04 refers to
+         * `variant="warning"` / `variant="success"` throughout (待审 of versions,
+         * quota alarms, "新版待审" corner badges). Colour is never the only
+         * signal — every use site also carries text (docs/04 §8.1).
+         */
+        warning:
+          "bg-amber-100 text-amber-900 ring-1 ring-inset ring-amber-300/60 dark:bg-amber-950/70 dark:text-amber-200 dark:ring-amber-700/60",
+        success:
+          "bg-emerald-100 text-emerald-800 ring-1 ring-inset ring-emerald-300/60 dark:bg-emerald-950/70 dark:text-emerald-200 dark:ring-emerald-700/60",
       },
     },
     defaultVariants: {

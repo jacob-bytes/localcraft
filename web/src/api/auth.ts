@@ -1,5 +1,20 @@
 import { acceptTokenPair, clearSession, request, refreshSession } from "./client";
-import type { ChangePasswordRequest, LoginRequest, TokenPair, User } from "./types";
+import type {
+  AuthProviderResponse,
+  ChangePasswordRequest,
+  LoginRequest,
+  StatusResponse,
+  TokenPair,
+  User,
+} from "./types";
+
+/**
+ * Auth endpoints (CONTRACT §3, docs/03 §3.2).
+ *
+ * CONTRACT §14.2: logout and change-password answer `200` + `{"status":"ok"}` —
+ * the typed return value reflects that, and `request<T>` keeps the body instead
+ * of assuming `204`.
+ */
 
 /** POST /auth/login — stores the pair in memory and returns it (CONTRACT §3.2 ①). */
 export async function login(payload: LoginRequest): Promise<TokenPair> {
@@ -18,11 +33,12 @@ export async function login(payload: LoginRequest): Promise<TokenPair> {
  * Failures are swallowed on purpose: the local session must be dropped either
  * way, otherwise the user is stuck in a half-logged-in state (CONTRACT §3.2 ⑤).
  */
-export async function logout(): Promise<void> {
+export async function logout(): Promise<StatusResponse | null> {
   try {
-    await request<null>("/auth/logout", { method: "POST" });
+    return await request<StatusResponse>("/auth/logout", { method: "POST" });
   } catch {
     /* best effort — local state is cleared in `finally` */
+    return null;
   } finally {
     clearSession();
   }
@@ -33,9 +49,16 @@ export function fetchMe(signal?: AbortSignal): Promise<User> {
   return request<User>("/auth/me", { signal });
 }
 
-/** POST /auth/change-password */
-export function changePassword(payload: ChangePasswordRequest): Promise<null> {
-  return request<null>("/auth/change-password", { method: "POST", body: payload });
+/** POST /auth/change-password (CONTRACT §14.2: `200` + `{"status":"ok"}`). */
+export function changePassword(payload: ChangePasswordRequest): Promise<StatusResponse> {
+  return request<StatusResponse>("/auth/change-password", { method: "POST", body: payload });
 }
+
+/** GET /auth/provider — public, drives the pluggable login form (FR-AUTH-09). */
+export function fetchAuthProvider(signal?: AbortSignal): Promise<AuthProviderResponse> {
+  return request<AuthProviderResponse>("/auth/provider", { auth: false, signal });
+}
+
+export const authProviderQueryKey = ["auth", "provider"] as const;
 
 export { refreshSession };

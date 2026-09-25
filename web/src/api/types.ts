@@ -1,19 +1,18 @@
 /**
- * Response types mirroring docs/03 (API 接口清单) and contracts/CONTRACT.md.
+ * Response types mirroring docs/03 (API 接口清单), contracts/CONTRACT.md and —
+ * where the docs stop — the backend's Pydantic schemas (`backend/app/schemas/`),
+ * which CONTRACT §14.2 ruled are the authority.
  *
  * Rules taken from CONTRACT §5 / docs/03 §1.1:
  *  - snake_case field names, exactly as the backend serialises them
  *  - nullable fields are explicit `null`, never omitted
  *  - timestamps are ISO 8601 UTC strings ending in `Z`
  *  - enums are string-literal unions, mirroring the backend `enum.StrEnum`
- *
- * Fields marked `docs-undefined` are NOT specified by docs/03; they are called
- * out in the checkpoint report as contract gaps instead of being invented
- * silently. They are only consumed by the MSW mock.
+ *    (`backend/app/models/enums.py`)
  */
 
 /* -------------------------------------------------------------------------- */
-/* Enums (docs/03 §1.4, docs/02 §3.8)                                          */
+/* Enums (backend/app/models/enums.py — mirrored once, never inlined)          */
 /* -------------------------------------------------------------------------- */
 
 export type ToolType = "file" | "webapp" | "skill" | "prompt";
@@ -28,16 +27,33 @@ export type ToolStatus =
   | "pending_update"
   | "offline";
 
-export type VersionStatus = "pending" | "approved" | "rejected" | "purged";
+export type VersionStatus = "pending" | "approved" | "rejected" | "superseded" | "purged";
 
 /** docs/01 §3.1 */
 export type Role = "viewer" | "user" | "approver" | "superadmin";
 
 export type UserStatus = "active" | "disabled";
 
-export type AuthProvider = "local" | "ldap" | "oidc";
+export type AuthProvider = "local" | "oidc";
 
-export type AuthSource = "local" | "ldap" | "oidc";
+export type AuthSource = "local" | "oidc";
+
+export type ImageKind = "cover" | "screenshot" | "inline";
+
+export type AclSubjectType = "user" | "group";
+
+export type ApprovalAction =
+  | "submit"
+  | "withdraw"
+  | "resubmit"
+  | "approve"
+  | "reject"
+  | "offline"
+  | "relist"
+  | "purge_version"
+  | "transfer_owner";
+
+export type SettingValueType = "bool" | "int" | "string" | "json" | "list";
 
 /** docs/03 §3.3 `sort` whitelist. */
 export type ToolSort = "hot" | "new" | "name" | "-updated_at";
@@ -146,17 +162,19 @@ export interface ApiErrorBody {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Meta (docs/03 §3.1)                                                         */
+/* Meta (docs/03 §3.1, backend MetaFeatures)                                   */
 /* -------------------------------------------------------------------------- */
 
 export interface MetaFeatures {
   webapp_health_check: boolean;
   skill_preview: boolean;
+  anonymous_view: boolean;
+  change_password: boolean;
 }
 
 export interface Meta {
   site_name: string;
-  announcement_md: string | null;
+  announcement_md: string;
   auth_provider: AuthProvider;
   allow_anonymous_view: boolean;
   default_sort: ToolSort;
@@ -167,7 +185,7 @@ export interface Meta {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Auth (docs/03 §3.2, CONTRACT §3)                                            */
+/* Auth (docs/03 §3.2, CONTRACT §3, §14.2)                                     */
 /* -------------------------------------------------------------------------- */
 
 export interface User {
@@ -179,11 +197,15 @@ export interface User {
   permissions: string[];
   must_change_password: boolean;
   auth_source: AuthSource;
+  /** CONTRACT §14.2 — added after dumping the real `/auth/me` response. */
+  status: UserStatus;
+  last_login_at: string | null;
+  created_at: string | null;
 }
 
 export interface TokenPair {
   access_token: string;
-  token_type: "bearer";
+  token_type: string;
   expires_in: number;
   /** CONTRACT §3.3 — refresh returns the user too, so the client can restore
    *  session state without an extra `/auth/me` round trip. */
@@ -201,14 +223,27 @@ export interface ChangePasswordRequest {
 }
 
 /**
- * docs-undefined: docs/03 §2.2 only states the purpose ("当前启用的认证方式与
- * 登录表单字段"), no payload example. This shape is used by the MSW mock only —
- * no UI depends on it (the login page reads `Meta.auth_provider`).
+ * `{status:"ok"}` body returned by the write-and-done endpoints.
+ * CONTRACT §14.2: logout / change-password answer `200` + this body, NOT `204`.
  */
+export interface StatusResponse {
+  status: string;
+}
+
+export interface LoginField {
+  name: string;
+  label: string;
+  type: string;
+  required: boolean;
+}
+
+/** `GET /auth/provider` (CONTRACT §14.2 — 5 fields, `login_fields` is structured). */
 export interface AuthProviderResponse {
   provider: AuthProvider;
   display_name: string;
-  login_fields: string[];
+  login_fields: LoginField[];
+  password_change_supported: boolean;
+  refresh_supported: boolean;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -224,8 +259,6 @@ export interface Category {
   icon: string | null;
   sort_order: number;
   is_active: boolean;
-  /** docs-undefined: field name for the per-category visible tool count is not
-   *  given by docs/03 §2.3 ("含各分类可见工具数"). Mirrors `facets.count`. */
   tool_count: number;
 }
 
@@ -262,7 +295,7 @@ export interface ToolListItem {
   summary: string;
   tool_type: ToolType;
   visibility: Visibility;
-  category: ToolCategoryRef;
+  category: ToolCategoryRef | null;
   tags: string[];
   cover_url: string | null;
   owner: ToolOwner;
@@ -274,7 +307,7 @@ export interface ToolListItem {
   has_pending_version: boolean;
   can_download: boolean;
   published_at: string | null;
-  updated_at: string;
+  updated_at: string | null;
 }
 
 /** Query parameters for `GET /tools` (docs/03 §3.3). Arrays are repeated params. */
@@ -287,4 +320,557 @@ export interface ToolListParams {
   sort?: ToolSort;
   page?: number;
   page_size?: number;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Tool detail (docs/03 §3.4, backend app/schemas/tool.py + version.py)        */
+/* -------------------------------------------------------------------------- */
+
+export interface VersionUploader {
+  id: number;
+  display_name: string;
+}
+
+export interface SkillTreeSummary {
+  file_count: number;
+  total_size: number;
+  max_depth: number;
+}
+
+export interface SkillVersionInfo {
+  manifest: Record<string, unknown> | null;
+  file_tree_summary: SkillTreeSummary | null;
+  parse_error: string | null;
+}
+
+/** `list[VersionSummary]` element — `GET /tools/{slug}/versions`. */
+export interface VersionSummary {
+  id: number;
+  tool_id: number;
+  version: string;
+  changelog_md: string;
+  status: VersionStatus;
+  is_current: boolean;
+  file_name: string | null;
+  file_size: number | null;
+  /** first 16 chars of the SHA256 (FR-VER-06) */
+  file_sha256_short: string | null;
+  file_ext: string | null;
+  mime_type: string | null;
+  uploaded_by: VersionUploader | null;
+  approved_at: string | null;
+  reject_reason: string | null;
+  purged_at: string | null;
+  created_at: string | null;
+  can_download: boolean;
+}
+
+/** Detail-page `current_version` — carries the full hash and skill info. */
+export interface VersionDetail extends VersionSummary {
+  file_sha256: string | null;
+  skill: SkillVersionInfo | null;
+  prompt_content: string | null;
+}
+
+export interface ToolImage {
+  id: number;
+  kind: ImageKind;
+  /** Capability URL issued by the backend — use verbatim (CONTRACT §14.3). */
+  url: string;
+  thumb_url: string;
+  file_name: string | null;
+  mime_type: string | null;
+  file_size: number | null;
+  width: number | null;
+  height: number | null;
+  sort_order: number;
+  alt_text: string | null;
+  sha256: string | null;
+  created_at: string | null;
+}
+
+/**
+ * Server-computed permission booleans (docs/03 §3.4).
+ * The frontend reads these instead of re-implementing visibility/role logic.
+ */
+export interface ToolPermissions {
+  can_edit: boolean;
+  can_download: boolean;
+  can_manage_versions: boolean;
+  can_view_acl: boolean;
+  can_delete: boolean;
+  can_submit: boolean;
+  can_approve: boolean;
+}
+
+export interface AclEntry {
+  id: number | null;
+  subject_type: AclSubjectType;
+  subject_id: number;
+  subject_name: string | null;
+  can_download: boolean;
+}
+
+export interface SkillDetailInfo {
+  manifest: Record<string, unknown> | null;
+  readme_md: string | null;
+  file_tree_summary: SkillTreeSummary | null;
+  parse_error: string | null;
+}
+
+export interface PromptDetailInfo {
+  content: string;
+  char_count: number;
+}
+
+export interface CurrentVersionBrief {
+  id: number;
+  version: string;
+}
+
+export interface ToolDetail {
+  id: number;
+  slug: string;
+  name: string;
+  summary: string;
+  description_md: string;
+  /** Server-rendered + sanitised Markdown (kept for parity with docs/03 §3.4). */
+  description_html: string;
+  tool_type: ToolType;
+  visibility: Visibility;
+  status: ToolStatus;
+  category: ToolCategoryRef | null;
+  tags: string[];
+  images: ToolImage[];
+  webapp_url: string | null;
+  current_version: VersionDetail | null;
+  pending_version: CurrentVersionBrief | null;
+  version_count: number;
+  history_version_count: number;
+  download_count: number;
+  view_count: number;
+  owner: ToolOwner;
+  published_at: string | null;
+  last_version_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  reject_reason: string | null;
+  offline_reason: string | null;
+  deleted_at: string | null;
+  can_download: boolean;
+  can_edit: boolean;
+  permissions: ToolPermissions;
+  acl: AclEntry[] | null;
+  skill: SkillDetailInfo | null;
+  prompt: PromptDetailInfo | null;
+}
+
+/** `GET /tools/{slug}/versions/{version}/skill-preview` (docs/03 §3.5). */
+export interface SkillFileEntry {
+  path: string;
+  size: number;
+  is_dir: boolean;
+  sha256: string | null;
+}
+
+export interface SkillPreview {
+  version: string;
+  manifest: Record<string, unknown> | null;
+  readme_md: string | null;
+  file_tree: SkillFileEntry[];
+  file_tree_truncated: boolean;
+  total_size: number;
+}
+
+/** `POST /tools/{slug}/download-ticket` (docs/03 §3.15). */
+export interface DownloadTicket {
+  url: string;
+  expires_at: string | null;
+  file_name: string | null;
+  file_size: number | null;
+  file_sha256: string | null;
+}
+
+/* -------------------------------------------------------------------------- */
+/* My tools (docs/03 §2.4, backend schemas/tool.py MyToolListItem)             */
+/* -------------------------------------------------------------------------- */
+
+export interface MyToolListItem {
+  id: number;
+  slug: string;
+  name: string;
+  summary: string;
+  tool_type: ToolType;
+  visibility: Visibility;
+  status: ToolStatus;
+  category: ToolCategoryRef | null;
+  tags: string[];
+  cover_url: string | null;
+  current_version: string | null;
+  pending_version: string | null;
+  file_size: number | null;
+  download_count: number;
+  view_count: number;
+  version_seq: number;
+  reject_reason: string | null;
+  offline_reason: string | null;
+  published_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  /** Human-readable status, computed server-side so wording never drifts. */
+  status_label: string;
+}
+
+/** `GET /me/tools` envelope — pagination only, no facets (backend MyToolListResponse). */
+export type MyToolListResponse = Paginated<MyToolListItem>;
+
+export interface MyToolListParams {
+  status?: ToolStatus[];
+  type?: ToolType[];
+  category?: string[];
+  q?: string;
+  sort?: ToolSort;
+  page?: number;
+  page_size?: number;
+}
+
+export interface ToolCreateRequest {
+  name: string;
+  summary: string;
+  description_md?: string;
+  tool_type: ToolType;
+  category_id?: number | null;
+  tags?: string[];
+  visibility?: Visibility;
+  webapp_url?: string | null;
+  webapp_health_url?: string | null;
+}
+
+export interface ToolUpdateRequest {
+  name?: string;
+  summary?: string;
+  description_md?: string;
+  category_id?: number | null;
+  tags?: string[];
+  visibility?: Visibility;
+  webapp_url?: string | null;
+  webapp_health_url?: string | null;
+}
+
+export interface SubmitResponse {
+  tool_id: number;
+  status: ToolStatus;
+  version_seq: number;
+  auto_approved: boolean;
+  auto_approved_rule: string | null;
+  approval_record_id: number | null;
+}
+
+export interface WithdrawResponse {
+  tool_id: number;
+  status: ToolStatus;
+  approval_record_id: number | null;
+}
+
+export interface AclReplaceRequest {
+  visibility: Visibility;
+  entries: Array<{
+    subject_type: AclSubjectType;
+    subject_id: number;
+    can_download: boolean;
+  }>;
+}
+
+export interface AclResponse {
+  tool_id: number;
+  visibility: Visibility;
+  entries: AclEntry[];
+  permissions: Record<string, boolean>;
+  /** Whether the ACL is currently in effect (only meaningful for `restricted`). */
+  effective: boolean;
+}
+
+/** `POST /me/tools/{id}/versions` (docs/03 §3.7). */
+export interface VersionUploadResponse {
+  id: number;
+  tool_id: number;
+  version: string;
+  status: VersionStatus;
+  file_name: string | null;
+  file_size: number | null;
+  file_sha256: string | null;
+  prompt_content: string | null;
+  skill: SkillVersionInfo | null;
+  tool_status: string;
+  created_at: string | null;
+}
+
+export interface VersionUploadFields {
+  version: string;
+  changelog_md?: string;
+  file?: File | null;
+  prompt_content?: string | null;
+  webapp_url?: string | null;
+  auto_submit?: boolean;
+}
+
+export interface VersionPatchRequest {
+  changelog_md: string;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Profile / stats / downloads (backend schemas/me.py)                         */
+/* -------------------------------------------------------------------------- */
+
+export interface Usage {
+  tool_count: number;
+  published_tool_count: number;
+  draft_tool_count: number;
+  pending_tool_count: number;
+  version_count: number;
+  download_count: number;
+  used_bytes: number;
+  quota_bytes: number;
+  total_quota_bytes: number;
+  platform_used_bytes: number;
+  used_percent: number;
+}
+
+export interface Profile {
+  id: number;
+  username: string;
+  display_name: string;
+  email: string | null;
+  roles: Role[];
+  permissions: string[];
+  status: UserStatus;
+  auth_source: AuthSource;
+  must_change_password: boolean;
+  last_login_at: string | null;
+  created_at: string | null;
+  usage: Usage | null;
+}
+
+export interface ProfileUpdateRequest {
+  display_name?: string;
+  email?: string | null;
+}
+
+export interface DownloadLogItem {
+  id: number;
+  tool_id: number;
+  tool_slug: string | null;
+  tool_name: string | null;
+  version_id: number | null;
+  version: string | null;
+  file_name: string | null;
+  file_size: number | null;
+  via_api_token_id: number | null;
+  created_at: string | null;
+}
+
+export interface ImagePatchRequest {
+  sort_order?: number;
+  alt_text?: string;
+  set_as_cover?: boolean;
+}
+
+export interface ToolStats {
+  tool_id: number;
+  download_count: number;
+  view_count: number;
+  daily: Array<{ stat_date: string; views: number; downloads: number }>;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Approvals (docs/03 §3.8–§3.10, backend schemas/approval.py)                 */
+/* -------------------------------------------------------------------------- */
+
+export type SubmissionType = "new_tool" | "new_version";
+
+export interface PendingVersionBrief {
+  id: number;
+  version: string;
+  changelog_md: string;
+  file_name: string | null;
+  file_size: number | null;
+  file_sha256: string | null;
+}
+
+export interface ApprovalQueueItem {
+  tool_id: number;
+  tool_slug: string;
+  tool_name: string;
+  tool_type: ToolType;
+  summary: string;
+  visibility: Visibility;
+  category: ToolCategoryRef | null;
+  tags: string[];
+  submission_type: SubmissionType;
+  status: string;
+  pending_version: PendingVersionBrief | null;
+  current_version: CurrentVersionBrief | null;
+  owner: ToolOwner | null;
+  submitted_at: string | null;
+  /** Server-computed waiting time in hours (drives the >24h / >72h highlight). */
+  waiting_hours: number;
+  /**
+   * CONTRACT §15.4：审批队列也下发 `tools.version_seq`，批准时回传作为乐观锁
+   * （`expected_version_seq`）。CAS 已能独立保证并发正确，这里是让审批人拿得到
+   * 文档承诺的值。
+   */
+  version_seq: number;
+}
+
+export interface ApprovalQueueParams {
+  status?: string;
+  tool_type?: ToolType;
+  owner?: string;
+  page?: number;
+  page_size?: number;
+}
+
+export interface ApproveRequest {
+  version_id?: number | null;
+  note?: string | null;
+  expected_version_seq?: number | null;
+}
+
+export interface SupersededVersionBrief {
+  id: number;
+  version: string;
+}
+
+export interface ApproveResponse {
+  tool_id: number;
+  status: string;
+  version_seq: number;
+  current_version: CurrentVersionBrief | null;
+  superseded_version: SupersededVersionBrief | null;
+  purged_versions: SupersededVersionBrief[];
+  approval_record_id: number | null;
+}
+
+export interface RejectRequest {
+  reason: string;
+  version_id?: number | null;
+}
+
+export interface RejectResponse {
+  tool_id: number;
+  status: string;
+  pending_version: PendingVersionBrief | null;
+  rejected_version: SupersededVersionBrief | null;
+  approval_record_id: number | null;
+}
+
+export interface OfflineRequest {
+  reason: string;
+}
+
+export interface RelistRequest {
+  reason?: string | null;
+}
+
+export interface BatchApproveRequest {
+  tool_ids: number[];
+  note?: string | null;
+}
+
+export interface BatchApproveResultItem {
+  tool_id: number;
+  ok: boolean;
+  status: string | null;
+  error_code: string | null;
+  message: string | null;
+}
+
+export interface BatchApproveResponse {
+  succeeded: number;
+  failed: number;
+  results: BatchApproveResultItem[];
+}
+
+export interface ApprovalHistoryParams {
+  tool_id?: number;
+  actor_id?: number;
+  action?: ApprovalAction;
+  date_from?: string;
+  date_to?: string;
+  page?: number;
+  page_size?: number;
+}
+
+export interface ApprovalRecord {
+  id: number;
+  tool_id: number;
+  tool_name: string | null;
+  tool_slug: string | null;
+  version_id: number | null;
+  version: string | null;
+  action: ApprovalAction;
+  from_status: string | null;
+  to_status: string;
+  version_from_status: string | null;
+  version_to_status: string | null;
+  actor_id: number | null;
+  /** Display-name snapshot so history stays accurate after a rename. */
+  actor_label: string;
+  is_automatic: boolean;
+  auto_rule: string | null;
+  reason: string | null;
+  note: string | null;
+  created_at: string | null;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Whitelist & settings (docs/03 §3.13, backend schemas/setting.py)            */
+/* -------------------------------------------------------------------------- */
+
+export interface WhitelistEntry {
+  user_id: number;
+  username: string | null;
+  display_name: string | null;
+  reason: string | null;
+  added_by_id: number | null;
+  added_by_name: string | null;
+  expires_at: string | null;
+  created_at: string | null;
+  is_effective: boolean;
+}
+
+export interface WhitelistEntryInput {
+  user_id: number;
+  reason?: string | null;
+  expires_at?: string | null;
+}
+
+export interface SettingItem {
+  key: string;
+  value: unknown;
+  value_type: SettingValueType;
+  is_public: boolean;
+  description: string | null;
+  options: string[] | null;
+  /** serialisation alias of `minimum` on the backend */
+  min: number | null;
+  /** serialisation alias of `maximum` on the backend */
+  max: number | null;
+  updated_at: string | null;
+  updated_by: { id: number; display_name: string } | null;
+}
+
+export interface SettingWarning {
+  code: string;
+  message: string;
+  pending_count: number | null;
+}
+
+export interface SettingListResponse {
+  items: SettingItem[];
+  warnings: SettingWarning[];
+}
+
+export interface SettingUpdateRequest {
+  items: Array<{ key: string; value: unknown }>;
 }

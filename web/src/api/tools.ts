@@ -2,11 +2,16 @@ import type { QueryValue, RequestOptions } from "./client";
 import { request } from "./client";
 import type {
   Category,
+  DownloadTicket,
+  SkillPreview,
   Tag,
+  ToolDetail,
   ToolListParams,
   ToolListResponse,
   ToolSort,
+  ToolStats,
   ToolType,
+  VersionSummary,
 } from "./types";
 
 /** Portal page size default (CONTRACT §4.2 / docs/03 §3.3). */
@@ -98,4 +103,67 @@ export const tagsQueryKey = (q: string) => ["tags", { q }] as const;
 /** GET /api/v1/tags — `?q=` prefix search for the tag autocomplete (docs/03 §2.3). */
 export function fetchTags(q?: string, signal?: AbortSignal): Promise<Tag[]> {
   return request<Tag[]>("/tags", { query: { q: q || undefined }, signal });
+}
+
+/* -------------------------------------------------------------------------- */
+/* M2 —— 详情 / 版本 / Skill 预览 / 下载票据                                    */
+/* -------------------------------------------------------------------------- */
+
+export const toolDetailQueryKey = (slug: string) => ["tools", "detail", slug] as const;
+
+/** GET /tools/{slug} (docs/03 §3.4). 404 also means "no permission" (FR-FILE-08). */
+export function fetchToolDetail(slug: string, signal?: AbortSignal): Promise<ToolDetail> {
+  return request<ToolDetail>(`/tools/${encodeURIComponent(slug)}`, { signal });
+}
+
+export const toolVersionsQueryKey = (slug: string) => ["tools", "versions", slug] as const;
+
+/** GET /tools/{slug}/versions — bare array, newest first (backend `list[VersionSummary]`). */
+export function fetchToolVersions(
+  slug: string,
+  signal?: AbortSignal,
+): Promise<VersionSummary[]> {
+  return request<VersionSummary[]>(`/tools/${encodeURIComponent(slug)}/versions`, { signal });
+}
+
+export const skillPreviewQueryKey = (slug: string, version: string) =>
+  ["tools", "skill-preview", slug, version] as const;
+
+/**
+ * GET /tools/{slug}/versions/{version}/skill-preview (docs/03 §3.5).
+ * Fetched lazily — only when the user opens the "包内文件" tab, because the
+ * payload can be large (docs/04 §6.4).
+ */
+export function fetchSkillPreview(
+  slug: string,
+  version: string,
+  signal?: AbortSignal,
+): Promise<SkillPreview> {
+  return request<SkillPreview>(
+    `/tools/${encodeURIComponent(slug)}/versions/${encodeURIComponent(version)}/skill-preview`,
+    { signal },
+  );
+}
+
+export const toolStatsQueryKey = (slug: string) => ["tools", "stats", slug] as const;
+
+/** GET /tools/{slug}/stats. */
+export function fetchToolStats(slug: string, signal?: AbortSignal): Promise<ToolStats> {
+  return request<ToolStats>(`/tools/${encodeURIComponent(slug)}/stats`, { signal });
+}
+
+/**
+ * POST /tools/{slug}/download-ticket (docs/03 §3.15).
+ *
+ * Downloads must go through a ticket — an `<a href="/api/v1/tools/…/download">`
+ * cannot carry the bearer token (docs/03 §1.10, docs/04 §6.4).
+ */
+export function createDownloadTicket(
+  slug: string,
+  versionId?: number | null,
+): Promise<DownloadTicket> {
+  return request<DownloadTicket>(`/tools/${encodeURIComponent(slug)}/download-ticket`, {
+    method: "POST",
+    query: { version_id: versionId ?? undefined },
+  });
 }

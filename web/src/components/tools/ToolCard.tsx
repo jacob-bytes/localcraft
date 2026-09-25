@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 
 import type { ToolListItem } from "@/api/types";
 import { ToolTypeBadge } from "@/components/tools/ToolTypeBadge";
+import { Badge } from "@/components/ui/badge";
 import { formatCount, formatRelativeTime } from "@/lib/format";
 import { categoryTintClass, TOOL_TYPE_META, VISIBILITY_LABELS } from "@/lib/toolMeta";
 import { cn } from "@/lib/utils";
@@ -106,9 +107,9 @@ function ToolCover({ tool }: { tool: ToolListItem }) {
       ) : null}
 
       {tool.has_pending_version ? (
-        <span className="absolute right-2 top-2 rounded-md bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-900 ring-1 ring-inset ring-amber-300/60 dark:bg-amber-950/70 dark:text-amber-200 dark:ring-amber-700/60">
+        <Badge variant="warning" className="absolute right-2 top-2">
           新版待审
-        </span>
+        </Badge>
       ) : null}
     </div>
   );
@@ -161,7 +162,7 @@ function ToolCardGrid({ tool }: { tool: ToolListItem }) {
             <span className="inline-flex items-center gap-1">
               <span className="max-w-[5rem] truncate">{tool.category?.name ?? "未分类"}</span>
               <span aria-hidden="true">·</span>
-              <time dateTime={tool.updated_at}>{formatRelativeTime(tool.updated_at)}</time>
+              <time dateTime={tool.updated_at ?? undefined}>{formatRelativeTime(tool.updated_at)}</time>
             </span>
           </div>
         </div>
@@ -192,7 +193,7 @@ function ToolCardRow({ tool }: { tool: ToolListItem }) {
           <span className="tabular-nums">{formatCount(tool.download_count)}</span>
           <span className="sr-only">次下载</span>
         </span>
-        <time dateTime={tool.updated_at} className="w-20 text-right">
+        <time dateTime={tool.updated_at ?? undefined} className="w-20 text-right">
           {formatRelativeTime(tool.updated_at)}
         </time>
       </span>

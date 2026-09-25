@@ -15,6 +15,8 @@ export interface CopyButtonProps {
   label?: string;
   className?: string;
   onCopied?: () => void;
+  /** Forwarded as `data-testid` so E2E can click the real button. */
+  testId?: string;
 }
 
 async function writeToClipboard(value: string): Promise<boolean> {
@@ -42,7 +44,13 @@ async function writeToClipboard(value: string): Promise<boolean> {
   }
 }
 
-export function CopyButton({ value, label = "复制", className, onCopied }: CopyButtonProps) {
+export function CopyButton({
+  value,
+  label = "复制",
+  className,
+  onCopied,
+  testId,
+}: CopyButtonProps) {
   const [copied, setCopied] = React.useState(false);
   const timerRef = React.useRef<number | null>(null);
 
@@ -66,6 +74,7 @@ export function CopyButton({ value, label = "复制", className, onCopied }: Cop
       type="button"
       variant="ghost"
       size="icon"
+      data-testid={testId}
       className={cn("size-8", className)}
       aria-label={copied ? "已复制" : label}
       onClick={() => {
