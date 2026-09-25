@@ -531,3 +531,103 @@ M1 的唯一目标是：**一条打通「登录 → 恢复会话 → 门户列�
 | 偏差 3：⌘K 面板跳 `/?q=` 而非 `/tools/:slug` | **接受**，M1 正确取舍（详情页是 M2）。**M2 改为跳 `/tools/:slug`** |
 | 偏差 4：个人中心/管理后台以 disabled 项占位 | **接受**。不制造死链是正确做法。M2 启用「个人中心/我的工具」，M3 启用「管理后台」 |
 | 偏差 5：依赖增删（radix-ui 伞包、cmdk、shiki、typography、tw-animate-css、oxlint、playwright；移除 cn/next-themes） | **批准**。已核验 dist 无 MSW、首屏预算达标。新依赖用途明确 |
+
+---
+
+## 15. M2 Checkpoint 裁定（后端，2025-03）
+
+监控方对 M2 后端做了实证验收（起真实服务、构造恶意包、并发压测、逐字段 dump）。
+结论：**通过**，但发现 1 个真 bug 与 1 个契约缺口。以下为裁定。
+
+### 15.1 已实证通过（证据摘要）
+
+| 项 | 实测结果 |
+| --- | --- |
+| 接口面 | 41 路径 / **50 操作**，与 §6.1 冻结清单一致 |
+| 测试 | **304 passed**，覆盖率 **89%**（`approval_service` 99%、`counter_service` 98%、`settings_service` 99%） |
+| ruff | All checks passed |
+| zip 路径穿越 | `422 ZIP_PATH_TRAVERSAL`，`details.entry = "../../etc/passwd"` |
+| zip 压缩炸弹 | `422 ZIP_BOMB_DETECTED`，`stage: "declared"`（**用中央目录声明尺寸预检，耗时 0 秒、磁盘零消耗**），临时目录已清空 |
+| 版本淘汰 | 12 个版本 → 1 `approved`(当前) + 10 `superseded` + **1 `purged`**；磁盘仅剩 11 个文件；`purged` 下载返回 404 |
+| 并发审批 | 带与不带 `expected_version_seq` **均**为一个 `200` + 一个 `409 ALREADY_PROCESSED`（CAS 独立生效） |
+| 下载票据 | 响应字段与 `docs/03` §3.15 完全一致；匿名持票据可下载；`Range` 返回 206 |
+| 越权语义 | 无权资源返回 `404 NOT_FOUND` 而非 403 |
+| 守卫测试 | 已换为 `M3_FORBIDDEN_PREFIXES` + `test_no_m3_endpoints_in_m2` |
+
+### 15.2 裁定：验收 8 的口径 —— 开发 agent 正确，监控方原文有算术错误
+
+原文写「12 个版本 → 2 个 purged」是**监控方算错了**。正确公式：
+
+```
+superseded = N - 1
+purged     = max(0, superseded - version.history_limit)   # 默认 limit=10
+```
+
+故 **12 → 1**、**13 → 2**。开发 agent 参数化测试 `[(12,1),(13,2)]` 的写法正确，
+`prompts/backend-agent-m2.md` 的验收 8 已同步修正。**这属于监控方失误，记录在案。**
+
+### 15.3 裁定：`file_tree_truncated` 必须改为持久化字段（原待裁决 2）
+
+开发 agent 建议「保持现状（用 `file_count < len(tree)` 推断）」。**此建议被否决** ——
+监控方实测发现该推断**在所有小包上误报**：
+
+- 种子中 3 个条目的 skill 工具，`file_tree_truncated` 返回 **`true`**
+- 根因：`file_count` 统计的是「截断后树中不含 `SKILL.md` 的条目数」，而 `len(file_tree)` **含**
+  `SKILL.md`。分子分母口径不一致，故 `file_count < len(tree)` 在只有一个 `SKILL.md` 时恒为真
+
+**裁定**：采纳开发 agent 的备选方案 —— **新增 `tool_versions.skill_tree_truncated` 布尔列**，
+在解析时（真实总数已知）计算并持久化。同时保留两个上限的分工文档（`docs/03` §3.5 已修订）：
+上传校验 5000 条目 / 文件树存储 2000 条目。
+
+这不违反「避免冗余状态」原则：该值**无法从存储的数据推导**（推导所需的真实总数在截断后即丢失），
+因此必须持久化。这与 `is_current` 那类可推导的冗余字段性质不同。
+
+### 15.4 裁定：审批队列需暴露 `version_seq`（监控方发现）
+
+`docs/03` §3.9 要求批准时可传 `expected_version_seq = tools.version_seq`，
+但 `GET /api/v1/admin/approvals` 的条目**不含该字段**，而审批人恰恰是唯一需要它的人
+（`MyToolListItem` 有，但那是 owner 视角）。
+
+CAS 已能独立保证并发正确性（实测通过），所以这不是功能缺陷，而是**文档承诺了却拿不到的值**。
+
+**裁定**：在审批队列条目中增加 `version_seq`（附加字段，非破坏性）。
+
+### 15.5 裁定：收紧 `/me/tools/{id}` 的 approver 可见性（原待裁决 3）
+
+开发 agent 倾向「approver 可查看任意工具」，并指出收紧会导致审批人预览要绕道。
+**部分否决，分两步走**：
+
+- **M3 立即收紧**：`/me/tools/{id}` 的 approver 访问必须**排除 `draft`**。草稿是用户尚未提交的
+  未完成工作，没有任何审批理由需要看到它 —— 这是真实的越权面
+- **M3 同步补齐**：让 `GET /api/v1/tools/{slug}` 对 approver 开放
+  `pending` / `pending_update` / `offline` 状态的工具（需修订 `docs/01` §4.3 第 1 步，
+  原文只给了 owner 与 superadmin，与 FR-APPR-06 自相矛盾）
+- **M4 再评估**：审批抽屉改走 `GET /tools/{slug}` 后，把 `/me/tools/*` 收为纯 owner 命名空间
+
+### 15.6 裁定：8 个未在 docs 定义形状的接口（原待裁决 4）
+
+**接受**。已抽查 `/me/profile`、`/me/stats`、`/me/downloads`、`/me/tools`、
+`/tools/{slug}/stats`、`/admin/approvals/history`、`/admin/approval-whitelist`、
+`/me/tools/{id}/images` 的形状，均与 `docs/02` 字段和 `docs/04` 页面需求自洽。
+
+**新增契约规则**：从 M2 起，**`backend/openapi.json` 是接口形状的权威来源**；`docs/03` 负责
+语义、错误码与业务规则，不再逐字段复写每个响应。三方比对（`openapi.json` × `docs/03` ×
+`web/src/api/types.ts`）改为以 `openapi.json` 为基准。这消除了「文档没写形状 → 各自猜」的漂移源。
+
+`status_label` 字段**接受**：由服务端下发展示文案，与 `permissions`、`facets` 同属
+「服务端权威、前端不必重算」的设计。前端应直接使用它。
+
+### 15.7 裁定：图片与下载不进入 `PUBLIC_ENDPOINTS`（原待裁决 5）
+
+**同意开发 agent 的做法，不改。** 两条路径各自挂了鉴权依赖，守卫测试仍然成立。行为上：
+
+- 图片：登录 + 匿名浏览开关（签名 URL 见 §14.3）
+- 下载：有效票据 **或** 登录 + 匿名浏览开关；**匿名即使开启匿名浏览也不得下载**
+
+这与 `docs/01` §3.2 一致（下载要求角色 `user` 及以上，`viewer` 都不行），无需修订。
+
+### 15.8 裁定：`disable_existing_loggers=False` 是高质量修复（原待裁决 6）
+
+**接受并表扬。** 这是典型的非显性集成缺陷：`logging.config.fileConfig` 默认会关闭进程内所有
+已存在的 logger，导致「在进程内跑过 alembic 之后应用日志静默消失、pytest 的 `caplog` 失效」。
+这类问题在正常路径下完全不显形，能被发现并加上回归测试，说明排查深度到位。
