@@ -14,14 +14,16 @@ from app.db.session import get_db
 from app.schemas.admin import (
     ApiTokenCreateRequest,
     ApiTokenCreateResponse,
+    ApiTokenListResponse,
     ApiTokenOut,
+    OkResponse,
 )
 from app.services import token_service
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
-@router.get("/tokens", summary="API Token 列表")
+@router.get("/tokens", response_model=ApiTokenListResponse, summary="API Token 列表")
 async def list_tokens(
     session: Annotated[AsyncSession, Depends(get_db)],
     principal: Annotated[Principal, Depends(settings_guard)],
@@ -77,7 +79,7 @@ async def revoke_token(
     )
 
 
-@router.delete("/tokens/{token_id}", summary="删除 Token 记录")
+@router.delete("/tokens/{token_id}", response_model=OkResponse, summary="删除 Token 记录")
 async def delete_token(
     token_id: int,
     session: Annotated[AsyncSession, Depends(get_db)],

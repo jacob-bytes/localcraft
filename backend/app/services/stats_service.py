@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 
 from sqlalchemy import func, select
@@ -31,6 +32,9 @@ from app.schemas.admin import (
     ToolRankResponse,
 )
 from app.services import settings_service
+from app.storage import get_storage
+
+logger = logging.getLogger(__name__)
 
 #: 状态展示顺序（概览页按这个顺序列出，保证前端渲染稳定）
 STATUS_ORDER: tuple[str, ...] = (
@@ -251,6 +255,21 @@ async def storage_stats(
         ).scalar_one()
     )
 
+    # J-4（contracts/CONTRACT.md §20.4）：接上孤儿文件计数。
+    # 该字段一直声明在 StorageStatsResponse 里但从不赋值，恒为 0 ——
+    # 管理员因此永远看不到「磁盘上有多少文件是数据库不认识的」。
+    # 复用清理任务的 dry_run 模式（它本来就会扫描并计数，只是不移动文件），
+    # 避免为统计再写一遍扫描逻辑、两处漂移。
+    orphan_count = 0
+    try:
+        from app.services import maintenance_service
+
+        orphan_count, _ = await maintenance_service.cleanup_orphan_files(
+            session, files_root=get_storage().files_root, dry_run=True
+        )
+    except Exception:
+        logger.warning("统计孤儿文件数失败，回退为 0", exc_info=True)
+
     return StorageStatsResponse(
         total_used_bytes=total_used,
         total_quota_bytes=quota_bytes,
@@ -274,6 +293,7 @@ async def storage_stats(
         total=total_owners,
         page=offset // limit + 1 if limit else 1,
         page_size=limit,
+        orphan_file_count=orphan_count,
     )
 
 

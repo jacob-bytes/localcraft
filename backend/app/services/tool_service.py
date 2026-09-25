@@ -311,7 +311,9 @@ def build_image_out(image: ToolImage, *, ttl_hours: int) -> ImageOut:
     )
 
 
-def build_version_detail(version: ToolVersion | None) -> CurrentVersionDetail | None:
+def build_version_detail(
+    version: ToolVersion | None, *, can_download: bool
+) -> CurrentVersionDetail | None:
     if version is None:
         return None
     return CurrentVersionDetail(
@@ -339,7 +341,14 @@ def build_version_detail(version: ToolVersion | None) -> CurrentVersionDetail | 
         reject_reason=version.reject_reason,
         purged_at=version.purged_at,
         created_at=version.created_at,
-        can_download=version.status in (
+        # J-9（contracts/CONTRACT.md §20.4）：必须由**同一套授权判定**派生，
+        # 不能只看版本状态。原先只看 status，于是 viewer 拿到
+        # current_version.can_download=True 而顶层 can_download=False，
+        # 前端据此把下载按钮渲染成可用，点下去才 404 —— 广告了「可下载」实际不能。
+        # 版本状态只说明「这个版本是否可被下载」，调用者权限由 can_download 决定，两者取与。
+        can_download=can_download
+        and version.status
+        in (
             VersionStatus.APPROVED.value,
             VersionStatus.SUPERSEDED.value,
         ),
@@ -441,7 +450,7 @@ async def build_detail(
         tags=[t.display_name for t in tool.tags],
         images=[build_image_out(image, ttl_hours=ttl_hours) for image in images],
         webapp_url=tool.webapp_url,
-        current_version=build_version_detail(current),
+        current_version=build_version_detail(current, can_download=perms.can_download),
         pending_version=(
             CurrentVersionBrief(id=pending.id, version=pending.version)
             if pending is not None

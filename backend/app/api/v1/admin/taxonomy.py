@@ -14,7 +14,9 @@ from app.schemas.admin import (
     AdminCategoryCreateRequest,
     AdminCategoryOut,
     AdminCategoryUpdateRequest,
+    AdminTagListResponse,
     AdminTagOut,
+    CategoryDeleteResponse,
     CategoryOrderRequest,
     TagCleanupResponse,
     TagMergeRequest,
@@ -71,7 +73,11 @@ async def update_category(
     )
 
 
-@router.delete("/categories/{category_id}", summary="删除分类（软删除）")
+@router.delete(
+    "/categories/{category_id}",
+    response_model=CategoryDeleteResponse,
+    summary="删除分类（软删除）",
+)
 async def delete_category(
     category_id: int,
     session: Annotated[AsyncSession, Depends(get_db)],
@@ -103,7 +109,7 @@ async def reorder_categories(
 # ---------------------------------------------------------------------------
 # 标签
 # ---------------------------------------------------------------------------
-@router.get("/tags", summary="标签列表")
+@router.get("/tags", response_model=AdminTagListResponse, summary="标签列表")
 async def admin_list_tags(
     session: Annotated[AsyncSession, Depends(get_db)],
     principal: Annotated[Principal, Depends(taxonomy_guard)],

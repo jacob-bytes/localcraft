@@ -20,6 +20,7 @@ from app.schemas.admin import (
     AdminUserUpdateRequest,
     ResetPasswordRequest,
     ResetPasswordResponse,
+    RevokeSessionsResponse,
     RoleOut,
 )
 from app.services import admin_user_service
@@ -139,7 +140,9 @@ async def replace_roles(
 
 
 @router.post(
-    "/users/{user_id}/revoke-sessions", summary="强制下线（吊销全部会话）"
+    "/users/{user_id}/revoke-sessions",
+    response_model=RevokeSessionsResponse,
+    summary="强制下线（吊销全部会话与该用户签发的 API Token）",
 )
 async def revoke_sessions(
     user_id: int,

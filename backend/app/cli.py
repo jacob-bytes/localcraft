@@ -593,6 +593,7 @@ async def _upsert_user(
     role_code: str,
     must_change_password: bool,
     now: datetime,
+    extra_role_code: str | None = None,
 ) -> tuple[User, bool]:
     normalized = normalize_username(username)
     result = await session.execute(select(User).where(User.username == normalized))
@@ -615,6 +616,13 @@ async def _upsert_user(
     session.add(user)
     await session.flush()
     session.add(UserRole(user_id=user.id, role_id=role.id, granted_at=now))
+    # J-11（contracts/CONTRACT.md §17.7）：允许一个种子账号同时拥有两个角色。
+    # 目前只用于 wangwu（user + approver）—— 真实环境需要一个可登录的审批员，
+    # 否则 approver 的角色菜单渲染与权限边界无法验证（用 admin 看不到
+    # 「approver 不该看到某些菜单」这一行为），且与前端 mock 不一致。
+    if extra_role_code is not None:
+        extra = await _get_role(session, extra_role_code)
+        session.add(UserRole(user_id=user.id, role_id=extra.id, granted_at=now))
     return user, True
 
 
@@ -755,6 +763,10 @@ async def _seed_demo() -> None:
                 role_code=RoleCode.USER.value,
                 must_change_password=False,
                 now=now,
+                # wangwu 额外拥有 approver（J-11）：真实环境需要一个可登录的审批员。
+                extra_role_code=(
+                    RoleCode.APPROVER.value if username == "wangwu" else None
+                ),
             )
             author_objs.append(author)
             authors_created += int(created)
@@ -951,6 +963,7 @@ async def _seed_demo() -> None:
         f"        {DEMO_VIEWER[0]} / {DEMO_VIEWER[1]}（角色 viewer）"
         f"{'（新建）' if viewer_created else '（已存在，跳过）'}"
     )
+    typer.echo("        wangwu / Author@12345（额外拥有 approver，可用于验证审批台）")
     for username, password, _dn in DEMO_AUTHORS:
         typer.echo(f"        {username} / {password}{'（新建）' if authors_created else ''}")
     typer.echo(f"  分类：{len(DEMO_CATEGORIES)} 个")
@@ -1361,7 +1374,7 @@ async def _maintenance(task: str, dry_run: bool, json_out: bool) -> None:
 def gc_versions_cmd(
     apply: bool = typer.Option(False, "--apply", help="真正执行；不加则只报告"),
 ) -> None:
-    """清理超出 `version.history_limit` 的历史版本（docs/05 的 selftool-gc.timer 依赖它）。
+    """清理超出 `version.history_limit` 的历史版本（由 `selftool-maintenance.timer` 调度）。
 
     正常路径下淘汰在「审批通过」时同步触发；本命令是**兜底与修复**用
     （例如直接改过设置、或历史上有失败的删除）。

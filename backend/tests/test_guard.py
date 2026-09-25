@@ -171,7 +171,7 @@ def test_m3_surface_is_exactly_the_frozen_list() -> None:
     assert len(M1_ONLY_ENDPOINTS) == 12
     assert len(M2_ENDPOINTS) == 38
     assert len(M3_ENDPOINTS) == 42
-    assert len(M3_TOTAL_ENDPOINTS) == 92, "冻结清单本身应当是 92 条"
+    assert len(M3_TOTAL_ENDPOINTS) == 93, "冻结清单本身应当是 93 条（92 + M6 的 directory）"
     assert actual == set(M3_TOTAL_ENDPOINTS), (
         f"多出的接口（契约未冻结）: {sorted(actual - set(M3_TOTAL_ENDPOINTS))}\n"
         f"缺失的接口: {sorted(set(M3_TOTAL_ENDPOINTS) - actual)}"
@@ -180,7 +180,7 @@ def test_m3_surface_is_exactly_the_frozen_list() -> None:
 
 def test_endpoint_total_is_exactly_92() -> None:
     """单独一条把「92」这个数字钉死 —— 容易被顺手改掉的是它。"""
-    assert len(ALL_ROUTES) == 92, f"接口操作总数应为 92，实际 {len(ALL_ROUTES)}"
+    assert len(ALL_ROUTES) == 93, f"接口操作总数应为 93（92 + M6 directory），实际 {len(ALL_ROUTES)}"
 
 
 def test_spa_fallback_is_the_only_non_api_catch_all() -> None:
@@ -247,7 +247,7 @@ def test_frozen_surface_matches_docs_03_section_2_5_row_by_row() -> None:
     assert len(set(rows)) == len(rows), "§2.5 总表里出现了重复行"
 
     actual = {(method, path) for method, path, _route in ALL_ROUTES}
-    assert len(actual) == 92, f"接口操作总数应为 92，实际 {len(actual)}"
+    assert len(actual) == 93, f"接口操作总数应为 93（92 + M6 directory），实际 {len(actual)}"
 
     # 逐行确认：每一条文档行都能在实现里找到（归一化参数名）
     implemented = {(m, normalize_path(p)) for m, p in actual}
@@ -288,3 +288,70 @@ def test_all_write_endpoints_declare_a_write_scope() -> None:
         assert has_gate, f"写接口缺少强制改密拦截: {method} {path}"
         has_auth, _ = _dependant_tree_flags(route)
         assert has_auth, f"写接口缺少鉴权依赖: {method} {path}"
+
+
+# ---------------------------------------------------------------------------
+# J-8：openapi.json 产物时效守卫
+# ---------------------------------------------------------------------------
+def test_openapi_artifact_is_current() -> None:
+    """已提交的 `backend/openapi.json` 必须与运行时生成的 spec 一致。
+
+    **为什么需要这条**（contracts/CONTRACT.md §22.3）：`openapi.json` 是 §15.6 宣布的
+    响应形状权威，也是前端 `check:api-types` 的输入。但它是个**手工执行的生成产物** ——
+    M5 交付后它就陈旧了（磁盘那份 mtime 14:14，缺 `storage_warning`，也缺
+    `/admin/tools/{id}/versions` 的 201 schema），而运行时 `/openapi.json` 两者都有。
+
+    后果很别扭：**前端只能对着实时 spec 改代码，而守卫却永远红着** ——
+    「权威」对自己不自洽。
+
+    修法不能靠「记得运行 export-openapi」，那正是它陈旧的原因。
+    这条测试把它变成**会失败的检查**：改了任何路由/响应模型却忘了重导出，
+    CI 立刻报错并告诉你该跑什么命令。
+    """
+    import json
+    from pathlib import Path
+
+    from app.main import app
+
+    artifact = Path(__file__).resolve().parent.parent / "openapi.json"
+    assert artifact.is_file(), "backend/openapi.json 不存在，请运行 export-openapi"
+
+    on_disk = json.loads(artifact.read_text(encoding="utf-8"))
+    live = app.openapi()
+
+    disk_paths = set(on_disk.get("paths", {}))
+    live_paths = set(live.get("paths", {}))
+    assert disk_paths == live_paths, (
+        "openapi.json 与运行时 spec 不一致，请运行：\n"
+        "    python -m app.cli export-openapi\n"
+        f"  仅磁盘有: {sorted(disk_paths - live_paths)}\n"
+        f"  仅运行时有: {sorted(live_paths - disk_paths)}"
+    )
+
+    # 逐个端点比对响应 schema 的字段名集合 —— 只比 paths 会漏掉「路径没变但字段变了」
+    mismatched: list[str] = []
+    for path, ops in live["paths"].items():
+        for method, spec in ops.items():
+            live_schema = (
+                spec.get("responses", {})
+                .get("200", {})
+                .get("content", {})
+                .get("application/json", {})
+                .get("schema")
+            )
+            disk_schema = (
+                on_disk["paths"]
+                .get(path, {})
+                .get(method, {})
+                .get("responses", {})
+                .get("200", {})
+                .get("content", {})
+                .get("application/json", {})
+                .get("schema")
+            )
+            if live_schema != disk_schema:
+                mismatched.append(f"{method.upper()} {path}")
+    assert not mismatched, (
+        "以下端点的响应 schema 与 openapi.json 不一致，请运行 export-openapi 并提交产物：\n  "
+        + "\n  ".join(mismatched)
+    )

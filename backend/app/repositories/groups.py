@@ -54,7 +54,7 @@ async def member_counts(session: AsyncSession, group_ids: list[int]) -> dict[int
 
 async def acl_references(
     session: AsyncSession, group_ids: list[int]
-) -> dict[int, list[tuple[int, str]]]:
+) -> dict[int, list[tuple[int, str, str]]]:
     """批量取「哪些工具的 ACL 引用了这些组」。
 
     FR-GRP-04：删除组前必须能列出引用它的工具。
@@ -70,9 +70,12 @@ async def acl_references(
         )
         .order_by(Tool.id.asc())
     )
-    out: dict[int, list[tuple[int, str]]] = {}
-    for group_id, tool_id, name, _slug in result.all():
-        out.setdefault(int(group_id), []).append((int(tool_id), str(name)))
+    # J-7（contracts/CONTRACT.md §19.5）：一并带出 slug。
+    # 查询本来就 select 了 Tool.slug，只是原先解包时丢掉了 —— 结果前端拿不到 slug，
+    # docs/04 §6.14 要求的「影响面工具可点击跳转」无法实现，只能渲染纯文本。
+    out: dict[int, list[tuple[int, str, str]]] = {}
+    for group_id, tool_id, name, slug in result.all():
+        out.setdefault(int(group_id), []).append((int(tool_id), str(name), str(slug)))
     return out
 
 

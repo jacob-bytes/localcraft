@@ -185,6 +185,7 @@
 | GET | `/api/v1/tools/{slug}/stats` | 该工具的统计（浏览量、下载量、趋势） |
 | GET | `/api/v1/categories` | 分类列表（含各分类可见工具数） |
 | GET | `/api/v1/tags` | 标签列表（支持前缀搜索，用于输入联想） |
+| GET | `/api/v1/directory` | **主体目录**：ACL 授权时搜索用户/用户组。任何已登录用户可调，**最小披露**（用户只给 id/username/display_name，组只给 id/name/member_count）。M6 新增，是对 92 冻结的刻意例外 —— 见 `contracts/CONTRACT.md` §20.4③ |
 | GET | `/api/v1/images/{id}` | 图片获取。**签名能力 URL**：接受 `?sig=`（HMAC，后端在列表/详情响应中下发）或 `Authorization` 头，两者都无返回 404。详见 `contracts/CONTRACT.md` §14.3 |
 
 ### 2.4 个人中心
@@ -270,7 +271,7 @@
 | POST | `/api/v1/admin/import/tools` | 批量导入工具元数据 | superadmin |
 | GET | `/api/v1/admin/export/tools` | 导出工具 JSON | superadmin |
 
-合计 **92 个操作 / 74 条路径**。
+合计 **93 个操作 / 75 条路径**（M6 新增 `GET /api/v1/directory`，见下）。
 
 > **计数口径（M3 前端 checkpoint 补入，2025-03）**：本节早先写作「约 85 个接口」是过期数字，
 > 且漏列了管理侧代创建的两个接口 —— 这导致「`docs/03` §2.5 清单」与「冻结的 92 操作」无法同时成立，
@@ -1031,6 +1032,7 @@ lisi,李四,lisi@example.com,user,active
 | `GROUP_IN_USE` | 409 | 用户组被 ACL 引用 | 展示引用工具列表 |
 | `TOOL_NOT_EDITABLE` | 409 | 待审状态下不可编辑 | 提示先撤回 |
 | `STATE_CONFLICT` | 409 | 状态机不允许该操作 | 刷新详情 |
+| `DOWNLOAD_NOT_ALLOWED` | 403 | ACL 未授予该用户下载权限（可见但不可下载） | 提示「该工具的授权中未包含下载权限」，引导向作者申请 |
 | `PAYLOAD_TOO_LARGE` | 413 | 文件过大 | 前端预校验 + 明确上限提示 |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | 文件类型不允许 | 展示允许的扩展名列表 |
 | `SKILL_PARSE_FAILED` | 422 | Skill 包解析失败 | 展示具体错误，允许另存草稿 |

@@ -408,6 +408,16 @@
             "title": "Recycle Bin Count",
             "type": "integer"
           },
+          "storage_warning": {
+            "default": false,
+            "title": "Storage Warning",
+            "type": "boolean"
+          },
+          "storage_warning_threshold_pct": {
+            "default": 85,
+            "title": "Storage Warning Threshold Pct",
+            "type": "integer"
+          },
           "tag_count": {
             "default": 0,
             "title": "Tag Count",
@@ -466,6 +476,42 @@
           "roles"
         ],
         "title": "AdminRoleReplaceRequest",
+        "type": "object"
+      },
+      "AdminTagListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AdminTagOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size",
+          "pages"
+        ],
+        "title": "AdminTagListResponse",
         "type": "object"
       },
       "AdminTagOut": {
@@ -1282,6 +1328,42 @@
         "title": "ApiTokenCreateResponse",
         "type": "object"
       },
+      "ApiTokenListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ApiTokenOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size",
+          "pages"
+        ],
+        "title": "ApiTokenListResponse",
+        "type": "object"
+      },
       "ApiTokenOut": {
         "properties": {
           "created_at": {
@@ -2079,6 +2161,65 @@
         "title": "Body_upload_version_api_v1_me_tools__tool_id__versions_post",
         "type": "object"
       },
+      "Body_upload_version_as_admin_api_v1_admin_tools__tool_id__versions_post": {
+        "properties": {
+          "auto_submit": {
+            "default": false,
+            "title": "Auto Submit",
+            "type": "boolean"
+          },
+          "changelog_md": {
+            "default": "",
+            "title": "Changelog Md",
+            "type": "string"
+          },
+          "file": {
+            "anyOf": [
+              {
+                "contentMediaType": "application/octet-stream",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File"
+          },
+          "prompt_content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Content"
+          },
+          "version": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Version",
+            "type": "string"
+          },
+          "webapp_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Webapp Url"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "title": "Body_upload_version_as_admin_api_v1_admin_tools__tool_id__versions_post",
+        "type": "object"
+      },
       "CategoryBrief": {
         "description": "工具卡片里的分类（docs/03 §3.3 `category`）。",
         "properties": {
@@ -2112,6 +2253,25 @@
           "name"
         ],
         "title": "CategoryBrief",
+        "type": "object"
+      },
+      "CategoryDeleteResponse": {
+        "description": "删除分类 —— **软删除**（FR-TAX-02）。",
+        "properties": {
+          "soft_deleted": {
+            "title": "Soft Deleted",
+            "type": "boolean"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "soft_deleted"
+        ],
+        "title": "CategoryDeleteResponse",
         "type": "object"
       },
       "CategoryFacet": {
@@ -2483,6 +2643,74 @@
         "title": "DailyStatPoint",
         "type": "object"
       },
+      "DirectoryGroup": {
+        "description": "最小披露的用户组条目。",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "member_count": {
+            "title": "Member Count",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "member_count"
+        ],
+        "title": "DirectoryGroup",
+        "type": "object"
+      },
+      "DirectoryResponse": {
+        "properties": {
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/DirectoryGroup"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "users": {
+            "items": {
+              "$ref": "#/components/schemas/DirectoryUser"
+            },
+            "title": "Users",
+            "type": "array"
+          }
+        },
+        "title": "DirectoryResponse",
+        "type": "object"
+      },
+      "DirectoryUser": {
+        "description": "最小披露的用户条目。",
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "username",
+          "display_name"
+        ],
+        "title": "DirectoryUser",
+        "type": "object"
+      },
       "DownloadLogOut": {
         "description": "`GET /me/downloads` 的历史条目。",
         "properties": {
@@ -2698,6 +2926,68 @@
         "title": "GroupCreateRequest",
         "type": "object"
       },
+      "GroupDeleteResponse": {
+        "description": "删除用户组的响应（FR-GRP-04）。\n\n`affected_tools` 列出被清理掉 ACL 条目的工具 id；带 `slug` 的详细影响面\n在 `409 GROUP_IN_USE` 的 `details.tools` 里（J-7）。",
+        "properties": {
+          "affected_tools": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Affected Tools",
+            "type": "array"
+          },
+          "cleaned_acl_entries": {
+            "title": "Cleaned Acl Entries",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "cleaned_acl_entries"
+        ],
+        "title": "GroupDeleteResponse",
+        "type": "object"
+      },
+      "GroupListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/GroupOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size",
+          "pages"
+        ],
+        "title": "GroupListResponse",
+        "type": "object"
+      },
       "GroupMemberAddRequest": {
         "description": "支持批量（FR-GRP-02）。",
         "properties": {
@@ -2740,6 +3030,102 @@
           "already_members"
         ],
         "title": "GroupMemberAddResponse",
+        "type": "object"
+      },
+      "GroupMemberListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/GroupMemberOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size",
+          "pages"
+        ],
+        "title": "GroupMemberListResponse",
+        "type": "object"
+      },
+      "GroupMemberOut": {
+        "properties": {
+          "added_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Added At"
+          },
+          "added_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Added By Name"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "status": {
+            "$ref": "#/components/schemas/UserStatus"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "integer"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "username",
+          "display_name",
+          "status"
+        ],
+        "title": "GroupMemberOut",
         "type": "object"
       },
       "GroupOut": {
@@ -3516,6 +3902,20 @@
         "title": "OfflineResponse",
         "type": "object"
       },
+      "OkResponse": {
+        "description": "只有 `{\"status\": \"ok\"}` 的通用响应。",
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "OkResponse",
+        "type": "object"
+      },
       "Page_ApprovalQueueItem_": {
         "properties": {
           "items": {
@@ -4024,6 +4424,25 @@
           "user_id"
         ],
         "title": "ResetPasswordResponse",
+        "type": "object"
+      },
+      "RevokeSessionsResponse": {
+        "description": "强制下线（FR-AUTH-12）。\n\nJ-3 之后本接口**同时吊销该用户的 API Token** —— 字段名保持不变以免破坏\n前端契约，语义在以下 docstring 里说明。",
+        "properties": {
+          "revoked_sessions": {
+            "title": "Revoked Sessions",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "revoked_sessions"
+        ],
+        "title": "RevokeSessionsResponse",
         "type": "object"
       },
       "RoleCode": {
@@ -7291,9 +7710,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Delete Category Api V1 Admin Categories  Category Id  Delete",
-                  "type": "object"
+                  "$ref": "#/components/schemas/CategoryDeleteResponse"
                 }
               }
             },
@@ -7459,9 +7876,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Groups Api V1 Admin Groups Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/GroupListResponse"
                 }
               }
             },
@@ -7555,9 +7970,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Delete Group Api V1 Admin Groups  Group Id  Delete",
-                  "type": "object"
+                  "$ref": "#/components/schemas/GroupDeleteResponse"
                 }
               }
             },
@@ -7692,9 +8105,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Members Api V1 Admin Groups  Group Id  Members Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/GroupMemberListResponse"
                 }
               }
             },
@@ -7797,9 +8208,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Remove Member Api V1 Admin Groups  Group Id  Members  User Id  Delete",
-                  "type": "object"
+                  "$ref": "#/components/schemas/OkResponse"
                 }
               }
             },
@@ -8236,9 +8645,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Admin List Tags Api V1 Admin Tags Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/AdminTagListResponse"
                 }
               }
             },
@@ -8425,9 +8832,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Tokens Api V1 Admin Tokens Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ApiTokenListResponse"
                 }
               }
             },
@@ -8510,9 +8915,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Delete Token Api V1 Admin Tokens  Token Id  Delete",
-                  "type": "object"
+                  "$ref": "#/components/schemas/OkResponse"
                 }
               }
             },
@@ -8973,7 +9376,7 @@
     },
     "/api/v1/admin/tools/{tool_id}/versions": {
       "post": {
-        "description": "管理侧代上传的**说明性端点**。\n\n与 `/me/tools/{id}/versions` 共用 `version_service.create_version`，\n差别只在「谁有权调用」（这里由 `admin:all` 授权，不校验 owner）。\n\n由于 multipart 表单字段较多，实际实现复用同一套服务函数；\n这里只做参数透传，不重复业务逻辑。",
+        "description": "管理侧代上传版本（`docs/03` §5.2 的脚本化接口面）。\n\n与 `/me/tools/{id}/versions` 的差别**只有一处**：这里由 `admin:all` 授权、\n不校验 owner。其余校验顺序与落盘全部走同一个 `version_service.create_version`，\n不复制业务逻辑（契约 §18.4，也见「易错点清单」第 6 条）。\n\n契约 §18.4 的背景：这个路由原先恒定返回 404，却仍在冻结的 92 个操作里、\n并被 `docs/03` §5.2 的示例脚本引用 —— 「看起来存在但必然报错」比没有更糟。",
         "operationId": "upload_version_as_admin_api_v1_admin_tools__tool_id__versions_post",
         "parameters": [
           {
@@ -8986,14 +9389,22 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_version_as_admin_api_v1_admin_tools__tool_id__versions_post"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
-          "200": {
+          "201": {
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Upload Version As Admin Api V1 Admin Tools  Tool Id  Versions Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/VersionUploadResponse"
                 }
               }
             },
@@ -9338,9 +9749,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Revoke Sessions Api V1 Admin Users  User Id  Revoke Sessions Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/RevokeSessionsResponse"
                 }
               }
             },
@@ -9357,7 +9766,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "强制下线（吊销全部会话）",
+        "summary": "强制下线（吊销全部会话与该用户签发的 API Token）",
         "tags": [
           "admin"
         ]
@@ -9598,7 +10007,7 @@
     },
     "/api/v1/categories": {
       "get": {
-        "description": "FR-TAX-07：每个分类带上**当前用户可见的**工具数量。\n\n计数与 `GET /tools` 的 `facets.categories[].count` 共用同一段聚合 SQL，\n保证左侧导航的计数与实际能看到的卡片数一致。\n\n只返回 `is_active = true` 的分类（契约 §6）。",
+        "description": "FR-TAX-07：每个分类带上**当前用户可见的**工具数量。\n\n`access` 只用于强制匿名可见性策略（`portal.allow_anonymous_view`），\n路由体不需要它 —— 但**必须声明**，否则守卫测试会认为这条路由没有鉴权。\n\n计数与 `GET /tools` 的 `facets.categories[].count` 共用同一段聚合 SQL，\n保证左侧导航的计数与实际能看到的卡片数一致。\n\n只返回 `is_active = true` 的分类（契约 §6）。",
         "operationId": "list_categories_api_v1_categories_get",
         "responses": {
           "200": {
@@ -9622,9 +10031,86 @@
         ]
       }
     },
+    "/api/v1/directory": {
+      "get": {
+        "description": "按关键词模糊匹配用户与用户组。\n\n- `q` 为空时返回前 N 条（供「点开下拉即看到常用主体」的交互）\n- `type` 省略则两者都返回\n- 任何**已登录用户**都可调用；未登录返回 401\n\n只返回**启用状态**的用户与用户组 —— 已禁用的账号不该再被授权。",
+        "operationId": "search_directory_api_v1_directory_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 64,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "user",
+                    "group"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectoryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "主体目录（用于 ACL 授权时搜索用户/用户组）",
+        "tags": [
+          "directory"
+        ]
+      }
+    },
     "/api/v1/images/{image_id}": {
       "get": {
-        "description": "按 `?variant=thumb|full` 输出缩略图或原图。\n\n无权访问一律 **404**（不是 403）—— 与图片是否存在无关，\n避免用状态码差异探测资源。",
+        "description": "按 `?variant=thumb|full` 输出缩略图或原图。\n\n**两条鉴权路径**（契约 §14.3）：\n\n  1. `?sig=<b64url>.<exp>` —— 能力签名。`<img>` 标签带不上 Authorization 头，\n     所以列表/详情下发的 `cover_url` / `thumb_url` 都自带签名。\n  2. `Authorization: Bearer <token>` —— 已登录用户直接取图（编辑器预览等场景）。\n\n两条都没有 → **404**。无权访问也一律 404（不是 403）—— 与图片是否存在无关，\n避免用状态码差异探测资源。\n\n注意：签名**只证明「这个 URL 是服务端下发的」**，\n父工具的可见性仍然照常校验 —— 签名不是绕过可见性的后门。\n这样设计是因为签发的 URL 里只含 image_id 与 variant（不含用户身份），\n若把它当成完全授权，URL 一旦外泄就等于把图送出去了。",
         "operationId": "get_image_api_v1_images__image_id__get",
         "parameters": [
           {

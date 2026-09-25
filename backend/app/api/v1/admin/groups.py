@@ -13,17 +13,21 @@ from app.core.pagination import PageParams
 from app.db.session import get_db
 from app.schemas.admin import (
     GroupCreateRequest,
+    GroupDeleteResponse,
+    GroupListResponse,
     GroupMemberAddRequest,
     GroupMemberAddResponse,
+    GroupMemberListResponse,
     GroupOut,
     GroupUpdateRequest,
+    OkResponse,
 )
 from app.services import group_service
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
-@router.get("/groups", summary="用户组列表")
+@router.get("/groups", response_model=GroupListResponse, summary="用户组列表")
 async def list_groups(
     session: Annotated[AsyncSession, Depends(get_db)],
     principal: Annotated[Principal, Depends(groups_guard)],
@@ -65,7 +69,7 @@ async def update_group(
     return await group_service.update_group(session, group_id=group_id, payload=body)
 
 
-@router.delete("/groups/{group_id}", summary="删除用户组")
+@router.delete("/groups/{group_id}", response_model=GroupDeleteResponse, summary="删除用户组")
 async def delete_group(
     group_id: int,
     session: Annotated[AsyncSession, Depends(get_db)],
@@ -84,7 +88,11 @@ async def delete_group(
     return await group_service.delete_group(session, group_id=group_id)
 
 
-@router.get("/groups/{group_id}/members", summary="成员列表")
+@router.get(
+    "/groups/{group_id}/members",
+    response_model=GroupMemberListResponse,
+    summary="成员列表",
+)
 async def list_members(
     group_id: int,
     session: Annotated[AsyncSession, Depends(get_db)],
@@ -123,7 +131,7 @@ async def add_members(
 
 
 @router.delete(
-    "/groups/{group_id}/members/{user_id}", summary="移除成员"
+    "/groups/{group_id}/members/{user_id}", response_model=OkResponse, summary="移除成员"
 )
 async def remove_member(
     group_id: int,

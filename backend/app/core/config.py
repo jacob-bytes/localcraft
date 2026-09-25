@@ -103,10 +103,22 @@ class Settings(BaseSettings):
     #: 上传文件大小上限的兜底值（系统设置 upload.max_file_size_mb 优先）
     max_upload_size: int = 200 * 1024 * 1024
     #: 允许上传的扩展名兜底值（系统设置 upload.allowed_extensions 优先）
+    #: J-10（docs/09 §6.1 / docs/01 §8）：原先只有 21 项，**不含 .xlsx/.csv/.docx/.jpeg
+    #: 等内网常用类型** —— 用户传个 Excel 会被 415 拒绝，而文档说允许。
+    #: 平台从不执行上传的文件，只以 Content-Disposition: attachment 提供下载，
+    #: 因此放宽类型白名单的风险很低，而「传 Excel 被拒」会直接产生支持工单。
+    #: 权威清单是 docs/01 §8；下面的顺序按类别分组，便于人工核对。
     allowed_extensions: list[str] = [
+        # 压缩包
         "zip", "tar.gz", "tgz", "whl", "tar", "gz", "7z", "rar",
-        "exe", "msi", "deb", "rpm", "sh", "py", "md", "txt",
-        "json", "yaml", "pdf", "png", "jpg",
+        # 制品与可执行
+        "exe", "msi", "deb", "rpm", "jar", "war", "bin", "iso", "img",
+        # 脚本
+        "sh", "bat", "ps1", "py", "js", "ts", "jsx", "tsx", "go", "java", "sql",
+        # 文档与数据
+        "md", "txt", "pdf", "json", "yaml", "yml", "csv", "xlsx", "docx", "pptx",
+        # 图片
+        "png", "jpg", "jpeg", "webp", "gif", "svg",
     ]
 
     @property

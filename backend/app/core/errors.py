@@ -213,6 +213,19 @@ class ToolNotEditableError(DomainError):
     default_message = "待审状态下不可编辑，请先撤回"
 
 
+class DownloadNotAllowedError(DomainError):
+    """J-2：ACL 明确把该用户标记为「可见但不可下载」。
+
+    与 `NotFoundError` 的区别是刻意的：**这里要明确告诉用户为什么下不了**。
+    对「无权看这个工具」我们用 404 隐藏资源存在性（FR-FILE-08），
+    但用户既然能看到详情页、能看到下载按钮，再返回 404 只会让他困惑。
+    """
+
+    code = "DOWNLOAD_NOT_ALLOWED"
+    http_status = 403
+    default_message = "该工具的授权中未包含下载权限"
+
+
 class StateConflictError(DomainError):
     code = "STATE_CONFLICT"
     http_status = 409
@@ -338,6 +351,7 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "GROUP_IN_USE": (409, "用户组被 ACL 引用"),
     "TOOL_NOT_EDITABLE": (409, "待审状态下不可编辑"),
     "STATE_CONFLICT": (409, "状态机不允许该操作"),
+    "DOWNLOAD_NOT_ALLOWED": (403, "ACL 未授予下载权限"),
     "PAYLOAD_TOO_LARGE": (413, "文件过大"),
     "UNSUPPORTED_MEDIA_TYPE": (415, "文件类型不允许"),
     "SKILL_PARSE_FAILED": (422, "Skill 包解析失败"),

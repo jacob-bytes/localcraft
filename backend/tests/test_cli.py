@@ -305,7 +305,7 @@ def test_export_openapi_writes_all_frozen_paths(tmp_path) -> None:
         f"多出: {sorted(operations - set(M3_TOTAL_ENDPOINTS))}\n"
         f"缺失: {sorted(set(M3_TOTAL_ENDPOINTS) - operations)}"
     )
-    assert len(operations) == 92
+    assert len(operations) == 93  # 92 + M6 的 /directory（CONTRACT §20.4③）
     assert ("GET", "/api/v1/tools") in operations
     assert ("POST", "/api/v1/auth/refresh") in operations
 

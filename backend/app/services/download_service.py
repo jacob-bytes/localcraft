@@ -27,9 +27,11 @@ from app.core.security import (
     verify_download_ticket,
 )
 from app.core.timeutil import ensure_utc, utcnow
-from app.models.enums import ToolStatus, VersionStatus
+from app.models.enums import ToolStatus, ToolVisibility, VersionStatus
 from app.models.tool import Tool, ToolVersion
+from app.repositories import tool_acl as tool_acl_repo
 from app.repositories import tool_versions as versions_repo
+from app.repositories.tools import VisibilityContext
 from app.storage import get_storage
 
 logger = logging.getLogger(__name__)
@@ -142,6 +144,44 @@ async def resolve_target(
         file_name=version.file_name or absolute.name,
         file_size=int(version.file_size or absolute.stat().st_size),
     )
+
+
+async def acl_allows_download(
+    session: AsyncSession,
+    *,
+    tool: Tool,
+    visibility: VisibilityContext,
+) -> bool:
+    """J-2（contracts/CONTRACT.md §20.4）：ACL 条目的 `can_download` 是否放行。
+
+    `tool_acl.can_download` 此前**前后端都存、docs/03 §3.11 描述为生效字段、
+    但没有任何读取点** —— 「取消允许下载」静默无效。这里把它接上。
+
+    判定规则（按 docs/01 §4.3 的可见性算法延伸）：
+
+    - owner 与 superadmin 不受限（他们本就能绕过 ACL）
+    - 非 `restricted` 可见性不涉及 ACL，一律放行
+    - `restricted` 下：取**全部命中的条目**（直接授权 + 所属组授权），
+      **任一命中条目 `can_download=true` 即放行**；命中但全部为 false 才拒绝
+    - 一条都没命中（理论上不该发生，因为调用方已先过了可见性检查）→ 放行，
+      避免因为判定顺序问题把正常用户挡在门外
+    """
+    if tool.owner_id == visibility.user_id or visibility.is_superadmin:
+        return True
+    if tool.visibility != ToolVisibility.RESTRICTED.value:
+        return True
+
+    entries = await tool_acl_repo.list_for_tool(session, tool.id)
+    wanted_groups = set(visibility.group_ids)
+    matched = [
+        e
+        for e in entries
+        if (e.subject_type == "user" and e.subject_id == visibility.user_id)
+        or (e.subject_type == "group" and e.subject_id in wanted_groups)
+    ]
+    if not matched:
+        return True
+    return any(e.can_download for e in matched)
 
 
 def issue_ticket(*, tool: Tool, version: ToolVersion, user_id: int) -> tuple[str, str, object]:

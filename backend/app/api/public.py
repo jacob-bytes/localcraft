@@ -174,9 +174,24 @@ M3_ENDPOINTS: frozenset[tuple[str, str]] = frozenset(
 )
 
 
-#: M3 实现后的**全部**接口面（92 个）。**多一个都不许有** ——
+#: M6 的接口面。
+#:
+#: **只有 1 个，且是对 92 冻结的刻意例外**（contracts/CONTRACT.md §20.4③）：
+#: `GET /api/v1/directory` 用于 ACL 授权时搜索用户/用户组。
+#: 没有它，`docs/01` FR-ACL-02（P0）「搜索用户/组后添加」无法交付 ——
+#: 普通用户只能手填数字 ID，功能实际不可用。这属于**功能空洞修复**，
+#: 不是范围蔓延，因此破例；除此之外 M6 不新增任何接口。
+M6_ENDPOINTS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("GET", "/api/v1/directory"),
+    }
+)
+
+#: M6 实现后的**全部**接口面（93 = 92 + directory）。**多一个都不许有** ——
 #: docs/03 §2.5 未列出的路径不得出现（守卫测试反向断言）。
-M3_TOTAL_ENDPOINTS: frozenset[tuple[str, str]] = M2_TOTAL_ENDPOINTS | M3_ENDPOINTS
+M3_TOTAL_ENDPOINTS: frozenset[tuple[str, str]] = (
+    M2_TOTAL_ENDPOINTS | M3_ENDPOINTS | M6_ENDPOINTS
+)
 
 
 __all__ = [
@@ -185,6 +200,7 @@ __all__ = [
     "M2_TOTAL_ENDPOINTS",
     "M3_ENDPOINTS",
     "M3_TOTAL_ENDPOINTS",
+    "M6_ENDPOINTS",
     "NON_SPA_PREFIXES",
     "PASSWORD_GATE_EXEMPT_PREFIXES",
     "PUBLIC_ENDPOINTS",

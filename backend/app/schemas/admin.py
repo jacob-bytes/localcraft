@@ -567,3 +567,83 @@ __all__ = [
     "TransferOwnerRequest",
     "TransferOwnerResponse",
 ]
+
+# ===========================================================================
+# J-8（contracts/CONTRACT.md §19.7）：补齐此前无字段定义的响应模型
+#
+# 这 9 个端点原先返回裸 `dict`，在 openapi 里只能是 `additionalProperties: true`。
+# 而 §15.6 宣布「openapi 是响应形状的唯一权威」—— 没有字段定义时这句话对它们
+# 名不副实：前端只能从 types.ts 反推形状，check:api-types 也无从校验。
+#
+# 全部按既有惯例（列表 = items/total/page/page_size/pages）与
+# docs/03 §2.5 的语义定义，不改变任何响应内容，只补类型。
+# ===========================================================================
+
+
+class GroupListResponse(BaseModel):
+    items: list[GroupOut]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class GroupMemberListResponse(BaseModel):
+    items: list[GroupMemberOut]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class GroupDeleteResponse(BaseModel):
+    """删除用户组的响应（FR-GRP-04）。
+
+    `affected_tools` 列出被清理掉 ACL 条目的工具 id；带 `slug` 的详细影响面
+    在 `409 GROUP_IN_USE` 的 `details.tools` 里（J-7）。
+    """
+
+    status: str
+    cleaned_acl_entries: int
+    affected_tools: list[int] = Field(default_factory=list)
+
+
+class OkResponse(BaseModel):
+    """只有 `{"status": "ok"}` 的通用响应。"""
+
+    status: str
+
+
+class CategoryDeleteResponse(BaseModel):
+    """删除分类 —— **软删除**（FR-TAX-02）。"""
+
+    status: str
+    soft_deleted: bool
+
+
+class AdminTagListResponse(BaseModel):
+    items: list[AdminTagOut]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class ApiTokenListResponse(BaseModel):
+    items: list[ApiTokenOut]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class RevokeSessionsResponse(BaseModel):
+    """强制下线（FR-AUTH-12）。
+
+    J-3 之后本接口**同时吊销该用户的 API Token** —— 字段名保持不变以免破坏
+    前端契约，语义在以下 docstring 里说明。
+    """
+
+    status: str
+    revoked_sessions: int
+

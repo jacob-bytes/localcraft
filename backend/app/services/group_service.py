@@ -149,7 +149,11 @@ async def delete_group(session: AsyncSession, *, group_id: int) -> dict:
                 "group_id": group.id,
                 "group_name": group.name,
                 "tool_count": len(referenced),
-                "tools": [{"id": tid, "name": name} for tid, name in referenced],
+                # J-7：带上 slug，前端才能渲染可点击的跳转（docs/04 §6.14）。
+                "tools": [
+                    {"id": tid, "name": name, "slug": slug}
+                    for tid, name, slug in referenced
+                ],
             },
         )
 
@@ -176,7 +180,7 @@ async def force_delete_group(session: AsyncSession, *, group_id: int) -> dict:
     return {
         "status": "ok",
         "cleaned_acl_entries": cleaned,
-        "affected_tools": [tid for tid, _ in refs.get(group_id, [])],
+        "affected_tools": [tid for tid, _name, _slug in refs.get(group_id, [])],
     }
 
 

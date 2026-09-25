@@ -520,12 +520,22 @@ async def reset_password(
 
 
 async def revoke_sessions(session: AsyncSession, *, user_id: int, actor_id: int) -> int:
-    """强制下线（FR-AUTH-12）：吊销该用户全部 refresh token。"""
-    del actor_id
+    """强制下线（FR-AUTH-12）：吊销该用户全部 refresh token **与其签发的 API Token**。
+
+    J-3（contracts/CONTRACT.md §20.4）：原先只吊销 refresh token，
+    **管理员「把这个人踢出去」之后，该用户签发的 API Token 仍然可用**（监控方实测确认）。
+    这与 FR-IAM-05 在「禁用用户」时的语义不一致 —— 同一个「让这个人彻底失去访问」的意图，
+    轻动作（强制下线）比重动作（禁用）反而更宽松。
+    """
     user = await session.get(User, user_id)
     if user is None:
         raise NotFoundError(message="用户不存在", details={"user_id": user_id})
-    revoked = await _revoke_sessions(session, user_id, now=utcnow())
+    now = utcnow()
+    revoked = await _revoke_sessions(session, user_id, now=now)
+    # 同一事务内一并吊销 Token，避免「会话没了但 Token 还在」的中间态。
+    await tokens_repo.revoke_all_for_user(
+        session, user_id, revoked_by_id=actor_id, now=now
+    )
     await session.commit()
     return revoked
 

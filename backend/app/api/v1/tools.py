@@ -19,7 +19,12 @@ from app.core.deps import (
     get_visibility_context,
     portal_access,
 )
-from app.core.errors import InvalidSortError, NotFoundError, ValidationError
+from app.core.errors import (
+    DownloadNotAllowedError,
+    InvalidSortError,
+    NotFoundError,
+    ValidationError,
+)
 from app.core.pagination import PageParams
 from app.db.session import get_db
 from app.models.enums import PortalSort, RoleCode, ToolType, VersionStatus
@@ -38,6 +43,7 @@ from app.schemas.tool import DownloadTicketResponse, ToolDetail, ToolListRespons
 from app.schemas.version import SkillPreviewResponse, VersionSummary, VersionUploader
 from app.services import download_service, tool_service
 from app.services.counter_service import get_counter_service, viewer_key_for
+from app.services.download_service import acl_allows_download
 
 router = APIRouter(tags=["portal"])
 
@@ -303,6 +309,12 @@ async def create_download_ticket_endpoint(
     if tool is None:
         raise NotFoundError(message="资源不存在")
 
+    # J-2：ACL 条目级的下载权限（可见但不可下载）。放在可见性判定之后 ——
+    # 「角色不够」用 404 隐藏资源存在性（FR-FILE-08），
+    # 「ACL 明确拒绝」用 403 说明原因（用户能看到详情页，返回 404 只会让他困惑）。
+    if not await acl_allows_download(session, tool=tool, visibility=visibility):
+        raise DownloadNotAllowedError()
+
     target = await download_service.resolve_target(
         session, tool=tool, version_id=version_id
     )
@@ -364,6 +376,10 @@ async def download_tool(
             raise NotFoundError(message="资源不存在")
         if not await _has_download_permission(session, dl.ticket_user_id):
             raise NotFoundError(message="资源不存在", details={"reason": "no_download_permission"})
+        # J-2：ACL 条目级判定。用**票据用户**的 visibility 复核 ——
+        # 票据签发后可见性/授权可能已变，与上面的可见性复核同理。
+        if not await acl_allows_download(session, tool=tool, visibility=visibility):
+            raise DownloadNotAllowedError()
     else:
         visibility = await VisibilityContext.build(
             session,
@@ -379,6 +395,9 @@ async def download_tool(
             raise NotFoundError(
                 message="资源不存在", details={"reason": "no_download_permission"}
             )
+        # J-2：ACL 条目级判定（可见但不可下载）
+        if not await acl_allows_download(session, tool=tool, visibility=visibility):
+            raise DownloadNotAllowedError()
 
     target = await download_service.resolve_target(
         session, tool=tool, version_id=version_id
