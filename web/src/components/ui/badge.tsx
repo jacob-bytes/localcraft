@@ -11,8 +11,13 @@ const badgeVariants = cva(
         default: "bg-primary text-primary-foreground [a&]:hover:bg-primary/90",
         secondary:
           "bg-secondary text-secondary-foreground [a&]:hover:bg-secondary/90",
+        // U2（docs/12 §2）：原为 `text-white` + `dark:bg-destructive/60`。
+        // 硬编码白色忽略了 --destructive-foreground：它在 .dark 下是**深色文字**，
+        // 于是深色主题里出现「白字 + 60% 透明红底」，实测只有 3.54:1（12px 要求 4.5）。
+        // 改用语义 token 后，浅色仍是白字（值相同，无变化），深色改为深字。
+        // 同时去掉 dark 下的 /60 —— 那会把红底冲淡，进一步压低对比度。
         destructive:
-          "bg-destructive text-white focus-visible:ring-destructive/20 dark:bg-destructive/60 dark:focus-visible:ring-destructive/40 [a&]:hover:bg-destructive/90",
+          "bg-destructive text-destructive-foreground focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 [a&]:hover:bg-destructive/90",
         outline:
           "border-border text-foreground [a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
         ghost: "[a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
