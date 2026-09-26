@@ -30,6 +30,11 @@ jobs:
         with:
           # 需要完整历史才能取出 tag 的注释对象（浅克隆拿不到）
           fetch-depth: 0
+          # **必须显式置 true**：checkout@v4 的 fetch-tags 默认是 false，
+          # 于是本地只有 tag 指向的提交、没有 annotated tag 对象本身，
+          # `git tag -l --format='%(contents)'` 会**静默退化**成取提交信息 ——
+          # Release 标题就变成了提交标题。这个坑踩过一次（v1.0.0 首建时标题错了）。
+          fetch-tags: true
 
       # -----------------------------------------------------------------------
       # 单步完成 判重 → 取注释 → 写权限预检 → 创建。
@@ -66,19 +71,31 @@ jobs:
           # --- 判重：只看 HTTP 状态码 ---------------------------------------
           # 不用 `gh release view`：实测同一仓库同一 tag，本机 gh 2.101.0 返回
           # rc=1「release not found」，CI 上却返回 rc=0，导致判重误判为「已存在」。
+          #
+          # 已存在时**更新**而不是跳过：tag 注释是 Release 正文的唯一来源，
+          # 重推 tag 即「重新发版」，应当把正文同步过来。
+          # （副作用要知情：在网页上手工改过的正文会被覆盖。）
           CODE="$(curl -sS -o /dev/null -w '%{http_code}' "${AUTH[@]}" \
                     "${API}/releases/tags/${GITHUB_REF_NAME}")"
           say "- 判重 \`GET /releases/tags/${GITHUB_REF_NAME}\` → HTTP \`${CODE}\`"
-          if [ "$CODE" = "200" ]; then
-            say ""
-            say "Release 已存在，跳过。"
-            exit 0
-          fi
-          if [ "$CODE" != "404" ]; then
-            die "判重请求返回了意料之外的 ${CODE}（期望 200 或 404），不敢继续。"
-          fi
+          case "$CODE" in
+            200) MODE="update" ;;
+            404) MODE="create" ;;
+            *)   die "判重请求返回了意料之外的 ${CODE}（期望 200 或 404），不敢继续。" ;;
+          esac
+          say "- 动作：\`${MODE}\`"
 
           # --- 取 tag 注释生成标题与正文 -------------------------------------
+          # 先断言拿到的是 annotated tag 对象。没有这一步，checkout 少取了 tag
+          # 对象时会**静默**退化成提交信息，标题错了却一切"绿"（踩过）。
+          TAG_TYPE="$(git cat-file -t "refs/tags/${GITHUB_REF_NAME}" 2>/dev/null || echo missing)"
+          say "- tag 对象类型：\`${TAG_TYPE}\`（annotated 应为 \`tag\`）"
+          if [ "$TAG_TYPE" != "tag" ]; then
+            say ""
+            say "> ⚠️ 拿到的不是 annotated tag 对象，标题与正文会退化成提交信息。"
+            say "> 检查 checkout 是否设了 \`fetch-tags: true\`，以及建 tag 时用的是 \`git tag -a\`。"
+          fi
+
           NOTES="$RUNNER_TEMP/notes.md"
           git tag -l --format='%(contents)' "${GITHUB_REF_NAME}" > "$NOTES"
           TITLE="$(grep -m1 -v '^[[:space:]]*$' "$NOTES" || true)"
@@ -109,28 +126,45 @@ jobs:
             die "GITHUB_TOKEN 没有写权限。修法：仓库 Settings → Actions → General → Workflow permissions 选 “Read and write permissions” 保存后重跑；这一步需要仓库 admin，workflow 里的 permissions: 越不过它。"
           fi
 
-          # --- 创建 -----------------------------------------------------------
+          # --- 创建 或 更新 ---------------------------------------------------
           jq -n --arg tag "$GITHUB_REF_NAME" --arg name "$TITLE" \
                 --rawfile body "$RUNNER_TEMP/body.md" \
                 '{tag_name:$tag, name:$name, body:$body, draft:false, prerelease:false}' \
             > "$RUNNER_TEMP/payload.json"
 
-          CREATE_CODE="$(curl -sS -o "$RUNNER_TEMP/create.json" -w '%{http_code}' "${AUTH[@]}" \
-            -X POST "${API}/releases" -d @"$RUNNER_TEMP/payload.json")"
-          say "- 创建 \`POST /releases\` → HTTP \`${CREATE_CODE}\`"
+          if [ "$MODE" = "update" ]; then
+            REL_ID="$(curl -sS "${AUTH[@]}" "${API}/releases/tags/${GITHUB_REF_NAME}" \
+                      | jq -r '.id // empty')"
+            [ -n "$REL_ID" ] || die "已判定为 update，但取不到 release id。"
+            # tag_name 不允许在 PATCH 里改，去掉它
+            jq 'del(.tag_name)' "$RUNNER_TEMP/payload.json" > "$RUNNER_TEMP/patch.json"
+            SAY_METHOD="PATCH"
+            ENDPOINT="${API}/releases/${REL_ID}"
+            EXPECT=200
+            PAYLOAD="$RUNNER_TEMP/patch.json"
+          else
+            SAY_METHOD="POST"
+            ENDPOINT="${API}/releases"
+            EXPECT=201
+            PAYLOAD="$RUNNER_TEMP/payload.json"
+          fi
 
-          if [ "$CREATE_CODE" != "201" ]; then
+          RES_CODE="$(curl -sS -o "$RUNNER_TEMP/result.json" -w '%{http_code}' "${AUTH[@]}" \
+            -X "$SAY_METHOD" "$ENDPOINT" -d @"$PAYLOAD")"
+          say "- \`${SAY_METHOD}\` → HTTP \`${RES_CODE}\`（期望 ${EXPECT}）"
+
+          if [ "$RES_CODE" != "$EXPECT" ]; then
             say ""
             say "**响应**："
             say '```json'
-            say "$(cat "$RUNNER_TEMP/create.json")"
+            say "$(cat "$RUNNER_TEMP/result.json")"
             say '```'
-            die "创建 Release 失败（HTTP ${CREATE_CODE}）。"
+            die "${SAY_METHOD} Release 失败（HTTP ${RES_CODE}）。"
           fi
 
-          URL="$(jq -r '.html_url // empty' "$RUNNER_TEMP/create.json")"
+          URL="$(jq -r '.html_url // empty' "$RUNNER_TEMP/result.json")"
           say ""
-          say "✅ 已创建：${URL}"
+          say "✅ ${MODE} 完成：${URL}"
 
       # -----------------------------------------------------------------------
       # 刻意**不**附离线发布包。
