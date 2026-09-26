@@ -393,13 +393,24 @@ def test_prometheus_output_parses_and_carries_required_metrics() -> None:
         "localcraft_request_duration_ms_p95",
         "localcraft_sql_statements_total",
         "localcraft_db_pool_wait_ms_p95",
-        "localcraft_sqlite_wal_bytes",
         # 另外两项（B2 的阈值、M3 的 flush 失败）
         "localcraft_slow_request_threshold_ms",
         "localcraft_counter_flush_failures_total",
     }
+    # WAL 大小是 **SQLite 专属**指标（`wal_size_bytes()` 在其他方言返回 None）。
+    # M10 修：原先它被无条件放进 required，PG 上因此必然失败 —— 实现是对的，测试写错了。
+    # 现在两个方向都断言，且都要求「一定存在 / 一定不存在」这种可证伪的形式：
+    #   - SQLite：必须出现（否则 WAL 膨胀失去观测口）
+    #   - PG：必须不出现（出现才是缺陷：PG 的 WAL 是集群级概念，
+    #     任何由应用侧算出来的「WAL 字节数」都是假信号）
+    if settings.is_sqlite:
+        required.add("localcraft_sqlite_wal_bytes")
     missing = required - set(parsed)
     assert not missing, f"缺少指标：{sorted(missing)}"
+    if not settings.is_sqlite:
+        assert "localcraft_sqlite_wal_bytes" not in parsed, (
+            "非 SQLite 方言（PostgreSQL）下不应输出 SQLite 专属的 WAL 指标"
+        )
 
     assert parsed["localcraft_requests_total"][0][1] == 2
     assert 'route="/api/v1/tools"' in parsed["localcraft_requests_total"][0][0]

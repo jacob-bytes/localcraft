@@ -38,6 +38,15 @@ class SqliteFts5Backend(SearchBackend):
     def available(self) -> bool:
         return self._available
 
+    @property
+    def supports_reindex(self) -> bool:
+        """FTS5 虚表可写时为 True；已降级（表缺失/报错）时为 False。
+
+        降级态返回 False 是有意的：这时 `reindex_all()` 只会立刻返回 0，
+        让 CLI 报「成功重建 0 条」同样是误导，应当明确报错。
+        """
+        return self._available
+
     def _mark_unavailable(self, exc: Exception) -> None:
         if self._available:
             logger.warning("FTS5 索引不可用，回退到 LIKE 匹配: %s", exc)
@@ -140,6 +149,13 @@ class LikeSearchBackend(SearchBackend):
     @property
     def name(self) -> str:
         return "like_fallback"
+
+    @property
+    def supports_reindex(self) -> bool:
+        """LIKE 回退**没有索引可重建**：检索语句直接查 `tools` 表，
+        没有会漂移的旁路索引，也就没有「重建」这件事。
+        """
+        return False
 
     async def upsert(self, session: AsyncSession, tool_id: int, doc: SearchDocument) -> None:
         return None

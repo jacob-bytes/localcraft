@@ -374,7 +374,7 @@ def auth(token: str) -> dict[str, str]:
 
 @pytest.fixture(autouse=True)
 async def _reset_engine_pool() -> AsyncIterator[None]:
-    """每个用例结束后清空连接池。
+    """每个用例结束后清空连接池（**所有方言**，M10 修）。
 
     为什么必须做：pytest-asyncio 默认**每个测试一个新的事件循环**，而
     `app.db.session.engine` 是模块级单例，连接池跨用例共享。aiosqlite 的每个
@@ -386,9 +386,23 @@ async def _reset_engine_pool() -> AsyncIterator[None]:
     它会直接冒到请求路径上（M3 的 100 并发用例表现为 500 / "No response returned."，
     且只在整包运行时复现 —— 单跑该文件时池里没有跨 loop 的陈旧连接）。
 
-    放在测试侧而不是给 SQLite 换 NullPool：生产运行时是单 loop 常驻进程，
-    连接复用本身没问题，不该为了测试改运行时行为。
+    ★ M10 更正：这里原来是 `if engine.dialect.name == "sqlite"`，**这是个错**。
+    PostgreSQL 走的是 SQLAlchemy 的 `AsyncAdaptedQueuePool`，池内的
+    `asyncio.Queue` 同样是 loop 绑定的，而且比 SQLite 更隐蔽 ——
+    `AsyncAdaptedQueue._queue` 是**首次使用时才创建并 memoize** 的属性，
+    所以「引擎在 A loop 建、B loop 用」时，报错发生在**取连接需要排队**的那一刻
+    （池空才走 `asyncio.Queue.get()`），平时不排队就完全正常。
+    实测：不加这个 dispose 时 PG 全量套件里 362 次
+    `RuntimeError: <Queue at 0x... maxsize=5 tasks=1071> is bound to a different
+    event loop`，且 `test_m3_admin.py::test_token_last_used_is_aggregated`
+    （100 并发请求）因此失败。
+
+    为什么 `engine.dispose()` 能解决：`Engine.dispose()` 会
+    `self.pool = self.pool.recreate()` —— **换一个全新的池对象**，
+    新池的 `_queue` 尚未创建，于是下一个用例首次取连接时绑定到它自己的 loop。
+
+    放在测试侧而不是给引擎换 NullPool：生产运行时是单 loop 常驻进程，
+    连接复用本身没问题，不该为了测试改运行时行为。这条理由对两种方言同样成立。
     """
     yield
-    if engine.dialect.name == "sqlite":
-        await engine.dispose()
+    await engine.dispose()

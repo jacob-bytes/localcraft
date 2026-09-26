@@ -61,9 +61,46 @@ class CounterService:
         #: api_tokens.last_used_at / last_used_ip 的内存聚合（M3）
         self._token_last_used: dict[int, tuple[datetime, str | None]] = {}
 
-        self._lock = asyncio.Lock()
+        # 落库互斥锁**不在这里建** —— 见 `_flush_lock()`：
+        # asyncio 的同步原语在首次使用时绑定当时的事件循环，跨 loop 复用会抛
+        # `RuntimeError: ... is bound to a different event loop`。
+        self._lock: asyncio.Lock | None = None
+        self._lock_loop: asyncio.AbstractEventLoop | None = None
         self._task: asyncio.Task[None] | None = None
         self._stopping = False
+
+    # ------------------------------------------------------------------
+    # 事件循环无关性（M10）
+    # ------------------------------------------------------------------
+    def _flush_lock(self) -> asyncio.Lock:
+        """取「当前事件循环」的落库锁（惰性创建，按 loop 隔离）。
+
+        为什么不在 `__init__` 里建一把 `asyncio.Lock`：`asyncio` 的同步原语
+        （Lock / Queue / Event）在**首次使用**时把 `_loop` 钉死为当时那个事件循环，
+        之后在另一个 loop 上用就抛
+        `RuntimeError: ... is bound to a different event loop`。
+        `CounterService` 是**进程内单例**，所以只要进程内重建过事件循环
+        （`uvicorn --reload`、测试里每个用例一个 loop、将来可能的多 loop 场景），
+        那把锁就会变成跨 loop 的雷 —— 与 M10 修掉的连接池队列是同一类问题。
+
+        为什么按 loop 惰性重建是安全的：
+
+          1. **状态本身不依赖 loop。** 增量缓冲全是普通 Python 容器
+             （`dict` / `defaultdict` / `list`），`record_*` 是同步方法、不 await、
+             不创建任何 loop 对象；因此换 loop 不会让缓冲失效。
+          2. **真正需要原子性的临界区是同步的。** `flush()` 里「取走增量 + 置空缓冲」
+             这一段没有任何 `await`，在单线程事件循环里它本身就是一次不可分割的
+             执行片段 —— 锁只是让两个并发 `flush()` 不重复做同一批 DB 工作，
+             不是数据正确性的唯一依赖。
+          3. **一个进程同一时刻只有一个运行中的 loop。** 新 loop 是在旧 loop
+             结束后才出现的（`asyncio.run` / 新用例），不存在两个 loop 同时用这个
+             单例的情形；所以「每个 loop 一把锁」不会退化成「两把锁各管各的」。
+        """
+        loop = asyncio.get_running_loop()
+        if self._lock is None or self._lock_loop is not loop:
+            self._lock = asyncio.Lock()
+            self._lock_loop = loop
+        return self._lock
 
     # ------------------------------------------------------------------
     # 记录（同步、非阻塞 —— 请求路径上只碰内存）
@@ -135,7 +172,7 @@ class CounterService:
     # ------------------------------------------------------------------
     async def flush(self) -> dict[str, int]:
         """把内存里的增量写库。**任何异常都只记日志，不向上抛**。"""
-        async with self._lock:
+        async with self._flush_lock():
             if not self._has_pending():
                 return {"counter_tools": 0, "daily": 0, "logs": 0, "tokens": 0}
 
@@ -232,20 +269,38 @@ class CounterService:
                 await self.flush()
 
     async def start(self) -> None:
-        if self._task is None or self._task.done():
-            self._stopping = False
-            self._task = asyncio.create_task(self._run(), name="localcraft-counter-flush")
-            logger.info("计数器后台任务已启动（每 %s 秒落库）", self._flush_interval)
+        loop = asyncio.get_running_loop()
+        if self._task is not None and not self._task.done():
+            if self._task.get_loop() is loop:
+                return  # 幂等：当前 loop 里已经在跑
+            # 任务属于另一个（多半已结束的）事件循环。跨 loop await 会抛
+            # "attached to a different loop"，所以只尽力取消、丢弃引用，
+            # 在当前 loop 重建 —— 否则新 loop 里 flush 循环永远不会跑起来。
+            logger.warning("计数器后台任务属于另一个事件循环，已丢弃并在当前循环重建")
+            with contextlib.suppress(Exception):
+                self._task.cancel()
+            self._task = None
+        self._stopping = False
+        self._task = asyncio.create_task(self._run(), name="localcraft-counter-flush")
+        logger.info("计数器后台任务已启动（每 %s 秒落库）", self._flush_interval)
 
     async def stop(self) -> None:
         """优雅关闭：停掉循环并做最后一次 flush（SIGTERM 不能丢计数）。"""
         self._stopping = True
-        if self._task is not None:
-            self._task.cancel()
-            # 取消是预期路径；任务自身的异常也已经在自己内部记过日志了
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await self._task
-            self._task = None
+        task = self._task
+        self._task = None
+        if task is not None:
+            if task.get_loop() is asyncio.get_running_loop():
+                task.cancel()
+                # 取消是预期路径；任务自身的异常也已经在自己内部记过日志了
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await task
+            else:
+                # 同上：不能跨 loop await，尽力取消后放弃引用。
+                # 最后的 flush 仍在当前 loop 里执行，计数不会因此丢失。
+                logger.warning("计数器后台任务属于另一个事件循环，取消时跳过等待")
+                with contextlib.suppress(Exception):
+                    task.cancel()
         # 最后一次落库 —— 这一步失败也只是记日志
         await self.flush()
         logger.info("计数器后台任务已停止，残留计数已落库")

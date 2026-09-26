@@ -8,10 +8,12 @@
   2. **必须始终保留至少一个启用的 superadmin**（FR-IAM-07）。
   3. **不得禁用或降级自己**（FR-IAM-08），防止自我锁死。
 
-第 2 条用 **CAS** 实现，而不是「先查后改」：把「还剩几个启用的超管」这个条件
-直接写进 UPDATE/DELETE 的 WHERE 里，用影响行数判断成败。
-两个管理员同时降级最后两个超管时，只有一个能成功 —— 这与审批的并发防护
-（`app/services/version_service.py` 的 CAS）是同一个思路。
+第 2 条不只靠 **CAS**：把「还剩几个启用的超管」写进 UPDATE 的 WHERE 里、
+用影响行数判断成败，这一步**本身不足以**实现并发互斥 —— 两个并发请求 UPDATE 的是
+不同的行，行锁不冲突。因此守卫在 CAS 之前先对**全部活跃超管**取 `FOR UPDATE`
+写锁（全集，见 `_lock_all_active_superadmins`），再把判断放在锁后，
+两个管理员同时降级最后两个超管时才真的只有一个能成功（M10 修掉了
+PostgreSQL 默认隔离级别下的 write-skew）。
 """
 
 from __future__ import annotations
@@ -378,18 +380,73 @@ async def _resolve_actor_id(session: AsyncSession, actor_id: int | None) -> int 
     return exists
 
 
+async def _lock_all_active_superadmins(session: AsyncSession, *, role_id: int) -> list[int]:
+    """对**全部**启用的超管行取写锁，返回被锁住的 user_id 列表（按 id 升序）。
+
+    这是 `_cas_guard_last_superadmin` 互斥性的来源，有三处细节不能改：
+
+      1. **锁的是全集，不是「除自己以外的那些」。** 只锁「除自己外」的集合时，
+         降级 A 的事务锁的是 {B}、降级 B 的事务锁的是 {A} —— 两个集合
+         **不相交**，互不阻塞，write-skew 原样成立。锁全集则两边都要锁 {A, B}，
+         必然在同一行上相遇。
+      2. **`ORDER BY users.id`。** PostgreSQL 对 `SELECT ... ORDER BY ... FOR UPDATE`
+         的计划是 `LockRows -> Sort`（本机 PG 16 实测 EXPLAIN 确认），即**按 id 升序**
+         加锁。两个守卫事务加锁顺序一致 → 不会互相等待成环（无死锁）。
+         去掉 ORDER BY 后加锁顺序不保证，理论上可能与对方交叉持锁而死锁
+         （死锁只会让一方报错，不会破坏不变量，但会让并发用例的输出变得不确定）。
+      3. **方言无关。** SQLite 不支持 `FOR UPDATE`，SQLAlchemy 会把它编译掉
+         （实测编译结果里没有该子句）—— 而 SQLite 本就是库级单写者，
+         写事务天然串行，不需要行锁。
+    """
+    result = await session.execute(
+        select(User.id)
+        .join(UserRole, UserRole.user_id == User.id)
+        .where(UserRole.role_id == role_id, User.status == UserStatus.ACTIVE.value)
+        .order_by(User.id)
+        .with_for_update()
+    )
+    return [int(row[0]) for row in result.all()]
+
+
 async def _cas_guard_last_superadmin(
     session: AsyncSession, *, target_user: User, now: datetime
 ) -> None:
-    """CAS 守卫：确认「除 target 之外还有启用的超管」。
+    """CAS 守卫：确认「除 target 之外还有启用的超管」，并保证并发下真的互斥。
 
     为什么不能「先 SELECT COUNT 再判断」：两个管理员同时降级最后两个超管时，
     读-判断-写之间会互相穿插，两个请求都可能读到 count=2 然后都通过。
 
-    实现方式：发一条**条件 UPDATE**，条件里带「除自己外还有活跃超管」的子查询。
-    `updated_at` 设为当前时间 —— 这既让 rowcount 可靠（SQLite 的 changes()
-    对「值未变化」的 UPDATE 行为依方言而异），又顺带拿到了该行的写锁，
-    使「判断 + 后续写入」在同一把锁下串行化。
+    为什么「条件 UPDATE + 子查询」也不够（M10 修复）：那条 UPDATE 命中的是
+    **各自的目标行**（不同的行），行锁根本不冲突，所以判断与写入之间没有任何互斥。
+    SQLite 靠库级写锁侥幸正确；PostgreSQL 默认 READ COMMITTED 下两个事务都在
+    对方提交前读到「对方仍是超管」，双双通过 → 超管归零（典型 write-skew）。
+
+    现在分三步，顺序不能变：
+
+      1. `SELECT ... FOR UPDATE` 锁住**当前全部活跃超管**（见
+         `_lock_all_active_superadmins` 的说明：必须锁全集）。
+      2. **拿到锁之后**再读一次计数。READ COMMITTED 下每条语句取新快照 ——
+         若本事务在锁上被阻塞过，阻塞解除时对方已提交，这一读就能看到
+         对方那次降级的结果，于是守卫会正确地拒绝。
+         （顺序反过来先读计数再取锁，读到的就是被阻塞之前的旧值，等于没修。）
+      3. 保留原有的条件 UPDATE + rowcount 判定：它是「判断 + 写入」
+         在同一把锁下的第二次断言，也维持既有的 `cas_failed` 错误口径。
+
+    **互斥性论证（为什么两个并发守卫不可能都通过）**：
+    设活跃超管集合为 S。任一守卫事务的加锁语句读到的集合是「其快照时刻的 S」，
+    并把这个集合整体锁到事务结束（提交或回滚）为止。对任意两个并发守卫 T1、T2，
+    只有两种可能：
+
+      - T2 的加锁语句在 T1 提交**之前**取快照：此时 T1 的目标在 T2 的快照里
+        仍是活跃超管（T1 尚未提交），T2 的目标在 T1 的快照里也仍是活跃超管；
+        两边的集合都包含两个目标，于是 T1、T2 一定在同一行上争锁 ——
+        后到者被阻塞到先到者提交，其第 2 步的计数读到的是**提交后**的状态。
+      - T2 的加锁语句在 T1 提交**之后**取快照：T2 的计数语句必然在 T1 提交之后
+        执行（更晚），直接看到 T1 已把超管数减 1。
+
+    两种情况下，「计数 ≥ 2」这一步都发生在所有先前成功的降级提交之后，
+    所以每次成功降级观察到的都是「至少还有 2 个活跃超管」的串行状态，
+    超管数量不可能被降到 0。
 
     **注意**：这里只更新 `updated_at`，不改 `status` —— 守卫是守卫，
     业务字段的修改由调用方自己做。M3 排查时发现过一个真实 bug：
@@ -400,6 +457,9 @@ async def _cas_guard_last_superadmin(
     # 会炸成 MissingGreenlet（M3 排查时踩过，别再把 id 读回对象上）。
     target_id = target_user.id
 
+    superadmin_role_id = await _superadmin_role_id(session)
+    await _lock_all_active_superadmins(session, role_id=superadmin_role_id)
+
     active_count = await _active_superadmin_count(session)
     if active_count <= 1:
         raise LastSuperadminError(
@@ -407,7 +467,6 @@ async def _cas_guard_last_superadmin(
             details={"active_superadmin_count": active_count, "user_id": target_id},
         )
 
-    superadmin_role_id = await _superadmin_role_id(session)
     result = await session.execute(
         update(User)
         .where(

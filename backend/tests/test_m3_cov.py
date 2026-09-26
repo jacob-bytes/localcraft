@@ -12,12 +12,13 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+from datetime import timedelta
 
 import pytest
 from sqlalchemy import select
 
 from app.core.errors import DomainError, NotFoundError, ValidationError
-from app.core.timeutil import utcnow
+from app.core.timeutil import ensure_utc, utcnow
 from app.db.session import SessionLocal
 from app.models.enums import ApiScope, RoleCode, ToolStatus
 from app.models.tool import Tool
@@ -349,8 +350,19 @@ async def test_token_revoke_is_idempotent(seeded) -> None:
         again = await token_service.revoke_token(
             session, token_id=t.id, actor_id=seeded.users["admin"]
         )
-        # 响应里的时间是 aware UTC；库里读回来是 naive。只比较瞬时值。
-        assert again.revoked_at.replace(tzinfo=None) == first.revoked_at.replace(tzinfo=None)
+        # M10：**直接比较瞬时**。原写法 `.replace(tzinfo=None)` 只有在两个值恰好
+        # 同偏移时才成立 —— 实测 PG 会话时区为 Asia/Shanghai 时，一次来自内存对象
+        # （UTC）、一次来自数据库回读（+08:00），剥掉 tz 后差 8 小时。
+        # 现在实现侧已统一为 UTC-aware（app/schemas/common.py 的 AfterValidator），
+        # 所以这里既断言「同一瞬时」，也断言「表示口径统一」——后者才是回归防线：
+        # 一旦偏移又被来源决定，下面两条会立刻失败。
+        assert again.revoked_at == first.revoked_at, (
+            f"两次吊销返回的 revoked_at 不是同一瞬时：{again.revoked_at} vs {first.revoked_at}"
+        )
+        assert ensure_utc(again.revoked_at) == ensure_utc(first.revoked_at)
+        assert again.revoked_at is not None and again.revoked_at.utcoffset() == timedelta(0), (
+            f"revoked_at 应当统一以 UTC 表示，实际 tzinfo={again.revoked_at.tzinfo}"
+        )
 
     async with SessionLocal() as session:
         with pytest.raises(NotFoundError):

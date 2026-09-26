@@ -1027,14 +1027,31 @@ def export_openapi(
 def reindex_search() -> None:
     """全量重建全文索引（docs/02 §3.20）。
 
-    M2 起工具写操作会实时同步索引；本命令用于**索引漂移后的修复**
-    与切换到 PostgreSQL 后的重建。
+    M2 起工具写操作会实时同步索引；本命令用于**索引漂移后的修复**。
+
+    **PostgreSQL 下本命令不可用**（M10 查实）：迁移 0003 建的是 SQLite FTS5
+    虚表且带方言守卫，PG 上根本没有 `tool_search_index` 表，检索走 LIKE 回退
+    （直接查 `tools` 表）。此时没有索引可重建，命令会明确报错并以非 0 退出 ——
+    M10 之前它是「静默空转却报成功」：打印
+    `[ ok ] 已用 like_fallback 重建 0 条索引` 并退出 0，运维会以为索引建好了。
     """
     _run(_reindex_search())
 
 
 async def _reindex_search() -> None:
     backend = get_search_backend()
+    if not backend.supports_reindex:
+        await _dispose()
+        # 明确报错（exit 1）而不是打印一行绿色 [ ok ]：
+        # 「什么都没做」必须与「做了、但索引本来就是空的」区分开，
+        # 否则运维拿不到任何信号（这是 M10 查实的真实缺陷）。
+        _fail(
+            f"当前检索后端（{backend.name}）没有可重建的全文索引，本次未做任何改动。\n"
+            "        PostgreSQL 部署下不存在 FTS 虚表，检索由 LIKE 回退直接查 tools 表，"
+            "无需也无法重建索引；\n"
+            "        若确实需要全文检索，请改用 SQLite 部署，或等待 PG tsvector 方案落地"
+            "（属产品决策，尚未实现）。"
+        )
     async with SessionLocal() as session:
         count = await backend.reindex_all(session)
         await session.commit()

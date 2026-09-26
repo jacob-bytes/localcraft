@@ -343,7 +343,18 @@ async def test_metrics_body_is_parseable_prometheus_text(
     assert any(" 2" in s for s in probe_samples if 'route="/probe"' in s), (
         f"/probe 的请求数应为 2，实得 {probe_samples}"
     )
-    assert "localcraft_sqlite_wal_bytes" in parsed, "SQLite 方言下应输出 WAL 大小"
+    # WAL 指标按**方言**断言（M10 修：原先无条件要求存在，PG 上正确不输出）。
+    # SQLite：必须存在 —— 它是 docs/02 §7 里唯一能反映 -wal 旁路文件膨胀的观测口；
+    # PG：必须**不存在** —— PG 的 WAL 是集群级概念（pg_wal 目录），既不归属某个
+    #   连接也不归属某个应用，`wal_size_bytes()` 返回 None 才是正确行为。
+    #   反过来断言「不存在」同样有意义：它能抓住「把 SQLite 专属指标在 PG 上也发出来」
+    #   这种假信号（运维会以为在观测 PG 的 WAL，实际读到的是别的数字/0）。
+    if settings.is_sqlite:
+        assert "localcraft_sqlite_wal_bytes" in parsed, "SQLite 方言下应输出 WAL 大小"
+    else:
+        assert "localcraft_sqlite_wal_bytes" not in parsed, (
+            "非 SQLite 方言（PostgreSQL）下不应输出 SQLite 专属的 WAL 指标"
+        )
     assert parsed["localcraft_slow_request_threshold_ms"] == settings.slow_request_ms
     metrics_module.reset()
 

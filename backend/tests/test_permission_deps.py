@@ -11,6 +11,7 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import select
 
+from app.core.config import settings
 from app.core.security import (
     API_TOKEN_PREFIX,
     create_access_token,
@@ -318,16 +319,36 @@ async def test_disabled_user_jwt_is_rejected(client) -> None:
 # 全文索引重建
 # ---------------------------------------------------------------------------
 async def test_reindex_search_rebuilds_index(session, seeded) -> None:
+    """按方言断言「重建索引」这件事的两个真实语义（M10）。
+
+    - **SQLite（FTS5）**：有 `tool_search_index` 虚表 → 重建必须产出条目，
+      且重建后仍能通过 MATCH 召回。
+    - **PostgreSQL**：迁移 0003 有方言守卫，**根本没有这张表**，检索后端是
+      LIKE 回退 —— 没有索引可重建，`reindex_all()` 只能返回 0。
+      这不是「重建失败」，而是「本方言不提供持久全文索引」。
+
+    为什么 PG 分支不是简单 skip（M10 的处置理由）：PG 上真正需要被钉住的行为是
+    「后端必须**自曝**没有可重建的索引」——`supports_reindex is False`。
+    这正是 CLI 不再把「什么都没做」报成成功的依据；如果哪天有人给 PG 接上
+    tsvector 或让 LIKE 回退谎报支持重建，这条断言会立刻失败。
+    """
     from app.search import get_search_backend
 
     backend = get_search_backend()
-    count = await backend.reindex_all(session)
-    await session.commit()
-    assert count >= 1
+    if backend.supports_reindex:
+        count = await backend.reindex_all(session)
+        await session.commit()
+        assert count >= 1, "有可重建索引的方言下，重建应当产出条目"
 
-    # 重建后仍能按中文/英文检索到
-    ids = await backend.matching_tool_ids(session, "public-approved")
-    assert ids is None or isinstance(ids, set)
+        # 重建后仍能按英文令牌检索到（返回集合，或 None=交给调用方 LIKE）
+        ids = await backend.matching_tool_ids(session, "public-approved")
+        assert ids is None or isinstance(ids, set)
+    else:
+        # PostgreSQL：LIKE 回退，没有索引表
+        assert backend.name == "like_fallback"
+        assert await backend.reindex_all(session) == 0
+        # LIKE 回退对任何查询都回答「我处理不了」，由 tools 仓储兜底
+        assert await backend.matching_tool_ids(session, "public-approved") is None
 
 
 async def test_like_fallback_backend_returns_none(session) -> None:
@@ -337,11 +358,23 @@ async def test_like_fallback_backend_returns_none(session) -> None:
     backend = LikeSearchBackend()
     assert await backend.matching_tool_ids(session, "anything") is None
     assert await backend.reindex_all(session) == 0
+    assert backend.supports_reindex is False, "LIKE 回退没有可重建的索引（CLI 据此报错）"
     await backend.upsert(session, 1, None)  # type: ignore[arg-type]
     await backend.delete(session, 1)
     assert backend.name == "like_fallback"
 
 
+@pytest.mark.skipif(
+    not settings.is_sqlite,
+    reason=(
+        "只对 SQLite FTS5 有意义：本用例把 `tool_search_index` 虚表改名来制造"
+        "「索引表缺失」。PostgreSQL 上迁移 0003 有方言守卫、**不存在**这张表，"
+        "改名的前提不成立（报 UndefinedTable）。"
+        "PG 上的等价行为（没有 FTS 表 → 检索降级为 LIKE）由"
+        "`test_reindex_search_rebuilds_index` 的 else 分支与"
+        "`test_like_fallback_backend_returns_none` 覆盖。"
+    ),
+)
 async def test_fts_backend_degrades_when_table_missing(session) -> None:
     """虚表不存在时不应抛异常，而是降级为「处理不了」。"""
     from sqlalchemy import text
@@ -354,10 +387,34 @@ async def test_fts_backend_degrades_when_table_missing(session) -> None:
         result = await backend.matching_tool_ids(session, "x")
         assert result is None
         assert backend.available is False
+        # 降级态下没有可重建的索引 —— CLI 必须报错而不是报「重建 0 条」
+        assert backend.supports_reindex is False
     finally:
         await session.rollback()
         await session.execute(text(f"ALTER TABLE {FTS_TABLE}_bak RENAME TO {FTS_TABLE}"))
         await session.commit()
+
+
+async def test_reindex_search_cli_never_reports_success_without_an_index(seeded) -> None:
+    """P5 回归（M10）：`reindex-search` 在「没有索引可重建」的方言上必须明确失败。
+
+    修复前的实际行为（本机 PG 16 实测）：命令打印
+    `[ ok ] 已用 like_fallback 重建 0 条索引` 并**退出 0** —— 库里有 9 个工具、
+    `tool_search_index` 根本不存在，运维却会以为索引已经建好。
+    这条测试把「静默空转却报成功」钉死：没有索引就必须非 0 退出。
+    """
+    import typer
+
+    from app.cli import _reindex_search
+    from app.search import get_search_backend
+
+    if get_search_backend().supports_reindex:
+        await _reindex_search()  # SQLite：正常成功路径，不应抛异常
+        return
+
+    with pytest.raises(typer.Exit) as excinfo:
+        await _reindex_search()
+    assert excinfo.value.exit_code != 0, "没有可重建索引时不能以 0 退出（否则等于谎报成功）"
 
 
 def test_password_constants_used_by_deps_tests() -> None:

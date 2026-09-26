@@ -94,4 +94,18 @@ class SearchBackend(Protocol):
         """
         ...
 
+    @property
+    def supports_reindex(self) -> bool:
+        """本后端是否有**可全量重建的持久索引**。
+
+        为什么需要这个能力位（M10）：`reindex_all()` 对「没有索引的后端」
+        只能返回 0，而 0 与「索引重建成功但一条都没有」在返回值上无法区分。
+        CLI 若只报「重建了 0 条」并退出 0，运维会以为索引已经建好 ——
+        这正是 PostgreSQL 部署上的实际行为（本仓 M10 查实）。
+
+        - SQLite FTS5：`True`（有 `tool_search_index` 虚表，会漂移，需要重建）
+        - 其他方言的 LIKE 回退：`False`（没有索引表，检索直接走 `tools` 表）
+        """
+        ...
+
     async def reindex_all(self, session: AsyncSession) -> int: ...
