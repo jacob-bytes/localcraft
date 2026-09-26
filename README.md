@@ -151,28 +151,60 @@ npm run dev                                    # http://127.0.0.1:5173
 ## 部署到 openEuler
 
 目标环境：**openEuler 24.03 LTS SP1 ~ SP4**，x86_64 或 aarch64，systemd 原生部署。
+openEuler 官方源自带 `python3.11` rpm，**目标机不需要编译 Python**，整个安装过程可以完全离线。
 
-openEuler 官方源自带 `python3.11` rpm，**目标机不需要编译 Python**。整个安装过程可以完全离线。
+> 以下每一步都在全新克隆上实测过（命令、参数、产物名都对得上）。
+> 逐步细讲、验证清单与常见坑见 **[docs/13-新手部署指南](docs/13-新手部署指南.md)**。
 
-```bash
-# 在联网构建机上产出发布包（含目标架构的完整离线 wheelhouse）
-bash scripts/build-wheelhouse.sh --arch x86_64     # 或 aarch64
-bash scripts/make-release.sh
+### 在构建机上产出发布包
 
-# 在目标机上安装
-tar xzf localcraft-1.0.0-<arch>.tar.gz && cd localcraft-1.0.0-<arch>
-sudo LOCALCRAFT_WHEELHOUSE="$PWD/wheelhouse" bash install.sh
-```
-
-`install.sh` 会依次完成：建 `localcraft` 系统用户 → 解包到 `/opt/localcraft` → 用离线 wheelhouse 建 venv → 建 `/var/lib/localcraft` 与 `/etc/localcraft` → 装 systemd unit / slice / tmpfiles / logrotate → 跑 Alembic 迁移 → 启动并做健康检查。
-
-演练时可以跳过需要 root 的步骤：
+构建机只需要能联网、有 `python3.11` 与 Node（不必是 openEuler，macOS / 普通 Linux 都行）：
 
 ```bash
-LOCALCRAFT_SKIP_SYSTEMD=1 bash install.sh    # 跳过 useradd/chown/systemctl，用 nohup 起
+cd web && npm ci && npm run build && cd ..   # 1) 必须先构建前端，make-release 需要 web/dist
+bash scripts/build-wheelhouse.sh all          # 2) 两套离线 wheel（也可写 x86_64 / aarch64）
+bash scripts/make-release.sh 1.0.0            # 3) 产出 backend/dist/localcraft-1.0.0-offline-<日期>.tar.gz
 ```
 
-配套脚本：`backup.sh` / `restore.sh` / `verify-backup.sh`（一致性备份与恢复）、`upgrade.sh` / `rollback.sh`（升级与回滚）、`uninstall.sh`、`security-check.sh`、`disk-alert.sh`、`metrics-snapshot.sh`。
+**注意三个容易踩的点**：
+
+- `build-wheelhouse.sh` 的参数是**位置参数**，写成 `--arch x86_64` 会报用法错误。
+- 忘了第 1 步时 `make-release.sh` 会明确报错并告诉你怎么办，不会产出一个残缺的包。
+- 发布包**两个架构的 wheelhouse 都带**（这样同一个包能在两种机器上装），所以体积约 84 MB。
+
+### 在目标机上安装
+
+```bash
+# 把 tar 包传到目标机，然后（root）
+tar xzf localcraft-1.0.0-offline-<日期>.tar.gz
+cd localcraft-1.0.0
+sudo ./install.sh
+```
+
+**不需要传 `LOCALCRAFT_WHEELHOUSE`** —— `install.sh` 会按本机架构自己挑 `wheelhouse-x86_64` /
+`wheelhouse-aarch64`，并校验其中的 `MANIFEST.sha256`。
+（传一个不存在的路径会让它**静默退化成在线安装**，离线环境下报错很难懂 —— 别画蛇添足。）
+
+`install.sh` 会依次完成十步：环境自检 → 校验发布包 → 建 `localcraft` 系统用户与目录 →
+建代码软链 → 建 venv → **离线**装依赖 → 写环境变量文件 → 跑 Alembic 迁移 → 装 systemd unit /
+slice / tmpfiles / logrotate → 启动并做健康检查。
+
+**不需要 nginx**：后端自己托管前端产物并下发安全响应头，`IP:PORT` 直连是一等部署方式。
+要用 nginx 反代（TLS / 限流）也能，见 [docs/13](docs/13-新手部署指南.md) 与 `deploy/nginx-*.conf`。
+
+### 只想先在本机看看？
+
+不必走上面这一套：
+
+```bash
+git clone https://github.com/jacob-bytes/localcraft.git && cd localcraft
+bash preview.sh          # 建 venv、装依赖、建库、播种、构建前端、起服务，全自动
+```
+
+### 配套脚本
+
+`install.sh` / `uninstall.sh`｜`backup.sh` / `restore.sh` / `verify-backup.sh`（一致性备份与恢复）｜
+`upgrade.sh` / `rollback.sh`（升级与回滚）｜`security-check.sh` / `disk-alert.sh` / `metrics-snapshot.sh`
 
 ## 配置
 
@@ -240,6 +272,7 @@ localcraft/
 | [10-交付前置检查清单](docs/10-交付前置检查清单.md) | 交付检查项与真实状态，含未完成项 |
 | [11-优化点分析](docs/11-优化点分析.md) | 性能剖析与优化结论 |
 | [12-前端UI-UX审查](docs/12-前端UI-UX审查.md) | 可访问性与视觉审查，含审查者自身误报的复盘 |
+| [13-新手部署指南](docs/13-新手部署指南.md) | **第一次部署从这里开始**：两条路径的逐步命令、验证清单、常见坑，以及「哪些实测过、哪些没有」的诚实边界 |
 
 [`contracts/CONTRACT.md`](contracts/CONTRACT.md) 是并行开发时的**唯一事实来源**，记录了接口冻结、边界裁定与交付台账。
 
