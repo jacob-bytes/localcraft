@@ -55,7 +55,7 @@ fi
 
 for bin in dropdb createdb psql; do
   command -v "$bin" >/dev/null 2>&1 || {
-    echo "[error] PATH 里没有 ${bin}（Homebrew 可 export PATH=/opt/homebrew/bin:\$PATH）" >&2
+    echo "[error] PATH 里没有 ${bin}（Homebrew 可 export PATH=/opt/homebrew/bin:\${PATH}）" >&2
     exit 2
   }
 done
