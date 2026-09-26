@@ -288,11 +288,11 @@ def test_frozen_surface_matches_docs_03_section_2_5_row_by_row() -> None:
     rows = parse_docs_03_section_2_5()
     # M4 时是 52 行；M5 监控方把两个「管理侧代创建/代上传」接口回填进总表后为 54 行。
     # 这个数字变了就必须有人看一眼 —— 它同时是「接口面是否漂移」的第一道信号。
-    # M8 的 6 个新接口里只有 `/admin/stats/insights` 属于管理侧，而 docs/03
-    # 由监控方维护、M8 未回填，因此该行登记在 m4_helpers 的
-    # DOCUMENTED_TABLE_OMISSIONS 里，**行数仍是 54**。
-    assert len(rows) == 54, (
-        f"docs/03 §2.5 应当有 54 行接口，解析出 {len(rows)} 行 —— "
+    # M8 的 6 个新接口里只有 `/admin/stats/insights` 属于管理侧。M8 交付时后端
+    # 不允许改 docs/，故当时把它登记在 m4_helpers 的 DOCUMENTED_TABLE_OMISSIONS
+    # 里、行数仍记 54；**监控方随后已回填该行并删除豁免**，故现在是 55。
+    assert len(rows) == 55, (
+        f"docs/03 §2.5 应当有 55 行接口，解析出 {len(rows)} 行 —— "
         "文档改了或解析逻辑失效，两种都要有人看一眼"
     )
     assert len(set(rows)) == len(rows), "§2.5 总表里出现了重复行"

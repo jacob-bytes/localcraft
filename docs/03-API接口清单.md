@@ -266,6 +266,7 @@
 | GET | `/api/v1/admin/recycle-bin` | 回收站列表 | superadmin |
 | GET | `/api/v1/admin/stats/tools` | 工具统计排行 | approver |
 | GET | `/api/v1/admin/stats/storage` | 存储用量明细 | superadmin |
+| GET | `/api/v1/admin/stats/insights` | 数字概览增强（30 日趋势 / 活跃贡献者 / 分类分布 / 效率估算，**纯数字**，契约 §23.6） | superadmin |
 | POST | `/api/v1/admin/import/users` | 批量导入用户 | superadmin |
 | GET | `/api/v1/admin/export/users` | 导出用户 CSV | superadmin |
 | POST | `/api/v1/admin/import/tools` | 批量导入工具元数据 | superadmin |

@@ -20,15 +20,11 @@ DOCS_03 = (
 #: 现在是空的 —— 保留这个常量是为了让「文档缺项」这件事一旦再次出现时，
 #: 必须显式登记到这里、并且报告里能看见，而不是悄悄放过。
 #:
-#: **M8 新增 1 条**：`GET /api/v1/admin/stats/insights`（contracts §23.4 的
-#: 6 个新接口之一，属管理侧）。docs/03 §2.5 由监控方维护，M8 未回填该行；
-#: 后端**不允许改 docs/**，因此在这里显式登记豁免，而不是放宽守卫。
-#: 若监控方后续把该行回填进 §2.5，请把这条从豁免里删掉（守卫会提示）。
-DOCUMENTED_TABLE_OMISSIONS: frozenset[tuple[str, str]] = frozenset(
-    {
-        ("GET", "/api/v1/admin/stats/insights"),
-    }
-)
+#: **M8 曾临时新增 1 条**：`GET /api/v1/admin/stats/insights`（contracts §23.4
+#: 的 6 个新接口之一，属管理侧）。M8 期间后端不允许改 docs/，故显式登记豁免。
+#: **监控方已把该行回填进 docs/03 §2.5，因此豁免已删除**（§2.5 行数断言同步
+#: 由 54 改为 55）—— 这正是「用完即撤」的预期路径：豁免是临时的，不是放宽守卫。
+DOCUMENTED_TABLE_OMISSIONS: frozenset[tuple[str, str]] = frozenset()
 
 
 def normalized_omissions() -> set[tuple[str, str]]:
