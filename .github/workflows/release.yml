@@ -66,18 +66,42 @@ jobs:
           echo "标题: $TITLE"
           echo "正文行数: $(wc -l < "$RUNNER_TEMP/body.md")"
 
+      - name: 预检 GITHUB_TOKEN 是否真的有写权限
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          # 为什么用「写一个 blob」来探而不是读设置：
+          # `GET /repos/{owner}/{repo}/actions/permissions/workflow` 需要 admin，
+          # 普通 token 读不到。直接试一次写，答案最直接。
+          # 探针 blob 是未被引用的对象，会被 GitHub 正常回收，不留痕迹。
+          if ERR="$(gh api -X POST "/repos/${GITHUB_REPOSITORY}/git/blobs" \
+                       -f content=cHJvYmU= -f encoding=utf-8 2>&1)"; then
+            echo "GITHUB_TOKEN 具备写权限，继续。"
+          else
+            msg="${ERR//'%'/'%25'}"; msg="${msg//$'\n'/%0A}"
+            echo "::error::GITHUB_TOKEN 没有写权限，无法创建 Release。%0A${msg}%0A%0A修法：仓库 Settings → Actions → General → Workflow permissions，选 “Read and write permissions” 并保存。这个开关需要仓库 admin，workflow 里的 permissions: 提权救不了它 —— 它是仓库层面的上限。改完点本次运行的 “Re-run failed jobs” 即可，不必重推 tag。"
+            exit 1
+          fi
+
       - name: 创建 Release
         if: steps.check.outputs.exists == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
           TITLE="$(grep -m1 -v '^[[:space:]]*$' "$RUNNER_TEMP/notes.md")"
-          gh release create "${GITHUB_REF_NAME}" \
-            --title "$TITLE" \
-            --notes-file "$RUNNER_TEMP/body.md" \
-            --verify-tag \
-            --latest
+          if ! OUT="$(gh release create "${GITHUB_REF_NAME}" \
+                        --title "$TITLE" \
+                        --notes-file "$RUNNER_TEMP/body.md" \
+                        --verify-tag \
+                        --latest 2>&1)"; then
+            msg="${OUT//'%'/'%25'}"; msg="${msg//$'\n'/%0A}"
+            echo "::error::创建 Release 失败：%0A${msg}"
+            exit 1
+          fi
+          echo "$OUT"
           gh release view "${GITHUB_REF_NAME}" --json url,isLatest \
             --template '已创建: {{.url}}（latest={{.isLatest}}）{{"\n"}}'
 
