@@ -27,6 +27,7 @@ from typing import Any
 
 from sqlalchemy import update
 
+from app.core.metrics import record_flush_failure
 from app.core.timeutil import utcnow
 from app.db.session import SessionLocal
 from app.models.user import ApiToken
@@ -188,6 +189,12 @@ class CounterService:
         except Exception:
             # 关键：计数落库失败不能影响用户请求，也不能让后台任务死掉
             logger.exception("计数器落库失败，已丢弃本批增量（用户请求不受影响）")
+            # M3（docs/11 §3.4）：这里此前**只记日志**，失败次数没有任何可观测出口 ——
+            # 「静默丢计数」是这套内存聚合设计最危险的失效模式（丢的是下载/浏览量，
+            # 不会有人立刻发现）。现在累进指标，由 /metrics 暴露。
+            # `record_flush_failure` 自身只动内存整数、绝不抛异常，
+            # 不能让它把「已经处理好的失败」变成新的失败。
+            record_flush_failure()
             return {k: 0 for k in stats}
 
         logger.debug("计数器落库完成 %s", stats)

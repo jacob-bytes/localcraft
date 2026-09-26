@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.core.config import ensure_runtime_dirs, settings
+from app.core.pool_metrics import begin_session_timing, end_session_timing
 
 # 建 engine 之前先确保数据目录与 SQLite 文件目录存在。
 # Alembic、CLI 与应用都经由这里建 engine，所以这一处就够了；
@@ -89,10 +90,18 @@ async def get_db() -> AsyncIterator[AsyncSession]:
     """FastAPI 依赖：每请求一个会话。
 
     事务边界在 **service 层**（docs/03 §6.3），这里只负责给出会话与收尾。
+
+    M4：进入时打一个时间戳，供「取连接等待时长」指标使用
+    （`AsyncSessionLocal()` **不**获取连接，真正的取连接发生在第一条语句，
+    所以必须把起点留在第一条语句之前 —— 详见 `app/core/pool_metrics.py`）。
     """
-    async with SessionLocal() as session:
-        try:
-            yield session
-        except Exception:
-            await session.rollback()
-            raise
+    begin_session_timing()
+    try:
+        async with SessionLocal() as session:
+            try:
+                yield session
+            except Exception:
+                await session.rollback()
+                raise
+    finally:
+        end_session_timing()

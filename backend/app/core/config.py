@@ -82,6 +82,51 @@ class Settings(BaseSettings):
     # ---------- 文档 ----------
     api_docs_enabled: bool = False
 
+    # ---------- 可观测性（M7：docs/11 §2.4 O12 / §3.4 M1、M2）----------
+    # 命名与**读取方式**（这里踩过一次，记下来）：
+    # pydantic-settings 默认只按**字段名**匹配环境变量，**不做前缀映射** ——
+    # 字段 `metrics_enabled` 只认 `METRICS_ENABLED`，**不认** `LOCALCRAFT_METRICS_ENABLED`。
+    # 仓库里既有的 4 个带前缀变量（host/port/debug/version）之所以工作，
+    # 是因为字段名本身写作 `localcraft_host`（见本文件开头）。
+    #
+    # 本轮新增的运维开关按任务书 B3 与 `deploy/localcraft.env.example` 的既有惯例
+    # 用 `LOCALCRAFT_` 前缀，因此必须显式声明 `validation_alias`；
+    # 同时保留不带前缀的别名，让「按字段名猜」的人也能生效
+    # （`extra="ignore"` 会把写错的名字静默吞掉，那正是最坏的行为）。
+    # 写法与已有的 `access_token_minutes`（`AliasChoices`）保持一致。
+    #
+    # 慢请求告警阈值（毫秒）。0 表示关闭该告警。
+    # 默认 1000 ms 的理由：docs/11 §1.1 实测本机单请求中位 0.28~5.7 ms、
+    # §1.4 显示 c=20 时单请求已被放大到 18.6 ms 墙钟；而 NFR-PERF-01 的
+    # 验收线是 **100 并发 P95 < 300 ms**。1000 ms 是验收线的 3 倍多 ——
+    # 取这个值的目的是「只报真正异常的单请求」，让阈值告警的假阳性接近零。
+    # 想更灵敏就调低，不想被吵就设 0。
+    #
+    # 注意：`LOCALCRAFT_SQL_COUNT` **不在这里** —— 它由
+    # `app/core/sql_counter.counting_enabled()` 直接读环境变量，
+    # 因为「挂不挂 SQLAlchemy 事件监听器」必须在 import 期就能决定。
+    slow_request_ms: int = Field(
+        default=1000,
+        validation_alias=AliasChoices("SLOW_REQUEST_MS", "LOCALCRAFT_SLOW_REQUEST_MS"),
+    )
+    # /metrics 默认关闭。打开才会注册路由（任务书 B3 第 3 条）。
+    metrics_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("LOCALCRAFT_METRICS_ENABLED", "METRICS_ENABLED"),
+    )
+    # /metrics 的 Bearer Token。留空 + 非本机来源 → 401（任务书 B3 第 4 条）。
+    metrics_token: str = Field(
+        default="",
+        validation_alias=AliasChoices("LOCALCRAFT_METRICS_TOKEN", "METRICS_TOKEN"),
+    )
+    # 每路由保留的耗时样本上限（分位数估计精度 vs 内存）。见 app/core/metrics.py。
+    metrics_sample_max: int = Field(
+        default=1024,
+        validation_alias=AliasChoices(
+            "LOCALCRAFT_METRICS_SAMPLE_MAX", "METRICS_SAMPLE_MAX"
+        ),
+    )
+
     # ---------- 上传与解压防护（docs/05 §13.5 的五个限制 + 超时）----------
     # 这些走**环境变量**而不是系统设置表：它们是安全基线，
     # 不应该被一个「改设置」的请求在线放宽。docs/05 §13.5 也是按环境变量列的。

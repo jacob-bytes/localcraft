@@ -586,3 +586,26 @@ def require_roles_and_scope(*roles: str, scope: str) -> Any:
 
     _dep.__name__ = f"require_roles_{'_'.join(sorted(roles))}_scope_{scope}"
     return _mark_auth(_dep)
+
+
+# ---------------------------------------------------------------------------
+# 指标聚合用的路由模板
+# ---------------------------------------------------------------------------
+def route_template(request: Request) -> str:
+    """把请求归一到**路由模板**（`/api/v1/tools/{slug}`）。
+
+    为什么不能用 `request.url.path`：那样每个工具详情页都是独立的一个 series，
+    指标基数随工具数线性膨胀 —— 1000 个工具就是 1000 条 `localcraft_requests_total`，
+    Prometheus 侧直接被打爆，而看板上真正想看的是「详情接口整体怎么样」。
+
+    `request.scope["route"]` 由 Starlette 在**匹配成功后**写入，因此
+    404（无匹配路由）取不到它。注意它的 `path` 是**路由注册时的原样路径**
+    （`/api/v1/tools/{slug}`），不是具体请求的路径 —— 这正是要的。
+    取不到时返回 `<unmatched>`，让 404 的量也会出现在指标里
+    （404 突然涨了本身就是重要信号，不能把它藏进任意一个桶）。
+    """
+    from app.core.metrics import UNMATCHED_ROUTE
+
+    route = request.scope.get("route")
+    path = getattr(route, "path", None)
+    return str(path) if path else UNMATCHED_ROUTE

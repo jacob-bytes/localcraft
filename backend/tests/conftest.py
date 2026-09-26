@@ -35,6 +35,11 @@ os.environ["API_DOCS_ENABLED"] = "true"
 os.environ["LOG_LEVEL"] = "WARNING"
 os.environ["ACCESS_TOKEN_MINUTES"] = "30"
 os.environ["REFRESH_TOKEN_DAYS"] = "7"
+# M7 / O12：测试里启用每请求 SQL 条数计数。
+# 用一个**显式开关**而不是复用 LOCALCRAFT_DEBUG，是因为 debug 会顺带打开
+# 别的行为（比如把异常类名写进 500 响应体），测试不该被那些牵连。
+# 它同时决定了「SQLAlchemy 事件监听器挂不挂」，所以必须在 import app 之前设好。
+os.environ["LOCALCRAFT_SQL_COUNT"] = "1"
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 

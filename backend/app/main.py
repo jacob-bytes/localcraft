@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from typing import Any
 
 from fastapi import FastAPI, Request, Response
@@ -30,13 +30,23 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.routing import Match, Route
 from starlette.types import Scope
 
+from app.api.metrics import router as metrics_router
 from app.api.public import NON_SPA_PREFIXES
 from app.api.v1 import api_router
 from app.core.config import settings
+from app.core.deps import route_template
 from app.core.errors import DomainError, code_for_status, message_for_code
 from app.core.logging import configure_logging
+from app.core.metrics import monitoring_enabled, record_request
 from app.core.request_id import resolve_request_id
 from app.core.security_headers import SecurityHeadersMiddleware
+from app.core.sql_counter import (
+    SqlCounter,
+    counting_enabled,
+    install_sql_counter,
+    start_counting,
+    stop_counting,
+)
 from app.core.timeutil import utcnow
 from app.db.session import SessionLocal, engine
 from app.schemas.meta import HealthResponse, ReadyCheck, ReadyResponse
@@ -44,6 +54,13 @@ from app.services.counter_service import get_counter_service
 
 configure_logging()
 logger = logging.getLogger("app.request")
+
+# O12：每请求 SQL 条数计数器。**生产默认不挂监听器**（见 app/core/sql_counter.py）。
+# 挂在 `engine` 而不是每次请求上：SQLAlchemy 的事件是进程级注册，
+# 挂/摘都要算清幂等，集中在一处最不容易漏。
+if counting_enabled():
+    install_sql_counter(engine)
+    logger.debug("已启用每请求 SQL 条数计数（O12）")
 
 
 @asynccontextmanager
@@ -81,8 +98,41 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 # 请求 ID + 访问日志中间件
 # ---------------------------------------------------------------------------
+@contextmanager
+def _counting_context() -> Iterator[SqlCounter | None]:
+    """把下游应用包进 SQL 计数上下文，产出该请求的计数器对象。
+
+    产出的是**对象本身**而不是当时的数字 —— 数字要等 `with` 块跑完
+    （即下游应用处理完）才是最终值。`with ... as counter:` 拿到的引用
+    不变，字段在退出后已是最新（这也是必须用可变对象的原因）。
+
+    计数对象通过 `ContextVar` 传递 —— 下游在复制出来的 context 里跑，
+    只有「改共享对象」才能被这里看到（见 `app/core/sql_counter.py`
+    的 docstring 第 2 条，那里记着实测的失败版本）。
+
+    分两条路径是刻意的：`counting_enabled()` 为假时**连对象都不分配**，
+    也**不挂 SQLAlchemy 事件监听器**，生产路径上完全没有计数开销。
+    """
+    if not counting_enabled():
+        yield None
+        return
+    counter = start_counting()
+    try:
+        yield counter
+    finally:
+        stop_counting()
+
+
 class RequestContextMiddleware(BaseHTTPMiddleware):
-    """读或生成 `X-Request-Id`，写响应头，并输出一条结构化访问日志。"""
+    """读或生成 `X-Request-Id`，写响应头，并输出一条结构化访问日志。
+
+    另外负责三件与本项目可观测性直接相关的事：
+
+    - **O12**：把整个请求包在 SQL 计数上下文里，结束后把条数写到
+      `request.state.sql_count`（测试与 `/metrics` 都读它）
+    - **M2**：超过 `SLOW_REQUEST_MS` 的请求额外打一条 `warn`，**带 `request_id`**
+    - **M1**：把请求数 / 耗时 / SQL 条数 / 慢请求数汇进进程内指标
+    """
 
     async def dispatch(
         self,
@@ -92,39 +142,90 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         request_id = resolve_request_id(request.headers.get("X-Request-Id"))
         request.state.request_id = request_id
         request.state.user_id = None
+        request.state.sql_count = 0
 
         started = time.perf_counter()
-        try:
-            response = await call_next(request)
-        except Exception:
-            # 交给外层 ServerErrorMiddleware 的兜底处理器构造响应；
-            # 这里只负责把失败也记进访问日志（否则 500 请求会「凭空消失」）。
-            logger.exception(
-                "请求处理异常",
-                extra={
-                    "request_id": request_id,
-                    "method": request.method,
-                    "path": request.url.path,
-                    "status": 500,
-                    "duration_ms": round((time.perf_counter() - started) * 1000, 2),
-                },
-            )
-            raise
+        with _counting_context() as counter:
+            try:
+                response = await call_next(request)
+            except Exception:
+                self._log_failure(
+                    request, request_id, started, counter.statements if counter else 0
+                )
+                raise
+        sql_count = counter.statements if counter is not None else 0
 
         duration_ms = round((time.perf_counter() - started) * 1000, 2)
+        request.state.sql_count = sql_count
+        request.state.duration_ms = duration_ms
         response.headers["X-Request-Id"] = request_id
-        logger.info(
-            "request",
+        if counting_enabled():
+            # O12 的**可观测出口**：让「这个请求到底发了几条 SQL」不必进调试器、
+            # 也不必在测试里挖 `request.state`。
+            #
+            # 出现条件就是 `counting_enabled()` 的三个来源（见 sql_counter）：
+            # `LOCALCRAFT_DEBUG` / `LOCALCRAFT_SQL_COUNT` / `LOCALCRAFT_METRICS_ENABLED`，
+            # **三者默认都是关闭**，所以默认生产响应里没有这个头。
+            # 需要说明的是：这是一个**新增的响应头**，会出现在 `/api/v1` 的 93 个
+            # 操作上。契约 §9 的禁令写的是「改字段名、改错误码、改响应形状」——
+            # 头部不在 JSON 响应体里，冻结的请求/响应**形状**（字段集合与类型）
+            # 一字未动（`tests/test_guard.py::test_openapi_artifact_is_current`
+            # 与 openapi.json 的 md5 都验证了这一点，见报告）。
+            # 但它确实改变了线上响应头，因此**在报告里显式登记**，由监控方裁定；
+            # 若要彻底消除，把这三行删掉即可（
+            # `tests/test_observability.py` 依赖它取每请求条数，
+            # 删的时候需要改成读 in-process 的 `request.state`）。
+            response.headers["X-SQL-Count"] = str(sql_count)
+
+        slow = settings.slow_request_ms > 0 and duration_ms >= settings.slow_request_ms
+        log_extra = {
+            "request_id": request_id,
+            "user_id": getattr(request.state, "user_id", None),
+            "method": request.method,
+            "path": request.url.path,
+            "status": response.status_code,
+            "duration_ms": duration_ms,
+            "sql_count": sql_count,
+        }
+        if slow:
+            # M2：慢请求单独告警。**必须带 request_id** —— 否则运维拿到一条
+            # 「某请求慢了」的日志却无法回到访问日志里对账（同一个路径有上千条）。
+            # `duration_ms` 与 `sql_count` 一起给出，是为了让收到告警的人
+            # 第一时间能区分「做多了」（查询数涨了）与「做慢了」（查询数没变）：
+            # 后者是排队/调度，前者才是 N+1 回归。
+            logger.warning("慢请求", extra=log_extra)
+        else:
+            logger.info("request", extra=log_extra)
+
+        if monitoring_enabled():
+            # 只在这里记一次：慢请求在指标里由 `slow` 标志区分，
+            # 而不是「warn 分支记一次、正常分支又记一次」（那会把请求数记成两倍）。
+            record_request(
+                method=request.method,
+                route_template=route_template(request),
+                path=request.url.path,
+                status=response.status_code,
+                duration_ms=duration_ms,
+                sql_count=sql_count,
+                slow=slow,
+            )
+        return response
+
+    def _log_failure(
+        self, request: Request, request_id: str, started: float, sql_count: int
+    ) -> None:
+        """异常路径的访问日志 —— 否则 500 请求会「凭空消失」。"""
+        logger.exception(
+            "请求处理异常",
             extra={
                 "request_id": request_id,
-                "user_id": getattr(request.state, "user_id", None),
                 "method": request.method,
                 "path": request.url.path,
-                "status": response.status_code,
-                "duration_ms": duration_ms,
+                "status": 500,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+                "sql_count": sql_count,
             },
         )
-        return response
 
 
 app.add_middleware(RequestContextMiddleware)
@@ -300,6 +401,23 @@ async def readyz() -> Response:
 # API 路由（必须在静态挂载之前）
 # ---------------------------------------------------------------------------
 app.include_router(api_router, prefix="/api/v1")
+
+# ---------------------------------------------------------------------------
+# 运维指标端点（M1）
+# ---------------------------------------------------------------------------
+# **默认不注册**（任务书 B3 第 3 条）：关闭时 `/metrics` 走 SPA 兜底的
+# 「非 SPA 前缀」分支 → JSON 404，与「这个路径不存在」不可区分，
+# 这正是关闭状态该有的样子 —— 一个没开的运维端点不该暴露自己的存在。
+#
+# 路径**不带** `/api/v1` 前缀：它在冻结的 93 操作 / 75 路径之外，
+# 且 `include_in_schema=False`，不会进 `backend/openapi.json`（第 1、2 条）。
+if settings.metrics_enabled:
+    app.include_router(metrics_router)
+    logger.info(
+        "已启用 /metrics（指标端点，不在 /api/v1 契约面内）；"
+        "认证方式：%s",
+        "Bearer Token" if settings.metrics_token else "仅限本机来源（未配置 token）",
+    )
 
 
 # ---------------------------------------------------------------------------

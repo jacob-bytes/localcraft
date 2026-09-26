@@ -41,6 +41,12 @@ NON_SPA_PREFIXES: tuple[str, ...] = (
     "docs",
     "redoc",
     "openapi.json",
+    # M7：`/metrics` 默认不注册（LOCALCRAFT_METRICS_ENABLED=false）。
+    # 若不加这一条，关闭状态下的 `GET /metrics` 会在 `web/dist` 存在时
+    # 返回 **index.html（200）**，在 dist 不存在时返回 JSON 404 ——
+    # 同一个请求的状态码取决于前端构建产物在不在，正是
+    # `_SpaFallbackRoute` 的 docstring 里警告过的那类不一致。
+    "metrics",
 )
 
 
