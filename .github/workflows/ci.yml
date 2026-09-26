@@ -45,10 +45,16 @@ jobs:
 
       - name: pytest + 覆盖率
         # 失败时把摘要回显成 annotation。
-        # 为什么需要这一步：公开仓库的 job 原始日志要仓库 admin 权限才能通过
-        # API 拉取，而没有管理权限的贡献者（以及自动化排查）只能看到
-        # 「Process completed with exit code 1」。annotation 是公开可读的，
-        # 把失败摘要放进去，红叉就不再是一句无信息量的报错。
+        #
+        # 注（勘误）：这里原先写「公开仓库的 job 原始日志要 admin 才能经 API 拉取」，
+        # **那句话是错的**。要 admin 的是 **run 级**端点 `/actions/runs/{id}/logs`；
+        # **job 级**端点 `/actions/jobs/{job_id}/logs` 只要 token 有该仓库的
+        # 读权限就能取到完整日志（实测：带 token 200/10KB，不带 token 403）。
+        #
+        # 保留 annotation 的理由依然成立，只是换了个说法：annotation 在**运行页**
+        # 上直接可见，不必再去翻日志、找 job id、跟重定向；对没有仓库管理权限的
+        # 贡献者尤其省事。把失败摘要放进去，红叉就不再是一句
+        # 「Process completed with exit code 1」。
         run: |
           set +e
           python -m pytest --cov=app --cov-report=term-missing 2>&1 | tee "$RUNNER_TEMP/pytest.log"

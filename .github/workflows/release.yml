@@ -20,8 +20,10 @@ name: Release
 #    Release 标题变成提交标题而 job 一切正常。API 里 ref 的 `object.type`
 #    明确区分 annotated（tag）与轻量（commit），没有静默退化这回事。
 #
-# 4) 失败时把 HTTP 码与响应体打进 ::error::。公开仓库的原始 job 日志要 admin
-#    才能经 API 拉取，而 ::notice:: 在成功的运行里根本不会保留成 annotation。
+# 4) 失败时把 HTTP 码与响应体打进 ::error::。
+#    实测：`::notice::` 在**成功的**运行里根本不会保留成 annotation（我的多条
+#    notice 一条都没出现），所以诊断只能走 ::error:: 或运行页可见的输出。
+#    （曾经写过「job 日志要 admin 才能拉」——那是错的，见 ci.yml 里的勘误说明。）
 
 on:
   push:
