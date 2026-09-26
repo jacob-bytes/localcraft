@@ -15,6 +15,7 @@ from sqlalchemy import ColumnElement, and_, exists, false, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.models.engagement import ToolFavorite
 from app.models.enums import AclSubjectType, PortalSort, ToolStatus, ToolType, ToolVisibility
 from app.models.taxonomy import Category, Tag
 from app.models.tool import Tool, ToolAcl, ToolTag
@@ -659,3 +660,64 @@ async def owner_status_counts(session: AsyncSession, owner_id: int) -> dict[str,
         .group_by(Tool.status)
     )
     return {str(row[0]): int(row[1]) for row in result.all()}
+
+
+# ===========================================================================
+# M8：「我的收藏」（contracts §23.4）
+# ===========================================================================
+def _favorites_scope(
+    visibility: VisibilityContext,
+) -> list[ColumnElement[bool]]:
+    """收藏列表的可见性条件。
+
+    **这是本轮最容易出错的地方**（任务书 B7）：收藏是历史动作，
+    被收藏的工具之后可能已下线 / 转私有 / 被删除。**不能**因为「在收藏表里」
+    就绕过可见性 —— 这里复用与门户详情/列表**同一套**规则：
+
+      - `detail_scope_clause()`：状态维度 + `deleted_at IS NULL`
+        （offline / draft / rejected 对普通人不可见）
+      - `VisibilityContext.clause()`：public / private(owner) / restricted(ACL)
+        以及超管的「全见」
+
+    绝不在此另写一套可见性判断，否则两处规则漂移就是越权泄漏。
+    """
+    scope: list[ColumnElement[bool]] = [detail_scope_clause(visibility)]
+    vis = visibility.clause()
+    if vis is not None:
+        scope.append(vis)
+    return scope
+
+
+async def list_favorite_tools(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    visibility: VisibilityContext,
+    limit: int,
+    offset: int,
+) -> list[Tool]:
+    """用户收藏的、**当前仍然可见**的工具，按收藏时间倒序（契约 §23.4）。"""
+    stmt = (
+        select(Tool)
+        .options(selectinload(Tool.tags))
+        .join(ToolFavorite, ToolFavorite.tool_id == Tool.id)
+        .where(ToolFavorite.user_id == user_id, *_favorites_scope(visibility))
+        .order_by(ToolFavorite.created_at.desc(), ToolFavorite.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    result = await session.execute(stmt)
+    return list(result.scalars().unique().all())
+
+
+async def count_favorite_tools(
+    session: AsyncSession, *, user_id: int, visibility: VisibilityContext
+) -> int:
+    """与 `list_favorite_tools` **同一套 where** 的总数 —— 否则分页会撒谎。"""
+    stmt = (
+        select(func.count())
+        .select_from(Tool)
+        .join(ToolFavorite, ToolFavorite.tool_id == Tool.id)
+        .where(ToolFavorite.user_id == user_id, *_favorites_scope(visibility))
+    )
+    return int((await session.execute(stmt)).scalar_one())

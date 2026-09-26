@@ -162,6 +162,8 @@ async def upload_version_as_admin(
         skill=None,
         tool_status=outcome.tool.status,
         created_at=record.created_at,
+        # M8：去重命中与 /me 路径同一份数据（contracts §23.2）。
+        duplicate_of=outcome.duplicate_of,
     )
 
 

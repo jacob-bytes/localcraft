@@ -346,11 +346,12 @@ def test_export_openapi_writes_all_frozen_paths(tmp_path) -> None:
         if method in ("get", "post", "put", "patch", "delete")
     }
     # M1 的 12 + M2 的 38 + M3 的 42 = 92（契约 §6.2）
+    # + M6 的 /directory（§20.4③）= 93；+ M8 的 6 个（§23.4）= 99
     assert operations == set(M3_TOTAL_ENDPOINTS), (
         f"多出: {sorted(operations - set(M3_TOTAL_ENDPOINTS))}\n"
         f"缺失: {sorted(set(M3_TOTAL_ENDPOINTS) - operations)}"
     )
-    assert len(operations) == 93  # 92 + M6 的 /directory（CONTRACT §20.4③）
+    assert len(operations) == 99  # 93 + M8 的 6 个（CONTRACT §23.4）
     assert ("GET", "/api/v1/tools") in operations
     assert ("POST", "/api/v1/auth/refresh") in operations
 

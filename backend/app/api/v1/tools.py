@@ -14,10 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import (
     DownloadAccess,
     PortalAccess,
+    Principal,
     download_access,
     get_client_info,
     get_visibility_context,
     portal_access,
+    require_roles_and_scope,
 )
 from app.core.errors import (
     DownloadNotAllowedError,
@@ -27,7 +29,7 @@ from app.core.errors import (
 )
 from app.core.pagination import PageParams
 from app.db.session import get_db
-from app.models.enums import PortalSort, RoleCode, ToolType, VersionStatus
+from app.models.enums import ApiScope, PortalSort, RoleCode, ToolType, VersionStatus
 from app.repositories import downloads as downloads_repo
 from app.repositories import tags as tags_repo
 from app.repositories import tool_versions as versions_repo
@@ -39,13 +41,35 @@ from app.repositories.tools import (
     VisibilityContext,
 )
 from app.schemas.me import DailyStatPoint, ToolStatsResponse
-from app.schemas.tool import DownloadTicketResponse, ToolDetail, ToolListResponse
+from app.schemas.tool import (
+    DownloadTicketResponse,
+    ToolDetail,
+    ToolEngagementResponse,
+    ToolListResponse,
+)
 from app.schemas.version import SkillPreviewResponse, VersionSummary, VersionUploader
-from app.services import download_service, tool_service
+from app.services import download_service, engagement_service, tool_service
 from app.services.counter_service import get_counter_service, viewer_key_for
 from app.services.download_service import acl_allows_download
 
 router = APIRouter(tags=["portal"])
+
+#: M8：收藏 / 点赞的写守卫。
+#:
+#: **契约 §23.4 没有规定角色与 Scope**，这里是后端的裁定，写明理由供监控方复核：
+#:
+#: - 角色：`user` 及以上（**不含 `viewer`**）。`/me/*` 的既有写守卫同样把 viewer
+#:   排除在外（docs/01 §3.2：viewer 只读）。收藏与点赞虽然是「个人动作」，
+#:   但计数是**全站可见的公共数字**，让只读角色能刷高它与 §23.7
+#:   （担心点赞变成人情分/虚高）的取向冲突。
+#: - Scope：`tools:write`。它是写动作（PUT/DELETE 落库），
+#:   复用只读 Scope 会让只读 Token 具备写能力。
+engagement_guard = require_roles_and_scope(
+    RoleCode.USER.value,
+    RoleCode.APPROVER.value,
+    RoleCode.SUPERADMIN.value,
+    scope=ApiScope.TOOLS_WRITE.value,
+)
 
 
 @router.get("/tools", response_model=ToolListResponse, summary="门户工具列表")
@@ -116,6 +140,129 @@ async def list_tools(
         page_size=params.page_size,
         viewer_roles=access.roles,
         can_download=access.can_download,
+    )
+
+
+# ===========================================================================
+# M8：收藏 / 点赞（契约 §23.4）—— 4 个端点，**全部幂等**
+# ===========================================================================
+async def _set_engagement(
+    session: AsyncSession,
+    *,
+    slug: str,
+    principal: Principal,
+    visibility: VisibilityContext,
+    relation: str,
+    enabled: bool,
+) -> ToolEngagementResponse:
+    """收藏/点赞的公共实现。
+
+    可见性判定**复用既有规则**（`get_visible_by_slug` = `detail_scope_clause`
+    + `VisibilityContext.clause()`）：看不到的工具一律 404，不泄露存在性，
+    也避免把关系挂到已下线/已删除/私有的工具上。
+    """
+    tool = await tools_repo.get_visible_by_slug(session, slug, visibility=visibility)
+    if tool is None:
+        raise NotFoundError(message="资源不存在")
+    # 先取出标量再进服务层：服务层在并发冲突时会 rollback()，
+    # 那会让 ORM 实例过期，之后读它的属性会炸（见 engagement_service 的说明）。
+    tool_id = tool.id
+    tool_slug = tool.slug
+    return await engagement_service.set_engagement(
+        session,
+        tool_id=tool_id,
+        slug=tool_slug,
+        user_id=principal.user_id,
+        relation=relation,
+        enabled=enabled,
+    )
+
+
+@router.put(
+    "/tools/{slug}/favorite",
+    response_model=ToolEngagementResponse,
+    summary="收藏工具（幂等）",
+)
+async def add_favorite(
+    slug: str,
+    session: Annotated[AsyncSession, Depends(get_db)],
+    principal: Annotated[Principal, Depends(engagement_guard)],
+    visibility: Annotated[VisibilityContext, Depends(get_visibility_context)],
+) -> ToolEngagementResponse:
+    """收藏。**幂等**：已收藏再调返回成功，计数只加一次（契约 §23.4）。"""
+    return await _set_engagement(
+        session,
+        slug=slug,
+        principal=principal,
+        visibility=visibility,
+        relation="favorite",
+        enabled=True,
+    )
+
+
+@router.delete(
+    "/tools/{slug}/favorite",
+    response_model=ToolEngagementResponse,
+    summary="取消收藏（幂等）",
+)
+async def remove_favorite(
+    slug: str,
+    session: Annotated[AsyncSession, Depends(get_db)],
+    principal: Annotated[Principal, Depends(engagement_guard)],
+    visibility: Annotated[VisibilityContext, Depends(get_visibility_context)],
+) -> ToolEngagementResponse:
+    """取消收藏。**幂等**：未收藏再调返回成功，**不报 404**（契约 §23.4）。"""
+    return await _set_engagement(
+        session,
+        slug=slug,
+        principal=principal,
+        visibility=visibility,
+        relation="favorite",
+        enabled=False,
+    )
+
+
+@router.put(
+    "/tools/{slug}/like",
+    response_model=ToolEngagementResponse,
+    summary="点赞工具（幂等）",
+)
+async def add_like(
+    slug: str,
+    session: Annotated[AsyncSession, Depends(get_db)],
+    principal: Annotated[Principal, Depends(engagement_guard)],
+    visibility: Annotated[VisibilityContext, Depends(get_visibility_context)],
+) -> ToolEngagementResponse:
+    """点赞。**幂等**（契约 §23.4）。只做整数计数，不做平均分（D37 / §23.7）。"""
+    return await _set_engagement(
+        session,
+        slug=slug,
+        principal=principal,
+        visibility=visibility,
+        relation="like",
+        enabled=True,
+    )
+
+
+@router.delete(
+    "/tools/{slug}/like",
+    response_model=ToolEngagementResponse,
+    summary="取消点赞（幂等）",
+)
+async def remove_like(
+    slug: str,
+    session: Annotated[AsyncSession, Depends(get_db)],
+    principal: Annotated[Principal, Depends(engagement_guard)],
+    visibility: Annotated[VisibilityContext, Depends(get_visibility_context)],
+) -> ToolEngagementResponse:
+    """取消点赞。**幂等**：未点赞再调返回成功（契约 §23.4）。"""
+    return await _set_engagement(
+        session,
+        slug=slug,
+        principal=principal,
+        visibility=visibility,
+        relation="like",
+        enabled=False,
     )
 
 

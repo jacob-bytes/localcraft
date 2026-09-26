@@ -41,6 +41,12 @@ class ToolListItem(BaseModel):
     view_count: int
     has_pending_version: bool = False
     can_download: bool = True
+    #: ---- M8（contracts §23.5）----
+    #: 两个计数照常对匿名返回；两个 bool 对匿名**恒为 false**。
+    favorite_count: int = 0
+    like_count: int = 0
+    is_favorited: bool = False
+    is_liked: bool = False
     published_at: OptionalUTCDateTime = None
     updated_at: OptionalUTCDateTime = None
 
@@ -120,6 +126,16 @@ class ToolDetail(BaseModel):
     history_version_count: int = 0
     download_count: int = 0
     view_count: int = 0
+    #: ---- M8（contracts §23.5）----
+    favorite_count: int = 0
+    like_count: int = 0
+    is_favorited: bool = False
+    is_liked: bool = False
+    #: M8 追加（contracts §23.5 的 4 个字段之外的**新增只读字段**）：
+    #: B11 让作者能写入 `estimated_saving_minutes`，若详情不回读它就变成
+    #: 只写不读的盲字段。按任务书「新增字段允许、改/删字段不允许」的规则补上，
+    #: `NULL` 表示作者未填写。**不在列表项里返回**（列表保持精简）。
+    estimated_saving_minutes: int | None = None
     owner: UserBrief
     published_at: OptionalUTCDateTime = None
     last_version_at: OptionalUTCDateTime = None
@@ -155,6 +171,10 @@ class ToolCreateRequest(BaseModel):
     visibility: ToolVisibility = ToolVisibility.PUBLIC
     webapp_url: str | None = Field(default=None, max_length=1024)
     webapp_health_url: str | None = Field(default=None, max_length=1024)
+    #: M8（contracts §23.3 ③ / §23.5）：作者自述的**单次使用**预计节省分钟数。
+    #: 取值范围 1~1440，超出由 Pydantic 拦成 400 `VALIDATION_ERROR`。
+    #: `NULL` 表示作者未填写，**不是一个可以当成 0 的值** —— 因此**不设默认 0**。
+    estimated_saving_minutes: int | None = Field(default=None, ge=1, le=1440)
 
     @field_validator("tags")
     @classmethod
@@ -201,6 +221,11 @@ class ToolUpdateRequest(BaseModel):
     visibility: ToolVisibility | None = None
     webapp_url: str | None = Field(default=None, max_length=1024)
     webapp_health_url: str | None = Field(default=None, max_length=1024)
+    #: M8：与 `ToolCreateRequest` 同一条范围约束（1~1440）。
+    #: 局部更新语义：**省略该字段 = 不改**；显式传 `null` = 清空（回到「未填写」）。
+    #: 两者必须可区分，否则作者无法撤销自己填过的估算值 —— 调用方用
+    #: `model_fields_set` 判断是否显式传入。
+    estimated_saving_minutes: int | None = Field(default=None, ge=1, le=1440)
 
     @field_validator("tags")
     @classmethod
@@ -226,6 +251,28 @@ class ToolUpdateRequest(BaseModel):
         if not (v.startswith("http://") or v.startswith("https://")):
             raise ValueError("URL 必须以 http:// 或 https:// 开头")
         return v
+
+
+class ToolEngagementResponse(BaseModel):
+    """收藏 / 点赞 4 个端点的**统一**响应（M8，contracts §23.4）。
+
+    契约只规定这 4 个端点「幂等」，响应形状由后端定。这里刻意返回
+    **操作后的完整状态**（两个计数 + 两个当前请求者布尔），而不是一个空壳
+    `{"status": "ok"}`：
+
+    - 前端点一次按钮就能拿到最新计数，**不需要再拉一次详情**；
+    - 幂等语义在响应里是自解释的 —— 重复 `PUT` 返回同样的
+      `is_favorited=true` 与同一个 `favorite_count`，前端不需要靠猜。
+    """
+
+    tool_id: int
+    slug: str
+    #: 操作**之后**的值（PUT 恒 true，DELETE 恒 false）—— 便于前端对齐本地状态。
+    is_favorited: bool = False
+    is_liked: bool = False
+    #: 操作之后的计数。并发下这两个数可能包含他人的写入，因此以服务端为准。
+    favorite_count: int = 0
+    like_count: int = 0
 
 
 class MyToolListItem(BaseModel):

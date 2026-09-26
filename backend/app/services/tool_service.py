@@ -9,6 +9,7 @@ import math
 import re
 import secrets
 import unicodedata
+from collections.abc import Collection
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +17,7 @@ from app.core.permissions import PERM_DOWNLOAD
 from app.models.enums import AclSubjectType, RoleCode, ToolStatus, ToolType, VersionStatus
 from app.models.tool import Tool, ToolImage, ToolVersion
 from app.models.user import Group, User
+from app.repositories import engagement as engagement_repo
 from app.repositories import tool_acl as tool_acl_repo
 from app.repositories import tool_images as tool_images_repo
 from app.repositories import tool_versions as tool_versions_repo
@@ -60,6 +62,8 @@ def build_list_item(
     viewer_roles: frozenset[str] | set[str],
     can_download: bool,
     ttl_hours: int,
+    favorited_ids: Collection[int] = frozenset(),
+    liked_ids: Collection[int] = frozenset(),
 ) -> ToolListItem:
     """ORM → 卡片。字段逐条对应 docs/03 §3.3 的响应示例。
 
@@ -107,6 +111,13 @@ def build_list_item(
         file_size=current.file_size if current is not None else None,
         download_count=tool.download_count,
         view_count=tool.view_count,
+        # M8（contracts §23.5）：两个计数直接读**反规范化列**（不聚合），
+        # 两个 bool 由调用方用**一条附加查询**得到的 id 集合在 Python 侧合并 ——
+        # 绝不通过给本列表查询加 JOIN 实现。
+        favorite_count=tool.favorite_count,
+        like_count=tool.like_count,
+        is_favorited=tool.id in favorited_ids,
+        is_liked=tool.id in liked_ids,
         # 兜底：owner/approver 之外恒为 false（避免通过该字段探测待审状态）
         has_pending_version=bool(tool.pending_version_id is not None and sees_pending),
         can_download=can_download,
@@ -145,6 +156,13 @@ async def list_portal_tools(
         limit=page_size,
         offset=(page - 1) * page_size,
     )
+    # M8（contracts §23.5）：`is_favorited` / `is_liked` **不得**通过给列表查询
+    # 加 JOIN 实现 —— 用**一条 `UNION ALL` 附加查询**取当前用户在**本页工具 id
+    # 集合**上的命中，在 Python 侧合并。匿名请求（user_id=None）直接得到空集，
+    # 连查询都不发；两个计数照常返回。
+    favorited_ids, liked_ids = await engagement_repo.relation_flags(
+        session, user_id=visibility.user_id, tool_ids=[tool.id for tool in rows]
+    )
     items = [
         build_list_item(
             tool,
@@ -152,6 +170,8 @@ async def list_portal_tools(
             viewer_roles=viewer_roles,
             can_download=can_download,
             ttl_hours=ttl_hours,
+            favorited_ids=favorited_ids,
+            liked_ids=liked_ids,
         )
         for tool in rows
     ]
@@ -427,6 +447,13 @@ async def build_detail(
     if include_acl and perms.can_view_acl:
         acl_entries = await build_acl_entries(session, tool.id)
 
+    # M8（contracts §23.5）：同样用**一条附加查询**（UNION ALL）取当前请求者
+    # 在该工具上的收藏/点赞命中，而不是给详情查询加 JOIN。匿名 → 两个 bool
+    # 恒 false，计数照常返回。
+    favorited_ids, liked_ids = await engagement_repo.relation_flags(
+        session, user_id=user_id, tool_ids=[tool.id]
+    )
+
     return ToolDetail(
         id=tool.id,
         slug=tool.slug,
@@ -460,6 +487,11 @@ async def build_detail(
         history_version_count=history_versions,
         download_count=tool.download_count,
         view_count=tool.view_count,
+        favorite_count=tool.favorite_count,
+        like_count=tool.like_count,
+        is_favorited=tool.id in favorited_ids,
+        is_liked=tool.id in liked_ids,
+        estimated_saving_minutes=tool.estimated_saving_minutes,
         owner=UserBrief.model_construct(
             id=tool.owner.id,
             username=tool.owner.username,

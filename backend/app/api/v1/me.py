@@ -13,7 +13,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import Principal, require_roles_and_scope
+from app.core.deps import Principal, get_visibility_context, require_roles_and_scope
 from app.core.errors import NotFoundError, StateConflictError, ValidationError
 from app.core.pagination import Page, PageParams
 from app.core.permissions import permissions_for_roles
@@ -22,6 +22,7 @@ from app.db.session import get_db
 from app.models.enums import ApiScope, ImageKind, RoleCode, ToolStatus, ToolType, VersionStatus
 from app.models.tool import Tool, ToolImage, ToolVersion
 from app.repositories import downloads as downloads_repo
+from app.repositories import engagement as engagement_repo
 from app.repositories import tool_images as images_repo
 from app.repositories import tool_versions as versions_repo
 from app.repositories import tools as tools_repo
@@ -40,6 +41,7 @@ from app.schemas.tool import (
     SubmitResponse,
     ToolCreateRequest,
     ToolDetail,
+    ToolListResponse,
     ToolUpdateRequest,
     WithdrawResponse,
 )
@@ -62,6 +64,7 @@ from app.services.tool_service import (
     allocate_slug,
     build_detail,
     build_image_out,
+    build_list_item,
 )
 from app.services.upload_stream import settings_unzip_limits, stream_upload
 
@@ -228,6 +231,67 @@ async def list_my_tools(
     )
 
 
+@router.get(
+    "/favorites",
+    response_model=ToolListResponse,
+    summary="我的收藏（分页，复用门户列表项形状）",
+)
+async def list_my_favorites(
+    session: Annotated[AsyncSession, Depends(get_db)],
+    principal: Annotated[Principal, Depends(read_guard)],
+    visibility: Annotated[tools_repo.VisibilityContext, Depends(get_visibility_context)],
+    params: Annotated[PageParams, Depends()],
+) -> ToolListResponse:
+    """`GET /api/v1/me/favorites`（契约 §23.4）。
+
+    **复用门户列表项形状 `ToolListItem`**（契约明确要求，不另造形状），
+    按收藏时间 `created_at DESC` 分页。
+
+    **可见性走既有规则**（任务书 B7 的重点）：收藏是历史动作，被收藏的工具
+    之后可能已下线 / 转私有 / 被删除 —— 这些一律从结果里消失，
+    绝不因为「在收藏表里」而泄漏。实现上复用
+    `detail_scope_clause()` + `VisibilityContext.clause()`，
+    与门户详情/列表是同一套谓词。
+
+    `facets` 恒为 `null`：收藏页不需要分类/类型聚合（也不该为它跑一次聚合）。
+    """
+    rows = await tools_repo.list_favorite_tools(
+        session,
+        user_id=principal.user_id,
+        visibility=visibility,
+        limit=params.limit,
+        offset=params.offset,
+    )
+    total = await tools_repo.count_favorite_tools(
+        session, user_id=principal.user_id, visibility=visibility
+    )
+    ttl_hours = await image_signature_service.get_ttl_hours(session)
+    # 「一条附加查询」取当前用户在这批工具上的收藏/点赞命中（无 JOIN）。
+    favorited_ids, liked_ids = await engagement_repo.relation_flags(
+        session, user_id=principal.user_id, tool_ids=[tool.id for tool in rows]
+    )
+    items = [
+        build_list_item(
+            tool,
+            viewer_user_id=principal.user_id,
+            viewer_roles=principal.roles,
+            can_download=principal.can_download,
+            ttl_hours=ttl_hours,
+            favorited_ids=favorited_ids,
+            liked_ids=liked_ids,
+        )
+        for tool in rows
+    ]
+    return ToolListResponse(
+        items=items,
+        total=total,
+        page=params.page,
+        page_size=params.page_size,
+        pages=(total + params.page_size - 1) // params.page_size if params.page_size else 0,
+        facets=None,
+    )
+
+
 def _build_my_item(tool, *, ttl_hours: int) -> MyToolListItem:
     from app.schemas.taxonomy import CategoryBrief
 
@@ -294,6 +358,9 @@ async def create_tool(
         category_id=body.category_id,
         webapp_url=body.webapp_url,
         webapp_health_url=body.webapp_health_url,
+        # M8（contracts §23.3 ③）：作者自述的预计节省时长。
+        # `None` = 未填写，**不写 0**（0 与「未填写」是两回事）。
+        estimated_saving_minutes=body.estimated_saving_minutes,
         version_seq=1,
         created_at=now,
         updated_at=now,
@@ -371,6 +438,10 @@ async def update_my_tool(
         tool.webapp_url = body.webapp_url
     if body.webapp_health_url is not None:
         tool.webapp_health_url = body.webapp_health_url
+    # M8：局部更新的「省略 vs 显式 null」必须可区分 ——
+    # 省略 = 不改；显式 null = 清空回「未填写」。用 `model_fields_set` 判断。
+    if "estimated_saving_minutes" in body.model_fields_set:
+        tool.estimated_saving_minutes = body.estimated_saving_minutes
     if body.tags is not None:
         await _ensure_tag_limit(session, body.tags)
         await _apply_tags(session, tool, body.tags, created_by_id=principal.user_id)
@@ -560,6 +631,8 @@ async def upload_version(
         skill=skill_info,
         tool_status=outcome.tool.status,
         created_at=record.created_at,
+        # M8 去重命中（contracts §23.2）：非阻塞提示，`null` = 未命中。
+        duplicate_of=outcome.duplicate_of,
     )
 
 

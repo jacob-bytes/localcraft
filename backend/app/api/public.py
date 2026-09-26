@@ -193,10 +193,34 @@ M6_ENDPOINTS: frozenset[tuple[str, str]] = frozenset(
     }
 )
 
+#: M8 新增的 6 个接口（contracts §23.4）。
+#:
+#: 收藏（2）+ 点赞（2）+ 我的收藏（1）+ 管理数字概览增强（1）= **6**。
+#: 实现后接口面总数 = 93（M6 后）+ 6 = **99**（契约 §23.4「93 → 99」）。
+M8_ENDPOINTS: frozenset[tuple[str, str]] = frozenset(
+    {
+        # ---- 收藏（2）----
+        ("PUT", "/api/v1/tools/{slug}/favorite"),
+        ("DELETE", "/api/v1/tools/{slug}/favorite"),
+        # ---- 点赞（2）---- 形状与收藏完全对称
+        ("PUT", "/api/v1/tools/{slug}/like"),
+        ("DELETE", "/api/v1/tools/{slug}/like"),
+        # ---- 我的收藏（1）----
+        ("GET", "/api/v1/me/favorites"),
+        # ---- 管理数字概览增强（1）----
+        ("GET", "/api/v1/admin/stats/insights"),
+    }
+)
+
+
 #: M6 实现后的**全部**接口面（93 = 92 + directory）。**多一个都不许有** ——
 #: docs/03 §2.5 未列出的路径不得出现（守卫测试反向断言）。
+#:
+#: **M8 起这个名字继续沿用**（虽然字面还叫 M3_TOTAL）：它是被
+#: `test_cli.py` / `test_guard.py` 直接引用的冻结面常量，改名要动多处引用，
+#: 收益只是名字好看。现在它等于「M8 后的全部接口面」= **99**。
 M3_TOTAL_ENDPOINTS: frozenset[tuple[str, str]] = (
-    M2_TOTAL_ENDPOINTS | M3_ENDPOINTS | M6_ENDPOINTS
+    M2_TOTAL_ENDPOINTS | M3_ENDPOINTS | M6_ENDPOINTS | M8_ENDPOINTS
 )
 
 
@@ -207,6 +231,7 @@ __all__ = [
     "M3_ENDPOINTS",
     "M3_TOTAL_ENDPOINTS",
     "M6_ENDPOINTS",
+    "M8_ENDPOINTS",
     "NON_SPA_PREFIXES",
     "PASSWORD_GATE_EXEMPT_PREFIXES",
     "PUBLIC_ENDPOINTS",

@@ -276,12 +276,12 @@ def test_metrics_route_is_flagged_include_in_schema_false(metrics_app: FastAPI) 
 
 
 def test_metrics_is_outside_the_frozen_api_prefix() -> None:
-    """硬要求 1：位于 `/api/v1` 冻结面之外，不计入 93 operations / 75 paths。"""
+    """硬要求 1：位于 `/api/v1` 冻结面之外，不计入 99 operations / 79 paths（M8 后）。"""
     from app.api.metrics import router as metrics_router
 
     for route in metrics_router.routes:
         assert not route.path.startswith("/api/v1"), (
-            f"{route.path} 落在冻结前缀里，会改变 93 操作的基线"
+            f"{route.path} 落在冻结前缀里，会改变 99 操作的基线"
         )
 
 
@@ -349,7 +349,10 @@ async def test_metrics_body_is_parseable_prometheus_text(
 
 
 def test_metrics_route_would_not_break_the_frozen_surface() -> None:
-    """把指标路由加进真实 app 后，冻结面仍然是 93（`include_in_schema=False`）。"""
+    """把指标路由加进真实 app 后，冻结面仍然是 99（`include_in_schema=False`）。
+
+    M8 起冻结面是 99（93 + 契约 §23.4 的 6 个）。
+    """
     from app.api.metrics import router as metrics_router
     from tests.test_guard import iter_api_routes
 
@@ -358,7 +361,7 @@ def test_metrics_route_would_not_break_the_frozen_surface() -> None:
         for m, p, route in iter_api_routes(app.routes)
         if getattr(route, "include_in_schema", False)
     ]
-    assert len(before) == 93, f"冻结面应为 93，实际 {len(before)}"
+    assert len(before) == 99, f"冻结面应为 99，实际 {len(before)}"
 
     probe = FastAPI()
     probe.include_router(metrics_router)

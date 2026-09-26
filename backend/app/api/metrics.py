@@ -4,7 +4,7 @@
 --------------------------------------------
 
 1. **位于 `/api/v1` 冻结面之外** —— 路径就是 `/metrics`，不是 `/api/v1/metrics`，
-   因此不计入 93 operations / 75 paths 的冻结基线。
+   因此不计入 99 operations / 79 paths 的冻结基线（M8 后）。
 2. **`include_in_schema=False`** —— 不出现在 `backend/openapi.json` 里。
    理由：前端 `check:api-types` 读 `openapi.json` 生成类型，
    把运维端点塞进去会制造一次无意义的前后端耦合。

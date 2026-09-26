@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import (
@@ -55,6 +55,7 @@ from app.models.enums import (
 from app.models.tool import Tool, ToolVersion
 from app.repositories import approvals as approvals_repo
 from app.repositories import tool_versions as versions_repo
+from app.schemas.version import DuplicateVersionMatch
 from app.services import settings_service, skill_service
 from app.storage import PathNotAllowedError, UploadTooLargeError, file_extension, get_storage
 
@@ -72,6 +73,9 @@ class UploadOutcome:
     tool: Tool
     purged: list[ToolVersion]
     final_path: str | None = None
+    #: M8 去重命中（contracts §23.2）。`None` = 未命中或本次没有文件。
+    #: **不阻断上传**，只是让前端做非阻塞提示。
+    duplicate_of: DuplicateVersionMatch | None = None
 
 
 def _fail(message: str, details: dict | None = None) -> DomainError:
@@ -123,6 +127,71 @@ async def precheck_upload(
     # ---- 6. 配额（FR-FILE-12）----
     await settings_service.check_storage_quota(
         session, owner_id=owner_id, incoming_bytes=declared_size or 0, limits=limits
+    )
+
+
+async def find_duplicate_version(
+    session: AsyncSession,
+    *,
+    sha256: str | None,
+    exclude_tool_id: int,
+) -> DuplicateVersionMatch | None:
+    """上传去重检测（M8 / contracts §23.2）。
+
+    **在服务端做**：浏览器端 `crypto.subtle` 只在安全上下文可用，而本项目按
+    D39 用 `http://<ip>:<port>` 直连 —— 契约 §23.2 因此裁定不新增端点、
+    由上传响应回带命中信息。
+
+    依据 `tool_versions.file_sha256`（**已有索引** `ix_tool_versions_sha256`，
+    不新增哈希计算）。
+
+    命中范围与排除项：
+
+      - **其他工具**已有的版本 —— 同一工具的新版本**不算重复**（正常迭代）。
+      - 排除 `purged` 版本：它们的文件已被删除，「重复」提示会产生误导。
+      - 排除软删除的工具：把用户引向回收站里的工具没有意义。
+
+    排序：当前版本优先（用户最可能直接复用），其次按时间倒序。
+    只 select 需要的列，避免 ORM 实体加载与其 `.unique()` 开销。
+    """
+    if not sha256:
+        return None
+    stmt = (
+        select(
+            ToolVersion.id,
+            ToolVersion.version,
+            ToolVersion.created_at,
+            ToolVersion.is_current,
+            Tool.id,
+            Tool.slug,
+            Tool.name,
+        )
+        .join(Tool, Tool.id == ToolVersion.tool_id)
+        .where(
+            ToolVersion.file_sha256 == sha256,
+            ToolVersion.tool_id != exclude_tool_id,
+            ToolVersion.status != VersionStatus.PURGED.value,
+            Tool.deleted_at.is_(None),
+        )
+        .order_by(
+            ToolVersion.is_current.desc(),
+            ToolVersion.created_at.desc(),
+            ToolVersion.id.desc(),
+        )
+        .limit(1)
+    )
+    row = (await session.execute(stmt)).first()
+    if row is None:
+        return None
+    return DuplicateVersionMatch(
+        tool_id=int(row[4]),
+        slug=str(row[5]),
+        name=str(row[6]),
+        version_id=int(row[0]),
+        version=str(row[1]),
+        file_sha256=sha256,
+        is_current=bool(row[3]),
+        uploaded_at=row[2],
     )
 
 
@@ -435,6 +504,13 @@ async def _persist_version(
     purge_limits = await settings_service.get_upload_limits(session)
     purged = await _mark_purge_candidates(session, tool=tool, limits=purge_limits)
 
+    # ---- M8 去重检测（contracts §23.2）：**只回带信息，不阻断上传** ----
+    # 放在事务内：命中范围与本次写入看到的是同一个快照。
+    # 没有文件（webapp / prompt）时 `file_sha256` 为 None，直接跳过。
+    duplicate_of = await find_duplicate_version(
+        session, sha256=record.file_sha256, exclude_tool_id=tool.id
+    )
+
     await session.commit()
 
     # 事务已提交 —— 现在才真正删文件。失败只记警告，由孤儿清理兜底。
@@ -454,6 +530,7 @@ async def _persist_version(
         tool=tool,
         purged=purged,
         final_path=committed.storage_path if committed else None,
+        duplicate_of=duplicate_of,
     )
 
 
@@ -716,6 +793,7 @@ __all__ = [
     "UploadOutcome",
     "approve_tool",
     "create_version",
+    "find_duplicate_version",
     "precheck_upload",
     "reject_tool",
     "replace_current_version",

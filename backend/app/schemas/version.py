@@ -70,6 +70,32 @@ class VersionDetail(VersionSummary):
     prompt_content: str | None = None
 
 
+class DuplicateVersionMatch(BaseModel):
+    """上传去重命中信息（M8 / contracts §23.2）。
+
+    **检测在服务端做**，因为浏览器端算 SHA-256 需要 `crypto.subtle`，
+    而它只在安全上下文（HTTPS / localhost）可用；本项目按 D39 用
+    `http://<ip>:<port>` 直连，该场景下 `crypto.subtle` 为 `undefined`。
+    契约 §23.2 因此裁定：**不新增端点、不做客户端预检**，
+    由上传响应回带命中信息，前端据此展示**非阻塞**提示。
+
+    命中依据是 `tool_versions.file_sha256`（已有索引 `ix_tool_versions_sha256`，
+    不新增哈希计算）。命中**不阻断上传**。
+    """
+
+    #: 命中版本所属的**其他工具**（同一工具的新版本不算重复，那是正常迭代）。
+    tool_id: int
+    slug: str
+    name: str
+    #: 命中版本本身的信息，便于前端提示「与 xx 的 v1.2.0 内容相同」。
+    version_id: int
+    version: str
+    file_sha256: str
+    #: 该版本是否为对应工具的当前版本 —— 前端可据此优先给出「可直接用」的引导。
+    is_current: bool = False
+    uploaded_at: OptionalUTCDateTime = None
+
+
 class VersionUploadResponse(BaseModel):
     """docs/03 §3.7 的 201 响应。"""
 
@@ -84,6 +110,10 @@ class VersionUploadResponse(BaseModel):
     skill: SkillVersionInfo | None = None
     tool_status: str
     created_at: OptionalUTCDateTime = None
+    #: M8 去重命中（contracts §23.2）。`null` = 未命中或本次没有文件
+    #: （webapp / prompt 类型没有 `file_sha256`，无从比对）。
+    #: **不阻断上传**，只是非阻塞提示。
+    duplicate_of: DuplicateVersionMatch | None = None
 
 
 class VersionPatchRequest(BaseModel):

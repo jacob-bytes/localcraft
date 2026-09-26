@@ -372,7 +372,11 @@ async def test_search_no_match_returns_empty(client, seeded) -> None:
 # 响应形状
 # ---------------------------------------------------------------------------
 async def test_item_shape_matches_contract(client, seeded) -> None:
-    """docs/03 §3.3 的响应示例字段必须逐一存在（可空字段显式返回 null）。"""
+    """docs/03 §3.3 的响应示例字段必须逐一存在（可空字段显式返回 null）。
+
+    M8（contracts §23.5）在列表项上**新增 4 个字段**（向后兼容的新增）：
+    `favorite_count` / `like_count` / `is_favorited` / `is_liked`。
+    """
     token = await login(client, "admin")
     response = await client.get(TOOLS, params={"q": "public-approved-2"}, headers=auth(token))
     item = response.json()["items"][0]
@@ -394,6 +398,11 @@ async def test_item_shape_matches_contract(client, seeded) -> None:
         "view_count",
         "has_pending_version",
         "can_download",
+        # ---- M8（contracts §23.5）：向后兼容的新增 4 字段 ----
+        "favorite_count",
+        "like_count",
+        "is_favorited",
+        "is_liked",
         "published_at",
         "updated_at",
     }

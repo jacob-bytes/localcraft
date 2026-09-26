@@ -19,7 +19,16 @@ DOCS_03 = (
 #: 「在总表中未单列」）。**M5 起监控方已把它们回填进 §2.5**，所以这个豁免集
 #: 现在是空的 —— 保留这个常量是为了让「文档缺项」这件事一旦再次出现时，
 #: 必须显式登记到这里、并且报告里能看见，而不是悄悄放过。
-DOCUMENTED_TABLE_OMISSIONS: frozenset[tuple[str, str]] = frozenset()
+#:
+#: **M8 新增 1 条**：`GET /api/v1/admin/stats/insights`（contracts §23.4 的
+#: 6 个新接口之一，属管理侧）。docs/03 §2.5 由监控方维护，M8 未回填该行；
+#: 后端**不允许改 docs/**，因此在这里显式登记豁免，而不是放宽守卫。
+#: 若监控方后续把该行回填进 §2.5，请把这条从豁免里删掉（守卫会提示）。
+DOCUMENTED_TABLE_OMISSIONS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("GET", "/api/v1/admin/stats/insights"),
+    }
+)
 
 
 def normalized_omissions() -> set[tuple[str, str]]:

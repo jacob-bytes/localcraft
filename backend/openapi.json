@@ -355,6 +355,40 @@
         "title": "AdminCategoryUpdateRequest",
         "type": "object"
       },
+      "AdminInsightsResponse": {
+        "description": "`GET /admin/stats/insights` —— 契约 §23.6 冻结的形状。\n\n仍是**数字与列表**，不做图表（D10 / D35 / §23.0 Q1）。",
+        "properties": {
+          "active_contributors_30d": {
+            "default": 0,
+            "title": "Active Contributors 30D",
+            "type": "integer"
+          },
+          "downloads_daily": {
+            "items": {
+              "$ref": "#/components/schemas/DailyDownloadPoint"
+            },
+            "title": "Downloads Daily",
+            "type": "array"
+          },
+          "downloads_last_30_days": {
+            "default": 0,
+            "title": "Downloads Last 30 Days",
+            "type": "integer"
+          },
+          "savings": {
+            "$ref": "#/components/schemas/SavingsInsight"
+          },
+          "tools_by_category": {
+            "items": {
+              "$ref": "#/components/schemas/CategoryInsightItem"
+            },
+            "title": "Tools By Category",
+            "type": "array"
+          }
+        },
+        "title": "AdminInsightsResponse",
+        "type": "object"
+      },
       "AdminOverviewResponse": {
         "description": "`GET /admin/overview` —— **纯数字，不做图表**（FR-ADMIN-14 / 第 10 章）。",
         "properties": {
@@ -2298,6 +2332,41 @@
         "title": "CategoryFacet",
         "type": "object"
       },
+      "CategoryInsightItem": {
+        "description": "`tools_by_category` 的一行。\n\n`category_id` 可为 `null`（未分类工具）；此时 `name` 由服务端给出\n「未分类」文案，保证 `name` 恒为字符串（契约 §23.6 的形状）。",
+        "properties": {
+          "category_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Id"
+          },
+          "download_count": {
+            "default": 0,
+            "title": "Download Count",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "tool_count": {
+            "default": 0,
+            "title": "Tool Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "CategoryInsightItem",
+        "type": "object"
+      },
       "CategoryOrderItem": {
         "properties": {
           "id": {
@@ -2620,6 +2689,26 @@
         "title": "CurrentVersionDetail",
         "type": "object"
       },
+      "DailyDownloadPoint": {
+        "description": "`downloads_daily` 的一个点。**日期必为连续 30 天中的某一天**。",
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "downloads": {
+            "default": 0,
+            "title": "Downloads",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "date"
+        ],
+        "title": "DailyDownloadPoint",
+        "type": "object"
+      },
       "DailyStatPoint": {
         "properties": {
           "downloads": {
@@ -2874,6 +2963,61 @@
           "url"
         ],
         "title": "DownloadTicketResponse",
+        "type": "object"
+      },
+      "DuplicateVersionMatch": {
+        "description": "上传去重命中信息（M8 / contracts §23.2）。\n\n**检测在服务端做**，因为浏览器端算 SHA-256 需要 `crypto.subtle`，\n而它只在安全上下文（HTTPS / localhost）可用；本项目按 D39 用\n`http://<ip>:<port>` 直连，该场景下 `crypto.subtle` 为 `undefined`。\n契约 §23.2 因此裁定：**不新增端点、不做客户端预检**，\n由上传响应回带命中信息，前端据此展示**非阻塞**提示。\n\n命中依据是 `tool_versions.file_sha256`（已有索引 `ix_tool_versions_sha256`，\n不新增哈希计算）。命中**不阻断上传**。",
+        "properties": {
+          "file_sha256": {
+            "title": "File Sha256",
+            "type": "string"
+          },
+          "is_current": {
+            "default": false,
+            "title": "Is Current",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "tool_id": {
+            "title": "Tool Id",
+            "type": "integer"
+          },
+          "uploaded_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uploaded At"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          },
+          "version_id": {
+            "title": "Version Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tool_id",
+          "slug",
+          "name",
+          "version_id",
+          "version",
+          "file_sha256"
+        ],
+        "title": "DuplicateVersionMatch",
         "type": "object"
       },
       "GeneratedPassword": {
@@ -4506,6 +4650,34 @@
         "title": "RoleOut",
         "type": "object"
       },
+      "SavingsInsight": {
+        "description": "效率估算（口径见 contracts §23.6，**公式冻结、不得自行改动**）。\n\n```\ntotal_minutes = Σ_over_tools (\n    estimated_saving_minutes × COUNT(DISTINCT download_logs.user_id)\n)\n仅计入 estimated_saving_minutes IS NOT NULL 且 user_id IS NOT NULL\n```",
+        "properties": {
+          "basis": {
+            "const": "author_estimate",
+            "default": "author_estimate",
+            "title": "Basis",
+            "type": "string"
+          },
+          "covered_tool_count": {
+            "default": 0,
+            "title": "Covered Tool Count",
+            "type": "integer"
+          },
+          "total_minutes": {
+            "default": 0,
+            "title": "Total Minutes",
+            "type": "integer"
+          },
+          "total_tool_count": {
+            "default": 0,
+            "title": "Total Tool Count",
+            "type": "integer"
+          }
+        },
+        "title": "SavingsInsight",
+        "type": "object"
+      },
       "SettingItem": {
         "properties": {
           "description": {
@@ -5254,6 +5426,19 @@
             "title": "Description Md",
             "type": "string"
           },
+          "estimated_saving_minutes": {
+            "anyOf": [
+              {
+                "maximum": 1440.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimated Saving Minutes"
+          },
           "name": {
             "maxLength": 128,
             "minLength": 1,
@@ -5396,6 +5581,22 @@
             "title": "Download Count",
             "type": "integer"
           },
+          "estimated_saving_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimated Saving Minutes"
+          },
+          "favorite_count": {
+            "default": 0,
+            "title": "Favorite Count",
+            "type": "integer"
+          },
           "history_version_count": {
             "default": 0,
             "title": "History Version Count",
@@ -5412,6 +5613,16 @@
             "title": "Images",
             "type": "array"
           },
+          "is_favorited": {
+            "default": false,
+            "title": "Is Favorited",
+            "type": "boolean"
+          },
+          "is_liked": {
+            "default": false,
+            "title": "Is Liked",
+            "type": "boolean"
+          },
           "last_version_at": {
             "anyOf": [
               {
@@ -5422,6 +5633,11 @@
               }
             ],
             "title": "Last Version At"
+          },
+          "like_count": {
+            "default": 0,
+            "title": "Like Count",
+            "type": "integer"
           },
           "name": {
             "title": "Name",
@@ -5566,6 +5782,45 @@
           "owner"
         ],
         "title": "ToolDetail",
+        "type": "object"
+      },
+      "ToolEngagementResponse": {
+        "description": "收藏 / 点赞 4 个端点的**统一**响应（M8，contracts §23.4）。\n\n契约只规定这 4 个端点「幂等」，响应形状由后端定。这里刻意返回\n**操作后的完整状态**（两个计数 + 两个当前请求者布尔），而不是一个空壳\n`{\"status\": \"ok\"}`：\n\n- 前端点一次按钮就能拿到最新计数，**不需要再拉一次详情**；\n- 幂等语义在响应里是自解释的 —— 重复 `PUT` 返回同样的\n  `is_favorited=true` 与同一个 `favorite_count`，前端不需要靠猜。",
+        "properties": {
+          "favorite_count": {
+            "default": 0,
+            "title": "Favorite Count",
+            "type": "integer"
+          },
+          "is_favorited": {
+            "default": false,
+            "title": "Is Favorited",
+            "type": "boolean"
+          },
+          "is_liked": {
+            "default": false,
+            "title": "Is Liked",
+            "type": "boolean"
+          },
+          "like_count": {
+            "default": 0,
+            "title": "Like Count",
+            "type": "integer"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "tool_id": {
+            "title": "Tool Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tool_id",
+          "slug"
+        ],
+        "title": "ToolEngagementResponse",
         "type": "object"
       },
       "ToolFacets": {
@@ -5755,6 +6010,11 @@
             "title": "Download Count",
             "type": "integer"
           },
+          "favorite_count": {
+            "default": 0,
+            "title": "Favorite Count",
+            "type": "integer"
+          },
           "file_size": {
             "anyOf": [
               {
@@ -5773,6 +6033,21 @@
           },
           "id": {
             "title": "Id",
+            "type": "integer"
+          },
+          "is_favorited": {
+            "default": false,
+            "title": "Is Favorited",
+            "type": "boolean"
+          },
+          "is_liked": {
+            "default": false,
+            "title": "Is Liked",
+            "type": "boolean"
+          },
+          "like_count": {
+            "default": 0,
+            "title": "Like Count",
             "type": "integer"
           },
           "name": {
@@ -6085,6 +6360,19 @@
               }
             ],
             "title": "Description Md"
+          },
+          "estimated_saving_minutes": {
+            "anyOf": [
+              {
+                "maximum": 1440.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimated Saving Minutes"
           },
           "name": {
             "anyOf": [
@@ -6689,6 +6977,16 @@
               }
             ],
             "title": "Created At"
+          },
+          "duplicate_of": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DuplicateVersionMatch"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "file_name": {
             "anyOf": [
@@ -8483,6 +8781,28 @@
         ]
       }
     },
+    "/api/v1/admin/stats/insights": {
+      "get": {
+        "description": "`GET /admin/stats/insights`（契约 §23.6 的**冻结形状**）。\n\n**权限**：任务书 B10 要求「仅管理员可访问」。这里走既有的\n`admin_all_guard`（`superadmin` 角色 + `admin:all` Scope），与\n`/admin/stats/storage` 同一把守卫，不新写一套。\n\n**为什么独立端点**：契约 §23.4 说明 —— insights 含 30 天序列与去重人数\n聚合，明显更重；独立端点让管理台首页先渲染轻量数字，重聚合可以后到/懒加载。\n`/admin/overview` 的代码路径完全没有变化，因此不会被它拖慢。\n\n**不做图表**：仍然是数字与列表（D10 / D35 / §23.0 Q1）。",
+        "operationId": "stats_insights_api_v1_admin_stats_insights_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminInsightsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "数字概览增强（30 天下载序列 + 效率估算）",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/api/v1/admin/stats/storage": {
       "get": {
         "operationId": "storage_stats_api_v1_admin_stats_storage_get",
@@ -10215,6 +10535,67 @@
         ]
       }
     },
+    "/api/v1/me/favorites": {
+      "get": {
+        "description": "`GET /api/v1/me/favorites`（契约 §23.4）。\n\n**复用门户列表项形状 `ToolListItem`**（契约明确要求，不另造形状），\n按收藏时间 `created_at DESC` 分页。\n\n**可见性走既有规则**（任务书 B7 的重点）：收藏是历史动作，被收藏的工具\n之后可能已下线 / 转私有 / 被删除 —— 这些一律从结果里消失，\n绝不因为「在收藏表里」而泄漏。实现上复用\n`detail_scope_clause()` + `VisibilityContext.clause()`，\n与门户详情/列表是同一套谓词。\n\n`facets` 恒为 `null`：收藏页不需要分类/类型聚合（也不该为它跑一次聚合）。",
+        "operationId": "list_my_favorites_api_v1_me_favorites_get",
+        "parameters": [
+          {
+            "description": "页码，从 1 开始",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "description": "页码，从 1 开始",
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "每页条数，1~200",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "description": "每页条数，1~200",
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "我的收藏（分页，复用门户列表项形状）",
+        "tags": [
+          "me"
+        ]
+      }
+    },
     "/api/v1/me/profile": {
       "get": {
         "operationId": "get_profile_api_v1_me_profile_get",
@@ -11561,6 +11942,174 @@
           }
         },
         "summary": "签发下载票据",
+        "tags": [
+          "portal"
+        ]
+      }
+    },
+    "/api/v1/tools/{slug}/favorite": {
+      "delete": {
+        "description": "取消收藏。**幂等**：未收藏再调返回成功，**不报 404**（契约 §23.4）。",
+        "operationId": "remove_favorite_api_v1_tools__slug__favorite_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolEngagementResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "取消收藏（幂等）",
+        "tags": [
+          "portal"
+        ]
+      },
+      "put": {
+        "description": "收藏。**幂等**：已收藏再调返回成功，计数只加一次（契约 §23.4）。",
+        "operationId": "add_favorite_api_v1_tools__slug__favorite_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolEngagementResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "收藏工具（幂等）",
+        "tags": [
+          "portal"
+        ]
+      }
+    },
+    "/api/v1/tools/{slug}/like": {
+      "delete": {
+        "description": "取消点赞。**幂等**：未点赞再调返回成功（契约 §23.4）。",
+        "operationId": "remove_like_api_v1_tools__slug__like_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolEngagementResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "取消点赞（幂等）",
+        "tags": [
+          "portal"
+        ]
+      },
+      "put": {
+        "description": "点赞。**幂等**（契约 §23.4）。只做整数计数，不做平均分（D37 / §23.7）。",
+        "operationId": "add_like_api_v1_tools__slug__like_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolEngagementResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "点赞工具（幂等）",
         "tags": [
           "portal"
         ]

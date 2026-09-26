@@ -6,7 +6,8 @@ docs/03 §2.5 是 M3 的接口边界；响应形状按 contracts §15.6 的新�
 
 from __future__ import annotations
 
-from typing import Any
+from datetime import date
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -471,6 +472,70 @@ class StorageStatsResponse(BaseModel):
 
 
 # ===========================================================================
+# M8：管理数字概览增强（contracts/CONTRACT.md §23.6，形状**冻结**）
+# ===========================================================================
+#: 效率估算的口径常量。契约 §23.6 要求它**随数字一起返回**：
+#: 让接口本身声明「这是估算而不是实测」，使前端**无法**在不暴露口径的情况下
+#: 单独渲染 `total_minutes`。前端必须同时展示口径文案与填写覆盖率。
+SAVINGS_BASIS = "author_estimate"
+
+
+class DailyDownloadPoint(BaseModel):
+    """`downloads_daily` 的一个点。**日期必为连续 30 天中的某一天**。"""
+
+    date: date
+    downloads: int = 0
+
+
+class CategoryInsightItem(BaseModel):
+    """`tools_by_category` 的一行。
+
+    `category_id` 可为 `null`（未分类工具）；此时 `name` 由服务端给出
+    「未分类」文案，保证 `name` 恒为字符串（契约 §23.6 的形状）。
+    """
+
+    category_id: int | None = None
+    name: str
+    tool_count: int = 0
+    download_count: int = 0
+
+
+class SavingsInsight(BaseModel):
+    """效率估算（口径见 contracts §23.6，**公式冻结、不得自行改动**）。
+
+    ```
+    total_minutes = Σ_over_tools (
+        estimated_saving_minutes × COUNT(DISTINCT download_logs.user_id)
+    )
+    仅计入 estimated_saving_minutes IS NOT NULL 且 user_id IS NOT NULL
+    ```
+    """
+
+    total_minutes: int = 0
+    #: 已填 `estimated_saving_minutes` 的工具数
+    covered_tool_count: int = 0
+    #: 全部工具数（含未填）—— 与 `covered_tool_count` 同一口径（都排除软删除）
+    total_tool_count: int = 0
+    #: 常量，声明口径。**不是可省掉的装饰**（契约 §23.6）。
+    basis: Literal["author_estimate"] = SAVINGS_BASIS
+
+
+class AdminInsightsResponse(BaseModel):
+    """`GET /admin/stats/insights` —— 契约 §23.6 冻结的形状。
+
+    仍是**数字与列表**，不做图表（D10 / D35 / §23.0 Q1）。
+    """
+
+    downloads_last_30_days: int = 0
+    #: **恰好 30 条**，缺口补 0（契约 §23.6）。
+    downloads_daily: list[DailyDownloadPoint] = Field(default_factory=list)
+    #: 30 天内上传/更新过工具的去重用户数
+    active_contributors_30d: int = 0
+    tools_by_category: list[CategoryInsightItem] = Field(default_factory=list)
+    savings: SavingsInsight = Field(default_factory=SavingsInsight)
+
+
+# ===========================================================================
 # 批量导入导出
 # ===========================================================================
 class ImportErrorItem(BaseModel):
@@ -519,9 +584,11 @@ class ToolImportRequest(BaseModel):
 
 
 __all__ = [
+    "SAVINGS_BASIS",
     "AdminCategoryCreateRequest",
     "AdminCategoryOut",
     "AdminCategoryUpdateRequest",
+    "AdminInsightsResponse",
     "AdminOverviewResponse",
     "AdminRoleReplaceRequest",
     "AdminTagOut",
@@ -536,8 +603,10 @@ __all__ = [
     "ApiTokenCreateRequest",
     "ApiTokenCreateResponse",
     "ApiTokenOut",
+    "CategoryInsightItem",
     "CategoryOrderItem",
     "CategoryOrderRequest",
+    "DailyDownloadPoint",
     "GeneratedPassword",
     "GroupCreateRequest",
     "GroupInUseDetail",
@@ -553,6 +622,7 @@ __all__ = [
     "ResetPasswordRequest",
     "ResetPasswordResponse",
     "RoleOut",
+    "SavingsInsight",
     "StatusCount",
     "StorageOwnerItem",
     "StorageStatsResponse",

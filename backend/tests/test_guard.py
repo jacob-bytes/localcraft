@@ -26,6 +26,7 @@ from app.api.public import (
     M2_ENDPOINTS,
     M3_ENDPOINTS,
     M3_TOTAL_ENDPOINTS,
+    M8_ENDPOINTS,
     PASSWORD_GATE_EXEMPT_PREFIXES,
     PUBLIC_ENDPOINTS,
 )
@@ -176,7 +177,7 @@ def test_password_gate_exempt_prefixes_are_exactly_the_documented_ones() -> None
 # M2 冻结接口清单（契约 §6 + §6.1）
 # ---------------------------------------------------------------------------
 def test_m3_surface_is_exactly_the_frozen_list() -> None:
-    """契约 §6 + §6.1 + §6.2：12 + 38 + 42 = **92**。
+    """契约 §6 + §6.1 + §6.2 + §23.4：12 + 38 + 42 + 1 + **6** = **99**。
 
     多出或缺少任何一个都应该在这里失败，逼迫走契约 §9 的变更流程。
     """
@@ -184,7 +185,10 @@ def test_m3_surface_is_exactly_the_frozen_list() -> None:
     assert len(M1_ONLY_ENDPOINTS) == 12
     assert len(M2_ENDPOINTS) == 38
     assert len(M3_ENDPOINTS) == 42
-    assert len(M3_TOTAL_ENDPOINTS) == 93, "冻结清单本身应当是 93 条（92 + M6 的 directory）"
+    assert len(M8_ENDPOINTS) == 6, "M8 冻结清单应当是 6 条（契约 §23.4）"
+    assert len(M3_TOTAL_ENDPOINTS) == 99, (
+        "冻结清单本身应当是 99 条（92 + M6 的 directory + M8 的 6 个）"
+    )
     assert actual == set(M3_TOTAL_ENDPOINTS), (
         f"多出的接口（契约未冻结）: {sorted(actual - set(M3_TOTAL_ENDPOINTS))}\n"
         f"缺失的接口: {sorted(set(M3_TOTAL_ENDPOINTS) - actual)}"
@@ -192,8 +196,13 @@ def test_m3_surface_is_exactly_the_frozen_list() -> None:
 
 
 def test_endpoint_total_is_exactly_92() -> None:
-    """单独一条把「92」这个数字钉死 —— 容易被顺手改掉的是它。"""
-    assert len(ALL_ROUTES) == 93, f"接口操作总数应为 93（92 + M6 directory），实际 {len(ALL_ROUTES)}"
+    """单独一条把「99」这个数字钉死 —— 容易被顺手改掉的是它。
+
+    （函数名保留历史的 `92`，避免改动 import/名引用；断言值已按 M8 更新。）
+    """
+    assert len(ALL_ROUTES) == 99, (
+        f"接口操作总数应为 99（92 + M6 directory + M8 的 6 个），实际 {len(ALL_ROUTES)}"
+    )
 
 
 def test_spa_fallback_is_the_only_non_api_catch_all() -> None:
@@ -272,12 +281,16 @@ def test_no_undeclared_admin_paths() -> None:
 
 
 def test_frozen_surface_matches_docs_03_section_2_5_row_by_row() -> None:
-    """M4 验收 4：操作总数恰为 92，且管理侧与 docs/03 §2.5 **逐条**一致。"""
+    """M4 验收 4：操作总数恰为 **99**（M4 起为 92，M6 +1，M8 +6），
+    且管理侧与 docs/03 §2.5 **逐条**一致。"""
     from tests.m4_helpers import parse_docs_03_section_2_5
 
     rows = parse_docs_03_section_2_5()
     # M4 时是 52 行；M5 监控方把两个「管理侧代创建/代上传」接口回填进总表后为 54 行。
     # 这个数字变了就必须有人看一眼 —— 它同时是「接口面是否漂移」的第一道信号。
+    # M8 的 6 个新接口里只有 `/admin/stats/insights` 属于管理侧，而 docs/03
+    # 由监控方维护、M8 未回填，因此该行登记在 m4_helpers 的
+    # DOCUMENTED_TABLE_OMISSIONS 里，**行数仍是 54**。
     assert len(rows) == 54, (
         f"docs/03 §2.5 应当有 54 行接口，解析出 {len(rows)} 行 —— "
         "文档改了或解析逻辑失效，两种都要有人看一眼"
@@ -285,7 +298,9 @@ def test_frozen_surface_matches_docs_03_section_2_5_row_by_row() -> None:
     assert len(set(rows)) == len(rows), "§2.5 总表里出现了重复行"
 
     actual = {(method, path) for method, path, _route in ALL_ROUTES}
-    assert len(actual) == 93, f"接口操作总数应为 93（92 + M6 directory），实际 {len(actual)}"
+    assert len(actual) == 99, (
+        f"接口操作总数应为 99（92 + M6 directory + M8 的 6 个），实际 {len(actual)}"
+    )
 
     # 逐行确认：每一条文档行都能在实现里找到（归一化参数名）
     implemented = {(m, normalize_path(p)) for m, p in actual}
@@ -296,13 +311,22 @@ def test_frozen_surface_matches_docs_03_section_2_5_row_by_row() -> None:
 
 
 def test_m2_portal_routes_are_read_only_except_ticket() -> None:
-    """门户侧只有 `download-ticket` 是写动作（签发票据），其余都是只读。"""
+    """门户侧原来的写动作**只有** `download-ticket`（签发票据）。
+
+    M8 按契约 §23.4 新增了 4 个**收藏 / 点赞**的写端点
+    （`PUT`/`DELETE /tools/{slug}/favorite|like`）—— 它们是**个人关系**写入
+    （每人每工具至多一行），不是工具内容的写操作，因此这里是显式白名单，
+    而不是把断言删掉。任何**其他**门户侧写接口仍然必须失败。
+    """
+    allowed_write_suffixes = ("/download-ticket", "/favorite", "/like")
     write_methods = {"POST", "PUT", "PATCH", "DELETE"}
     for method, path, _route in ALL_ROUTES:
         if not path.startswith("/api/v1/tools"):
             continue
         if method in write_methods:
-            assert path.endswith("/download-ticket"), f"门户侧意外的写接口: {method} {path}"
+            assert path.endswith(allowed_write_suffixes), (
+                f"门户侧意外的写接口: {method} {path}"
+            )
 
 
 def test_all_write_endpoints_declare_a_write_scope() -> None:

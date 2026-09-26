@@ -9,9 +9,9 @@
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from datetime import UTC, date, datetime, time, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import Date, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.timeutil import utcnow
@@ -24,7 +24,11 @@ from app.models.user import ApiToken, Group, User
 from app.repositories import api_tokens as tokens_repo
 from app.repositories import system_settings as settings_repo
 from app.schemas.admin import (
+    AdminInsightsResponse,
     AdminOverviewResponse,
+    CategoryInsightItem,
+    DailyDownloadPoint,
+    SavingsInsight,
     StatusCount,
     StorageOwnerItem,
     StorageStatsResponse,
@@ -45,6 +49,13 @@ STATUS_ORDER: tuple[str, ...] = (
     ToolStatus.PENDING_UPDATE.value,
     ToolStatus.OFFLINE.value,
 )
+
+#: M8（contracts §23.6）：`downloads_daily` **恰好 30 条**，缺口补 0。
+INSIGHTS_WINDOW_DAYS = 30
+
+#: `category_id IS NULL` 的工具在 `tools_by_category` 里的展示名
+#: （契约 §23.6 的形状要求 `name` 是字符串）。
+UNCATEGORIZED_LABEL = "未分类"
 
 
 async def overview(session: AsyncSession) -> AdminOverviewResponse:
@@ -297,9 +308,218 @@ async def storage_stats(
     )
 
 
+# ===========================================================================
+# M8：`GET /admin/stats/insights`（contracts §23.6，形状冻结）
+# ===========================================================================
+def _day_bucket(session: AsyncSession):
+    """把 `download_logs.created_at` 按 **UTC 日历日** 截断的跨方言表达式。
+
+    `func.date(col)` 只有 SQLite 认识；PostgreSQL 里 `date(x)` 不是函数，
+    必须 `CAST(... AS date)`。`downloads.py` 的 UPSERT 已有同类方言分支先例。
+
+    PG 侧先把 `timestamptz` 转成 UTC 的 wall time 再取 date
+    （`timezone('UTC', ts)`），否则结果会随数据库会话的 `TimeZone` 设置漂移 ——
+    而全库约定是 UTC 存储（docs/02 §1.1）。
+    """
+    bind = session.bind
+    is_pg = bind is not None and getattr(bind.dialect, "name", "") == "postgresql"
+    if is_pg:
+        return cast(func.timezone("UTC", DownloadLog.created_at), Date)
+    return func.date(DownloadLog.created_at)
+
+
+def _normalize_day(value: object) -> str:
+    """SQLite 返回 `'YYYY-MM-DD'` 字符串，PG 返回 `datetime.date` —— 归一成字符串。"""
+    if isinstance(value, date):
+        return value.isoformat()
+    return str(value)[:10]
+
+
+async def insights(session: AsyncSession) -> AdminInsightsResponse:
+    """`GET /admin/stats/insights`（契约 §23.6）。
+
+    与 `/admin/overview` 的关系：**独立端点**。契约 §23.4 说明了理由 ——
+    insights 含 30 天序列与去重人数聚合，明显更重；独立端点让管理台首页先渲染
+    轻量数字，重聚合可以后到/懒加载。因此本函数**不参与** `/admin/overview`
+    的任何代码路径，不会拖慢它。
+
+    **`downloads_daily` 的数据源选择**：用 `download_logs`（明细表）而不是
+    `tool_stats_daily`（每日汇总）。理由：
+
+      1. `tool_stats_daily` 只在**后台计数任务 flush 过之后**才有数据；
+         全新部署、刚重启、或 flush 失败时它是空的，而 `download_logs`
+         与 `tools.download_count` 是同一批 flush 写入的明细，能对上。
+      2. `/admin/overview` 的 `downloads_last_7_days` 已经用 `download_logs` ——
+         同口径才能让两个端点上的「下载量」互相解释。
+      3. 这样能保证 `downloads_last_30_days == sum(downloads_daily)` 恒成立。
+    """
+    now = utcnow()
+    today = now.date()
+    start_day = today - timedelta(days=INSIGHTS_WINDOW_DAYS - 1)
+    since = datetime.combine(start_day, time.min, tzinfo=UTC)
+
+    # ---- 30 天每日下载序列 ----
+    day_bucket = _day_bucket(session)
+    day_rows = (
+        await session.execute(
+            select(day_bucket.label("day"), func.count().label("downloads"))
+            .select_from(DownloadLog)
+            .where(DownloadLog.created_at >= since)
+            .group_by(day_bucket)
+        )
+    ).all()
+    counts: dict[str, int] = {}
+    for day_value, downloads in day_rows:
+        key = _normalize_day(day_value)
+        counts[key] = counts.get(key, 0) + int(downloads)
+
+    downloads_daily: list[DailyDownloadPoint] = []
+    downloads_last_30_days = 0
+    for offset in range(INSIGHTS_WINDOW_DAYS):
+        day = start_day + timedelta(days=offset)
+        value = counts.get(day.isoformat(), 0)  # 缺口补 0
+        downloads_last_30_days += value
+        downloads_daily.append(DailyDownloadPoint(date=day, downloads=value))
+
+    # ---- 30 天内上传/更新过工具的去重用户数 ----
+    active_contributors = int(
+        (
+            await session.execute(
+                select(func.count(func.distinct(ToolVersion.uploaded_by_id))).where(
+                    ToolVersion.created_at >= since,
+                    ToolVersion.uploaded_by_id.is_not(None),
+                )
+            )
+        ).scalar_one()
+    )
+
+    # ---- 按分类的工具数 / 下载量 ----
+    # 只统计**未软删除**的工具，与 `/admin/overview.tool_count` 同口径。
+    category_rows = (
+        await session.execute(
+            select(
+                Tool.category_id,
+                func.count(Tool.id),
+                func.coalesce(func.sum(Tool.download_count), 0),
+            )
+            .where(Tool.deleted_at.is_(None))
+            .group_by(Tool.category_id)
+        )
+    ).all()
+    category_meta: dict[int, tuple[str, int]] = {
+        int(row[0]): (str(row[1]), int(row[2] or 0))
+        for row in (
+            await session.execute(
+                select(Category.id, Category.name, Category.sort_order)
+            )
+        ).all()
+    }
+
+    ordered: list[tuple[tuple[int, int, int], CategoryInsightItem]] = []
+    for category_id, tool_count, download_count in category_rows:
+        if category_id is None:
+            # 未分类排最后（分类内按 sort_order，再按 id 保证确定性）
+            sort_key = (1, 0, 0)
+            name = UNCATEGORIZED_LABEL
+        else:
+            cid = int(category_id)
+            meta = category_meta.get(cid)
+            sort_key = (0, meta[1] if meta else 0, cid)
+            name = meta[0] if meta else f"#{cid}"
+        ordered.append(
+            (
+                sort_key,
+                CategoryInsightItem(
+                    category_id=int(category_id) if category_id is not None else None,
+                    name=name,
+                    tool_count=int(tool_count),
+                    download_count=int(download_count or 0),
+                ),
+            )
+        )
+    ordered.sort(key=lambda pair: pair[0])
+    tools_by_category = [item for _key, item in ordered]
+
+    # ---- 效率估算（公式冻结，见 contracts §23.6）----
+    #
+    # total_minutes = Σ_over_tools ( estimated_saving_minutes
+    #                                × COUNT(DISTINCT download_logs.user_id) )
+    #   仅计入 estimated_saving_minutes IS NOT NULL 且 user_id IS NOT NULL
+    #
+    # 「去重受益人数」用 COUNT(DISTINCT user_id) 而不是原始下载量 ——
+    # 原始量会把「同一人重复下载 / 版本升级」重复计数，使估算进一步虚高
+    # （契约 §23.1 ②）。
+    per_tool_users = (
+        select(
+            DownloadLog.tool_id.label("tool_id"),
+            func.count(func.distinct(DownloadLog.user_id)).label("distinct_users"),
+        )
+        .where(DownloadLog.user_id.is_not(None))
+        .group_by(DownloadLog.tool_id)
+        .subquery()
+    )
+    total_minutes = int(
+        (
+            await session.execute(
+                select(
+                    func.coalesce(
+                        func.sum(
+                            per_tool_users.c.distinct_users * Tool.estimated_saving_minutes
+                        ),
+                        0,
+                    )
+                )
+                .select_from(Tool)
+                .join(per_tool_users, per_tool_users.c.tool_id == Tool.id)
+                .where(
+                    Tool.deleted_at.is_(None),
+                    Tool.estimated_saving_minutes.is_not(None),
+                )
+            )
+        ).scalar_one()
+    )
+    # 覆盖率的分母/分子必须同口径（都排除软删除），否则比率会失真。
+    covered_tool_count = int(
+        (
+            await session.execute(
+                select(func.count())
+                .select_from(Tool)
+                .where(
+                    Tool.deleted_at.is_(None),
+                    Tool.estimated_saving_minutes.is_not(None),
+                )
+            )
+        ).scalar_one()
+    )
+    total_tool_count = int(
+        (
+            await session.execute(
+                select(func.count()).select_from(Tool).where(Tool.deleted_at.is_(None))
+            )
+        ).scalar_one()
+    )
+
+    return AdminInsightsResponse(
+        downloads_last_30_days=downloads_last_30_days,
+        downloads_daily=downloads_daily,
+        active_contributors_30d=active_contributors,
+        tools_by_category=tools_by_category,
+        savings=SavingsInsight(
+            total_minutes=total_minutes,
+            covered_tool_count=covered_tool_count,
+            total_tool_count=total_tool_count,
+            # 常量口径声明，**不可省**（契约 §23.6）。
+            basis="author_estimate",
+        ),
+    )
+
+
 __all__ = [
+    "INSIGHTS_WINDOW_DAYS",
     "STATUS_ORDER",
+    "UNCATEGORIZED_LABEL",
     "ApiToken",
+    "insights",
     "overview",
     "storage_stats",
     "tool_ranking",

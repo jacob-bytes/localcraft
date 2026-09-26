@@ -1,13 +1,17 @@
 """全部 ORM 模型。导入本包即完成 `Base.metadata` 的注册（Alembic autogenerate 依赖它）。
 
-20 张表 = 19 个 SQLAlchemy 模型 + 1 个 SQLite FTS5 虚表 `tool_search_index`
-（虚表由迁移 0003 用原生 DDL 创建，不是 ORM 模型）。
+表数：docs/02 §3 定义的 20 张（19 个 SQLAlchemy 模型 + 1 个 SQLite FTS5 虚表
+`tool_search_index`，虚表由迁移 0003 用原生 DDL 创建，不是 ORM 模型），
+加上 **M8 新增的 2 张**（`tool_favorites` / `tool_likes`，contracts §23.3）= 22 张。
+
+> docs/02 尚未登记这 2 张新表（`docs/` 由监控方维护，M8 后端不改文档）。
 """
 
 from __future__ import annotations
 
 from app.db.base import Base
 from app.models.approval import ApprovalRecord
+from app.models.engagement import ToolFavorite, ToolLike
 from app.models.setting import SystemSetting
 from app.models.stats import DownloadLog, ToolStatsDaily
 from app.models.taxonomy import Category, Tag
@@ -38,7 +42,9 @@ __all__ = [
     "Tag",
     "Tool",
     "ToolAcl",
+    "ToolFavorite",
     "ToolImage",
+    "ToolLike",
     "ToolStatsDaily",
     "ToolTag",
     "ToolVersion",
@@ -46,7 +52,10 @@ __all__ = [
     "UserRole",
 ]
 
-#: docs/02 §3 定义的 20 张表（含 FTS5 虚表）
+#: 当前实际存在的表（含 FTS5 虚表）。
+#:
+#: 原始来源是 docs/02 §3 的 20 张表；M8 按 contracts §23.3 追加
+#: `tool_favorites` / `tool_likes` 两张，因此现在是 22 张。
 EXPECTED_TABLES: frozenset[str] = frozenset(
     {
         "users",
@@ -69,5 +78,8 @@ EXPECTED_TABLES: frozenset[str] = frozenset(
         "tool_stats_daily",
         "system_settings",
         "tool_search_index",
+        # ---- M8 ----
+        "tool_favorites",
+        "tool_likes",
     }
 )

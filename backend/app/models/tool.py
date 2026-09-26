@@ -129,6 +129,24 @@ class Tool(Base):
     # 冗余计数：内存聚合后批量落库，禁止逐请求 UPDATE（README 第 4 条）
     download_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     view_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    # ---- M8：收藏 / 点赞计数是**反规范化列**（contracts §23.3）----
+    #
+    # 为什么不是实时聚合：列表接口否则需要 JOIN + GROUP BY，而 docs/11 §2.2
+    # 已记录列表当前是 4 条查询、CPU 随并发放大尚未定位。契约 §23.3 明令禁止
+    # 改成实时聚合。计数与关系表写入在**同一事务**内维护（`engagement_service`）。
+    favorite_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    like_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    # ---- M8：作者自述的「单次使用预计节省分钟数」（contracts §23.3 ③）----
+    #
+    # **NULL 表示作者未填写，不是一个可以当成 0 的值**（契约 §23.3）。
+    # 取值 1~1440 由 API 层（`ToolCreateRequest` / `ToolUpdateRequest`）校验，
+    # 超出即 `VALIDATION_ERROR`；这里不加数据库 CHECK，避免绕过 API 的写入
+    # 直接撞约束变成 500。
+    estimated_saving_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_version_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # reject_reason / offline_reason 是 approval_records 的冗余副本，
