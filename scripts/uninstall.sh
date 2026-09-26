@@ -36,7 +36,12 @@ set -uo pipefail
 
 # ---------- 路径（可用环境变量覆盖，与 install.sh 同名同默认值）----------
 PREFIX="${LOCALCRAFT_PREFIX:-/opt/localcraft}"
-DATA_DIR="${LOCALCRAFT_DATA_DIR:-/var/lib/localcraft}"
+# 配置解析：**应用读的变量名优先**，历史 LOCALCRAFT_ 前缀名作兼容别名，最后才是默认值。
+# 为什么必须这样：localcraft.env 里写的是应用读的名字，而 systemd 单元用
+# EnvironmentFile 把它们注入脚本环境。脚本若只认 LOCALCRAFT_DATA_DIR，
+# 运维改了 DATA_DIR 后脚本会静默回落到 /var/lib/localcraft ——
+# 备份跑成功、退出码 0、日志正常，备的却是错的目录。
+DATA_DIR="${DATA_DIR:-${LOCALCRAFT_DATA_DIR:-/var/lib/localcraft}}"
 ETC_DIR="${LOCALCRAFT_ETC_DIR:-/etc/localcraft}"
 LOG_DIR="${LOCALCRAFT_LOG_DIR:-/var/log/localcraft}"
 

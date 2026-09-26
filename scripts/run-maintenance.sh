@@ -16,9 +16,11 @@
 # ============================================================
 set -uo pipefail
 
-# 路径与生产落位一致（docs/05 §4.2）；可用环境变量覆盖以便演练
+# 路径与生产落位一致（docs/05 §4.2）；可用环境变量覆盖以便演练。
+# 注意：下面第 53 行会 source ENV_FILE，env 文件里的 DATA_DIR 会**覆盖**这里的初值，
+# 所以这里只是「env 文件里没写 DATA_DIR」时的兜底。
 PREFIX="${LOCALCRAFT_PREFIX:-/opt/localcraft}"
-DATA_DIR="${LOCALCRAFT_DATA_DIR:-/var/lib/localcraft}"
+DATA_DIR="${DATA_DIR:-${LOCALCRAFT_DATA_DIR:-/var/lib/localcraft}}"
 ENV_FILE="${LOCALCRAFT_ENV_FILE:-/etc/localcraft/localcraft.env}"
 APP_DIR="$PREFIX/app/current"
 VENV="$PREFIX/venv"
@@ -53,8 +55,9 @@ set -a
 . "$ENV_FILE"
 set +a
 
-# 数据目录以 env 文件为准（生产固定绝对路径）
-DATA_DIR="${DATA_DIR:-$DATA_DIR}"
+# 数据目录以 env 文件为准（上面已 source，生产固定绝对路径）。
+# 原先这里是 `DATA_DIR="${DATA_DIR:-$DATA_DIR}"` —— 一个恒等赋值，什么也没做；
+# 留着会让读者以为此处有兜底逻辑，故删除。
 
 # 孤儿文件清理要删磁盘文件，先确认数据目录可写，否则会报一堆假失败
 [ -w "$DATA_DIR" ] || log "警告：$DATA_DIR 不可写，孤儿文件清理会失败（其余任务不受影响）"

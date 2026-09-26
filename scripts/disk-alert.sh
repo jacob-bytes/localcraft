@@ -47,7 +47,15 @@ set -uo pipefail
 # 两者都没设时才用生产默认值，方便在沙箱里演练。
 DATA_DIR="${DATA_DIR:-${LOCALCRAFT_DATA_DIR:-/var/lib/localcraft}}"
 BACKUP_DIR="${BACKUP_DIR:-${LOCALCRAFT_BACKUP_DIR:-${DATA_DIR}/backups}}"
-DB="${LOCALCRAFT_DB:-${DATA_DIR}/localcraft.db}"
+# DB 路径由 DATABASE_URL 派生（应用只用这一个变量描述数据库位置）。
+# `sqlite+aiosqlite:///` 之后 3 个斜杠是相对路径、4 个是绝对路径，
+# 两种都靠“去掉这 3 个斜杠”得到正确结果。
+case "${DATABASE_URL:-}" in
+    sqlite+aiosqlite:///*) _DB_FROM_URL="${DATABASE_URL#sqlite+aiosqlite:///}" ;;
+    *) _DB_FROM_URL="" ;;
+esac
+DB="${_DB_FROM_URL:-${LOCALCRAFT_DB:-${DATA_DIR}/localcraft.db}}"
+unset _DB_FROM_URL
 ALERT_FILE="${LOCALCRAFT_ALERT_FILE:-${DATA_DIR}/ALERT.txt}"
 
 # 阈值（百分比 / MB / 小时），默认值与 docs/05 §9.6、§10.5 一致

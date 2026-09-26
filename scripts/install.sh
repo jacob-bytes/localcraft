@@ -31,7 +31,11 @@ RELEASE_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # ---------- 路径（可用环境变量覆盖，默认与 docs/05 §4.2 一致）----------
 PREFIX="${LOCALCRAFT_PREFIX:-/opt/localcraft}"
-DATA_DIR="${LOCALCRAFT_DATA_DIR:-/var/lib/localcraft}"
+# 本脚本是**生成器**：把这里的取值写进 localcraft.env（第 201 行 sed DATA_DIR=…），
+# 应用与运维脚本之后读的都是无前缀的 DATA_DIR。所以这里的优先级与那些消费者脚本相反 ——
+# LOCALCRAFT_DATA_DIR 是安装期的显式开关（docs/05 与 m4 演练都用它），必须排在最前，
+# 否则环境里一个陈旧的 DATA_DIR 就能悄悄改变安装目标目录。
+DATA_DIR="${LOCALCRAFT_DATA_DIR:-${DATA_DIR:-/var/lib/localcraft}}"
 ETC_DIR="${LOCALCRAFT_ETC_DIR:-/etc/localcraft}"
 LOG_DIR="${LOCALCRAFT_LOG_DIR:-/var/log/localcraft}"
 

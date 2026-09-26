@@ -30,7 +30,12 @@ set -uo pipefail
 
 # ---------- 路径（与 install.sh 同一套变量名与默认值）----------
 PREFIX="${LOCALCRAFT_PREFIX:-/opt/localcraft}"
-DATA_DIR="${LOCALCRAFT_DATA_DIR:-/var/lib/localcraft}"
+# 配置解析：**应用读的变量名优先**，历史 LOCALCRAFT_ 前缀名作兼容别名，最后才是默认值。
+# 为什么必须这样：localcraft.env 里写的是应用读的名字，而 systemd 单元用
+# EnvironmentFile 把它们注入脚本环境。脚本若只认 LOCALCRAFT_DATA_DIR，
+# 运维改了 DATA_DIR 后脚本会静默回落到 /var/lib/localcraft ——
+# 备份跑成功、退出码 0、日志正常，备的却是错的目录。
+DATA_DIR="${DATA_DIR:-${LOCALCRAFT_DATA_DIR:-/var/lib/localcraft}}"
 ETC_DIR="${LOCALCRAFT_ETC_DIR:-/etc/localcraft}"
 LOG_DIR="${LOCALCRAFT_LOG_DIR:-/var/log/localcraft}"
 
@@ -40,7 +45,15 @@ APP_LINK="$PREFIX/app/current"
 RELEASES_DIR="$PREFIX/releases"
 SCRIPTS_DIR="$PREFIX/scripts"
 BACKUP_ROOT="${LOCALCRAFT_BACKUP_DIR:-$DATA_DIR/backups}"
-DB_FILE="${LOCALCRAFT_DB:-$DATA_DIR/localcraft.db}"
+# DB 路径由 DATABASE_URL 派生（应用只用这一个变量描述数据库位置）。
+# `sqlite+aiosqlite:///` 之后 3 个斜杠是相对路径、4 个是绝对路径，
+# 两种都靠“去掉这 3 个斜杠”得到正确结果。
+case "${DATABASE_URL:-}" in
+    sqlite+aiosqlite:///*) _DB_FROM_URL="${DATABASE_URL#sqlite+aiosqlite:///}" ;;
+    *) _DB_FROM_URL="" ;;
+esac
+DB_FILE="${_DB_FROM_URL:-${LOCALCRAFT_DB:-$DATA_DIR/localcraft.db}}"
+unset _DB_FROM_URL
 FILES_DIR="${LOCALCRAFT_FILES_DIR:-$DATA_DIR/files}"
 PID_FILE="$DATA_DIR/localcraft.pid"
 HEALTH_URL="http://127.0.0.1:${LOCALCRAFT_PORT:-8000}/readyz"
