@@ -69,10 +69,37 @@ else
     warn "python3.11 -m pip 不可用，请安装 python3.11-pip 或使用 ensurepip"
 fi
 
-# 6) 必需命令
-for c in nginx sqlite3 rsync tar openssl systemctl journalctl curl; do
+# 6) 必需命令（与前端托管方式无关的那些）
+for c in sqlite3 rsync tar openssl systemctl journalctl curl; do
     if command -v "$c" >/dev/null 2>&1; then ok "命令可用: $c"; else err "缺少命令: $c"; fi
 done
+
+# 6b) 按部署模式检查前端托管方式
+#
+# 生产拓扑有两种（docs/05 §7）：
+#   direct —— 后端自己托管前端构建产物，直接 `IP:PORT` 访问，不需要任何反代
+#   nginx  —— nginx 反代，负责 TLS / 限流 / 静态加速
+#
+# 之前 nginx 被无条件列为**必需命令**，于是「直连」这种完全合法的部署方式
+# 会在自检阶段就被判 FAIL。现在按模式区分。
+WEB_MODE="${LOCALCRAFT_WEB_MODE:-nginx}"
+case "$WEB_MODE" in
+    direct)
+        ok "部署模式: direct —— 应用自己托管前端，跳过 nginx 检查"
+        warn "直连请确认 localcraft.env 里 LOCALCRAFT_HOST=0.0.0.0，否则只有本机能访问"
+        warn "直连是明文 HTTP：登录密码在局域网内不加密（可用 uvicorn 自带 TLS，或改回 nginx 模式）"
+        ;;
+    nginx)
+        if command -v nginx >/dev/null 2>&1; then
+            ok "命令可用: nginx（部署模式 nginx）"
+        else
+            err "缺少命令: nginx。若本来就不打算用反代，设 LOCALCRAFT_WEB_MODE=direct 后重跑"
+        fi
+        ;;
+    *)
+        err "LOCALCRAFT_WEB_MODE 取值无效: ${WEB_MODE}（可用 direct / nginx）"
+        ;;
+esac
 
 # 7) 可选命令
 for c in semanage restorecon setsebool firewall-cmd jq logrotate; do

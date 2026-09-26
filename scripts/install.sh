@@ -308,17 +308,34 @@ cat <<EOF
      $VENV/bin/python -m app.cli create-superadmin --username admin --email admin@intra.example.com
    '
 
-2) 配置 nginx（先用 HTTP 快速验证版）
-   install -m 0644 $RELEASE_DIR/deploy/nginx/localcraft-http.conf /etc/nginx/conf.d/localcraft.conf
-   nginx -t && systemctl reload nginx
+2) 让外部能访问 —— 两种方式，按 LOCALCRAFT_WEB_MODE 选一种即可
+   （当前 LOCALCRAFT_WEB_MODE=${LOCALCRAFT_WEB_MODE:-nginx}）
 
-   验证通过后切生产 TLS（证书放到 $ETC_DIR/tls/）：
-     rm -f /etc/nginx/conf.d/localcraft-http.conf
-     install -m 0644 $RELEASE_DIR/deploy/nginx/localcraft-limits.conf /etc/nginx/conf.d/localcraft-limits.conf
-     install -m 0644 $RELEASE_DIR/deploy/nginx/localcraft.conf       /etc/nginx/conf.d/localcraft.conf
-     nginx -t && systemctl reload nginx
-   （localcraft-http.conf 自带一份 zone/log_format 定义，与 localcraft-limits.conf 同名，
-     两者不能同时安装，否则 nginx 会因重复定义而启动失败）
+   ── 方式 A：direct（不用 nginx，直接 IP:PORT）
+      只需确认 $ENV_FILE 里：
+        LOCALCRAFT_HOST=0.0.0.0        # 不改的话只有本机能访问
+        LOCALCRAFT_PORT=${LOCALCRAFT_PORT:-8000}
+      然后放行防火墙：
+        firewall-cmd --add-port=${LOCALCRAFT_PORT:-8000}/tcp --permanent && firewall-cmd --reload
+      访问 http://<本机IP>:${LOCALCRAFT_PORT:-8000}
+
+      注意：直连是**明文 HTTP**，登录密码在局域网内不加密，refresh cookie 也不是 Secure。
+      内网可信环境下可以接受；若要加密又不想上 nginx，可让 uvicorn 自己终结 TLS：
+        Environment=... --ssl-certfile=$ETC_DIR/tls/fullchain.pem --ssl-keyfile=$ETC_DIR/tls/privkey.pem
+      （自签证书即可；同时把 $ENV_FILE 里的 COOKIE_SECURE 改成 true）
+      安全响应头（CSP / X-Frame-Options / nosniff …）应用会自己发，两种方式都不缺。
+
+   ── 方式 B：nginx（反代，负责 TLS + 限流 + 静态加速）
+      先用 HTTP 快速验证版：
+        install -m 0644 $RELEASE_DIR/deploy/nginx/localcraft-http.conf /etc/nginx/conf.d/localcraft.conf
+        nginx -t && systemctl reload nginx
+      验证通过后切生产 TLS（证书放到 $ETC_DIR/tls/）：
+        rm -f /etc/nginx/conf.d/localcraft-http.conf
+        install -m 0644 $RELEASE_DIR/deploy/nginx/localcraft-limits.conf /etc/nginx/conf.d/localcraft-limits.conf
+        install -m 0644 $RELEASE_DIR/deploy/nginx/localcraft.conf       /etc/nginx/conf.d/localcraft.conf
+        nginx -t && systemctl reload nginx
+      （localcraft-http.conf 自带一份 zone/log_format 定义，与 localcraft-limits.conf 同名，
+        两者不能同时安装，否则 nginx 会因重复定义而启动失败）
 
 3) 验证
    curl -sS http://127.0.0.1:${LOCALCRAFT_PORT:-8000}/healthz

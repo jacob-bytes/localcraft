@@ -36,6 +36,7 @@ from app.core.config import settings
 from app.core.errors import DomainError, code_for_status, message_for_code
 from app.core.logging import configure_logging
 from app.core.request_id import resolve_request_id
+from app.core.security_headers import SecurityHeadersMiddleware
 from app.core.timeutil import utcnow
 from app.db.session import SessionLocal, engine
 from app.schemas.meta import HealthResponse, ReadyCheck, ReadyResponse
@@ -127,6 +128,9 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(RequestContextMiddleware)
+# 安全响应头放在最外层之后注册，确保连错误响应也带上（nginx 的 `always` 同义）。
+# 直连部署（无 nginx）时这一层就是全部防护，详见 app/core/security_headers.py。
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 # ---------------------------------------------------------------------------
@@ -345,6 +349,12 @@ def _mount_spa(application: FastAPI) -> None:
 
     # 静态根下的散装文件（favicon.ico、robots.txt 等）与前端路由兜底。
     # 为什么不能用 `@application.get(...)`：见 `_SpaFallbackRoute` 的 docstring。
+    #
+    # index.html **绝不能长缓存**：新版本发布后用户仍加载旧入口，而旧入口引用的
+    # 带哈希 assets 已被删除，页面直接白屏。nginx 侧用 `expires -1` 表达同一件事；
+    # 直连部署没有 nginx，必须由应用自己声明。
+    _NO_STORE = {"Cache-Control": "no-store, no-cache, must-revalidate"}
+
     async def spa_fallback(request: Request) -> Response:
         full_path = request.path_params["full_path"]
         candidate = (web_dist / full_path).resolve()
@@ -352,10 +362,12 @@ def _mount_spa(application: FastAPI) -> None:
             candidate.relative_to(web_dist.resolve())
         except ValueError:
             # 目录穿越尝试：当作前端路由，交给 index.html
-            return FileResponse(index_file)
+            return FileResponse(index_file, headers=_NO_STORE)
         if candidate.is_file():
+            # 真实存在的散装静态文件（favicon 等）可以缓存，不加 no-store
             return FileResponse(candidate)
-        return FileResponse(index_file)
+        # 前端路由（/tools/123…）：回退入口，同样不能缓存
+        return FileResponse(index_file, headers=_NO_STORE)
 
     application.router.routes.append(
         _SpaFallbackRoute(
