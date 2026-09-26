@@ -146,6 +146,14 @@ total_minutes = Σ ( estimated_saving_minutes × COUNT(DISTINCT download_logs.us
    - **收藏了不可见工具时不泄漏**（B7 的要求）
    - `estimated_saving_minutes` 的边界（0 / 1 / 1440 / 1441 / null）
    - `savings` 公式：构造已知数据，**手算期望值**再断言，不要用实现的输出反推期望
+7. **若你新增任何带 `LOCALCRAFT_` 前缀的环境变量，必须同时配 `validation_alias` /
+   `AliasChoices`。** pydantic-settings **不做前缀映射**，字段 `foo_bar` 只认
+   `FOO_BAR`，写成 `LOCALCRAFT_FOO_BAR` 会被 `extra="ignore"` **静默吞掉**——
+   表现为配置看起来生效（shell、systemd unit 里都有值）却完全不起作用，且**不报错**。
+   这是 M7 实测踩到的坑（`docs/09` §15、`contracts/CONTRACT.md` §24.2），
+   本轮 B10 若要加缓存 TTL 之类的变量，务必照做。
+   另外注意：**32 个既有环境变量名里只有 4 个带 `LOCALCRAFT_` 前缀**，
+   不要顺手给新变量都加前缀 —— 带不带前缀取决于有没有配 alias，与"规范"无关。
 
 ---
 
