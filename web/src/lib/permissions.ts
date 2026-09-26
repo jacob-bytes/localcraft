@@ -41,3 +41,20 @@ export function canApprove(user: User | null): boolean {
 export function canUpload(user: User | null): boolean {
   return hasAnyRole(user, ["user", "approver", "superadmin"]);
 }
+
+/**
+ * M9 · 收藏 / 点赞是 `user`+ 能力，**`viewer` 被刻意排除**（CONTRACT §25.1）。
+ *
+ * 权威在服务端：`backend/app/api/v1/tools.py` 的 `engagement_guard` 要求
+ * `user` / `approver` / `superadmin` + `tools:write`，`viewer` 实测得 403。
+ * 这里的判定只是「要不要渲染控件」的体验优化（docs/04 §4：前端不是安全边界）。
+ *
+ * 角色集合与 `canUpload` 恰好相同，但**语义不同**（投稿能力 vs 投票能力），所以
+ * 单独命名：日后其中之一收窄时，不该悄悄牵连另一个。
+ *
+ * 注意用「有任一允许角色」而不是「等于 viewer」：多角色账号（如
+ * `["viewer", "user"]`）在服务端是放行的，前端也必须放行。
+ */
+export function canEngage(user: User | null): boolean {
+  return hasAnyRole(user, ["user", "approver", "superadmin"]);
+}

@@ -145,12 +145,23 @@ export const router = createBrowserRouter([
                   /*
                    * M8 · F7.3：我的收藏。
                    *
-                   * **刻意放在 `RequireRole(AUTHOR_ROLES)` 之外** —— 收藏与作者角色
-                   * 无关，`viewer` 也应该能收藏并看到自己的收藏夹（契约 §23 对收藏
-                   * 没有任何角色限制）。放进 `me` 的 children 里会让 viewer 被挡在
-                   * 「发不了工具的只读访客」这层门外。
+                   * M9 修正（§25.1）：M8 当时把它**刻意放在 `RequireRole` 之外**，
+                   * 理由是「契约 §23 对收藏没有任何角色限制，`viewer` 也应该能收藏」。
+                   * 那个假设已被裁定推翻 —— §23.4 只是**漏写**了授权，权威是后端
+                   * `engagement_guard`（`user` / `approver` / `superadmin`，
+                   * **不含 `viewer`**，实测 viewer 收藏必 403）。`viewer` 既然永远
+                   * 收藏不了，这一页对它必然恒空，且空态里「点卡片右上角的收藏」这句
+                   * 指引对它是假的，所以这里补上与 `/me/*` 同一个角色门：
+                   * `viewer` 直达 URL 会看到「没有访问权限」，而不是一个空收藏夹。
                    */
-                  { path: "me/favorites", element: <MyFavoritesPage /> },
+                  {
+                    path: "me/favorites",
+                    element: (
+                      <RequireRole roles={[...AUTHOR_ROLES]}>
+                        <MyFavoritesPage />
+                      </RequireRole>
+                    ),
+                  },
 
                   {
                     path: "me",

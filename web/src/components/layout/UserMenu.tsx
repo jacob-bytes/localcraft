@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/hooks/useAuth";
 import { initials } from "@/lib/format";
-import { canApprove, primaryRoleLabel } from "@/lib/permissions";
+import { canApprove, canEngage, primaryRoleLabel } from "@/lib/permissions";
 
 /**
  * Top-bar user menu (docs/04 §5.1).
@@ -106,15 +106,20 @@ export function UserMenu({ minimal = false }: { minimal?: boolean }) {
               <PackageIcon aria-hidden="true" className="size-4" />
               我的工具
             </DropdownMenuItem>
-            {/* M8 · F7.4：我的收藏直达链接（登录后才可能看到这个菜单）。 */}
-            <DropdownMenuItem
-              onSelect={() => {
-                navigate("/me/favorites");
-              }}
-            >
-              <StarIcon aria-hidden="true" className="size-4" />
-              我的收藏
-            </DropdownMenuItem>
+            {/* M8 · F7.4：我的收藏直达链接（登录后才可能看到这个菜单）。
+                M9（§25.1）：`viewer` 收藏不了任何东西，这一个入口对它是死链，所以
+                与左栏入口、路由门一起隐藏（`canEngage` = 后端 `engagement_guard`
+                的同一组角色）。 */}
+            {canEngage(user) ? (
+              <DropdownMenuItem
+                onSelect={() => {
+                  navigate("/me/favorites");
+                }}
+              >
+                <StarIcon aria-hidden="true" className="size-4" />
+                我的收藏
+              </DropdownMenuItem>
+            ) : null}
             {canApprove(user) ? (
               <DropdownMenuItem
                 onSelect={() => {

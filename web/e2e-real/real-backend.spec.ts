@@ -905,6 +905,98 @@ test.describe("真实后端联调（mock 之外的路径）", () => {
     await viewerContext!.close();
   });
 
+  /*
+   * M9 · viewer 不可收藏 / 点赞（CONTRACT §25.1）。
+   *
+   * 背景：§23.4 冻结 4 个收藏/点赞端点时漏写了授权，后端按「只读角色不能刷全站
+   * 公共计数」实现（`engagement_guard`：`user` / `approver` / `superadmin`，
+   * **不含 `viewer`**），前端却按「契约没限制角色」把控件渲染给所有人 —— 于是
+   * viewer 看到星标、点下去必 403。裁定：后端胜出，前端隐藏控件并给出原因。
+   *
+   * 这条用例把裁定的**两侧**都钉在真机上（mock 做不到）：控件确实不存在、
+   * 写接口确实 403、读接口确实放行，且 `user` 的行为没有被误伤。
+   */
+  test("O. viewer 不可收藏/点赞：控件不存在 + 写接口 403 + 读接口 200（§25.1）", async ({
+    page,
+  }) => {
+    const auth = captureAuthHeader(page);
+    await signIn(page, "viewer", "Viewer@12345");
+    await expectPortalReady(page);
+    const slug = await firstToolSlug(page, auth);
+
+    // ① 门户卡片：计数照常（公共数字），收藏星标不存在、左栏入口也不存在
+    const card = page.locator(`[data-tool-slug="${slug}"]`);
+    await expect(card.getByTestId("favorite-count-value")).toBeVisible();
+    await expect(card.getByTestId("card-favorite-button")).toHaveCount(0);
+    await expect(page.getByTestId("nav-my-favorites")).toHaveCount(0);
+
+    // ② 详情页：没有可交互控件，但有一行权限说明；计数仍在信息栏
+    await page.goto(`/tools/${slug}`);
+    await expectAfterNavigation(page.getByTestId("tool-detail"), "工具详情页");
+    await expect(page.getByTestId("favorite-button")).toHaveCount(0);
+    await expect(page.getByTestId("like-button")).toHaveCount(0);
+    const note = page.getByTestId("engagement-permission-note");
+    await expect(note).toBeVisible();
+    await expect(note).toContainText("当前角色无收藏、点赞权限");
+    await expect(page.getByTestId("tool-detail").locator("dt", { hasText: /^收藏$/ })).toBeVisible();
+
+    // ③ 真机授权：写端点 403（§25.1 实测的固化），读端点 200
+    const favorite = await api(page, `${API}/tools/${slug}/favorite`, auth.current(), {
+      method: "PUT",
+    });
+    expect(favorite.status, "viewer 收藏写端点应被拒（403）").toBe(403);
+    const like = await api(page, `${API}/tools/${slug}/like`, auth.current(), { method: "PUT" });
+    expect(like.status, "viewer 点赞写端点应被拒（403）").toBe(403);
+    const favorites = await api(page, `${API}/me/favorites`, auth.current());
+    expect(favorites.status, "读接口对 viewer 放行（§25.1：200）").toBe(200);
+
+    // ④ 直达 `/me/favorites`：角色门给出说明，而不是一个永远空的收藏夹
+    await page.goto("/me/favorites");
+    await expectAfterNavigation(page.getByText("没有访问权限"), "无权限说明");
+    await expect(page.getByTestId("my-favorites-page")).toHaveCount(0);
+
+    // ⑤ `user` 未被误伤：控件在、写端点放行，且用完还原成种子状态（幂等 DELETE）
+    const authorContext = await page.context().browser()?.newContext({ locale: "zh-CN" });
+    expect(authorContext, "应能开第二个浏览器上下文").toBeTruthy();
+    const authorPage = await authorContext!.newPage();
+    const authorAuth = captureAuthHeader(authorPage);
+    await signIn(authorPage, AUTHOR.username, AUTHOR.password);
+    await expectPortalReady(authorPage);
+
+    const authorCard = authorPage.locator(`[data-tool-slug="${slug}"]`);
+    const authorButton = authorCard.getByTestId("card-favorite-button");
+    await expect(authorButton).toBeVisible();
+    await expect(authorButton).toHaveAttribute("aria-pressed", "false");
+
+    const added = await api(authorPage, `${API}/tools/${slug}/favorite`, authorAuth.current(), {
+      method: "PUT",
+    });
+    expect(added.status, "user 仍可收藏").toBe(200);
+    const afterAdd = (
+      await api(authorPage, `${API}/tools/${slug}`, authorAuth.current())
+    ).body as unknown as { is_favorited: boolean; favorite_count: number };
+    expect(afterAdd.is_favorited).toBe(true);
+    expect(afterAdd.favorite_count).toBe(1);
+
+    const removed = await api(authorPage, `${API}/tools/${slug}/favorite`, authorAuth.current(), {
+      method: "DELETE",
+    });
+    expect(removed.status, "user 仍可取消收藏（幂等）").toBe(200);
+    const afterRemove = (
+      await api(authorPage, `${API}/tools/${slug}`, authorAuth.current())
+    ).body as unknown as { is_favorited: boolean; favorite_count: number };
+    expect(afterRemove.is_favorited).toBe(false);
+    expect(afterRemove.favorite_count, "用例结束后应回到种子基线（0）").toBe(0);
+
+    // 详情页的控件也在，且**没有**那行权限说明（说明只对无投票角色的账号出现）
+    await authorPage.goto(`/tools/${slug}`);
+    await expectAfterNavigation(authorPage.getByTestId("favorite-button"), "user 的收藏按钮");
+    await expect(authorPage.getByTestId("like-button")).toBeVisible();
+    await expect(authorPage.getByTestId("engagement-permission-note")).toHaveCount(0);
+
+    await authorContext!.close();
+  });
+
   test("L. 懒加载 chunk 一次性失败 → 自动重载并恢复（M4 交付项 1.1/1.3/1.4）", async ({ page }) => {
     /*
      * 这两个韧性用例**只能**在真实产物上跑：mock 模式（dev + MSW）下页面被 Service

@@ -2,6 +2,7 @@ import { Star } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 
 import { useAuth } from "@/hooks/useAuth";
+import { canEngage } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 
 /**
@@ -14,12 +15,17 @@ import { cn } from "@/lib/utils";
  * **匿名整块不渲染**：收藏是登录态功能（§23.5：匿名 `is_favorited` 恒为 false），
  * 未登录时给一个点进去就被重定向的入口只会制造困惑 —— 与卡片上「不显示收藏按钮、
  * 只显示计数」是同一套匿名策略。
+ *
+ * **M9（§25.1）· `viewer` 同样整块不渲染**：后端 `engagement_guard` 不含 `viewer`，
+ * 该角色**永远收藏不了任何工具**，所以「我的收藏」对它必然是一个空页 —— 入口连同
+ * 页面一起隐藏（`routes.tsx` 里该路由对 `viewer` 也做了角色门），而不是留一个
+ * 永远进不去东西的入口。
  */
 export function PortalSideNav() {
-  const { status } = useAuth();
+  const { status, user } = useAuth();
   const location = useLocation();
 
-  if (status !== "authenticated") return null;
+  if (status !== "authenticated" || !canEngage(user)) return null;
 
   const active = location.pathname.startsWith("/me/favorites");
 

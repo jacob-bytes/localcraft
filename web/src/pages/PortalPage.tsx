@@ -316,7 +316,8 @@ export default function PortalPage() {
         {/* ---- Left rail (lg+) ---- */}
         <aside aria-label="筛选条件" className="hidden lg:block">
           <div className="sticky top-20 rounded-xl border bg-card p-2">
-            {/* M8 · F7.4：「我的收藏」入口（匿名不渲染，见 PortalSideNav）。 */}
+            {/* M8 · F7.4：「我的收藏」入口（匿名不渲染；M9/§25.1 起 `viewer`
+                同样不渲染 —— 它收藏不了任何东西。判定都在 PortalSideNav 里）。 */}
             <PortalSideNav />
             <ToolFilters {...filterProps} />
           </div>

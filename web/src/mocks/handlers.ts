@@ -765,6 +765,23 @@ function canDownload(record: MockToolRecord, user: MockUser | null): boolean {
   );
 }
 
+/**
+ * M9（CONTRACT §25.1）· 收藏 / 点赞的角色门。
+ *
+ * 与真机对齐：`backend/app/api/v1/tools.py` 的 `engagement_guard` 要求
+ * `user` / `approver` / `superadmin`（+ `tools:write`），**不含 `viewer`**。
+ * mock 之前只挡了匿名，viewer 在 mock 里能收藏成功 —— 与真机（403）相反。
+ * 那正是本轮缺陷能溜过 mock E2E 的原因，所以这里补上同一组角色。
+ */
+function canEngage(user: MockUser | null): boolean {
+  if (user === null) return false;
+  return (
+    user.roles.includes("user") ||
+    user.roles.includes("approver") ||
+    user.roles.includes("superadmin")
+  );
+}
+
 function canEdit(record: MockToolRecord, user: MockUser | null): boolean {
   // 匿名不是任何工具的作者
   if (user === null) return false;
@@ -2526,6 +2543,11 @@ export const handlers = [
    *
    * 匿名一律 401（收藏是登录态功能；§23.5 里匿名 `is_favorited` 恒为 false，
    * 前端也不会渲染按钮，这里再兜一层）。
+   *
+   * M9（§25.1）：**`viewer` 一律 403**。角色的权威在真机后端
+   * （`engagement_guard`：`user` / `approver` / `superadmin`），mock 之前漏了这一层，
+   * 于是「viewer 点收藏得 403」这个缺陷在 mock E2E 里根本复现不出来。文案与真机
+   * 的 `require_roles_and_scope` 逐字对齐（见 `backend/app/core/deps.py`）。
    */
   http.put(`${API}/tools/:slug/favorite`, async ({ request, params }) => {
     await delay(40);
@@ -2533,6 +2555,7 @@ export const handlers = [
     if (injected) return injected;
     const user = authenticate(request);
     if (!user) return tokenExpired();
+    if (!canEngage(user)) return forbidden("需要以下角色之一：approver, superadmin, user");
     const record = findToolBySlug(String(params.slug));
     if (!record || record.deleted_at || !canView(record, user)) return notFound("工具不存在或已被删除");
     setEngaged("favorites", user.id, record.seed.id, true);
@@ -2545,6 +2568,7 @@ export const handlers = [
     if (injected) return injected;
     const user = authenticate(request);
     if (!user) return tokenExpired();
+    if (!canEngage(user)) return forbidden("需要以下角色之一：approver, superadmin, user");
     const record = findToolBySlug(String(params.slug));
     if (!record || record.deleted_at || !canView(record, user)) return notFound("工具不存在或已被删除");
     setEngaged("favorites", user.id, record.seed.id, false);
@@ -2558,6 +2582,7 @@ export const handlers = [
     if (injected) return injected;
     const user = authenticate(request);
     if (!user) return tokenExpired();
+    if (!canEngage(user)) return forbidden("需要以下角色之一：approver, superadmin, user");
     const record = findToolBySlug(String(params.slug));
     if (!record || record.deleted_at || !canView(record, user)) return notFound("工具不存在或已被删除");
     setEngaged("likes", user.id, record.seed.id, true);
@@ -2570,6 +2595,7 @@ export const handlers = [
     if (injected) return injected;
     const user = authenticate(request);
     if (!user) return tokenExpired();
+    if (!canEngage(user)) return forbidden("需要以下角色之一：approver, superadmin, user");
     const record = findToolBySlug(String(params.slug));
     if (!record || record.deleted_at || !canView(record, user)) return notFound("工具不存在或已被删除");
     setEngaged("likes", user.id, record.seed.id, false);

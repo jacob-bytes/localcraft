@@ -13,7 +13,11 @@ import { ErrorState } from "@/components/common/ErrorState";
 import { Markdown } from "@/components/common/Markdown";
 import { PageSkeleton } from "@/components/common/PageSkeleton";
 import { DownloadButton } from "@/components/tools/DownloadButton";
-import { FavoriteToggle, LikeToggle } from "@/components/tools/EngagementActions";
+import {
+  EngagementPermissionNote,
+  FavoriteToggle,
+  LikeToggle,
+} from "@/components/tools/EngagementActions";
 import { FileInfoCard } from "@/components/tools/FileInfoCard";
 import { PromptViewer } from "@/components/tools/PromptViewer";
 import { SkillPreview } from "@/components/tools/SkillPreview";
@@ -144,10 +148,15 @@ export default function ToolDetailPage() {
               - 点赞**只有整数计数**（CONTRACT §23.7 / D37）：没有平均分、没有星级。
               - 匿名访客这两个按钮**不渲染**（与「登录后可下载」同一套匿名策略），
                 计数仍在页面上（信息栏 + 卡片）。
+              - M9 · §25.1：`viewer` 同样**不渲染**这两个按钮（后端 `engagement_guard`
+                不含 `viewer`，点下去必 403），改用一行说明告知是权限问题而不是坏了 ——
+                与下载按钮「当前角色无下载权限」同一套做法。`EngagementPermissionNote`
+                对匿名与有投票角色的账号都返回 `null`，所以这里不会多出一行字。
             */}
             <div className="flex flex-wrap items-center gap-2">
               <FavoriteToggle tool={detail} labeled />
               <LikeToggle tool={detail} labeled />
+              <EngagementPermissionNote tool={detail} />
             </div>
           </header>
 

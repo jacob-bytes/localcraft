@@ -1,11 +1,12 @@
 import { Star, ThumbsUp } from "lucide-react";
 
 import { readCount } from "@/api/engagement";
-import type { ToolDetail, ToolListItem } from "@/api/types";
+import type { ToolDetail, ToolListItem, User } from "@/api/types";
 import { Button } from "@/components/ui/button";
-import { useAuth } from "@/hooks/useAuth";
+import { useAuth, type AuthStatus } from "@/hooks/useAuth";
 import { useFavoriteToggle, useLikeToggle } from "@/hooks/useEngagement";
 import { formatCount } from "@/lib/format";
+import { canEngage } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 
 /**
@@ -20,7 +21,14 @@ import { cn } from "@/lib/utils";
  *    「实心星 + 已收藏」对「空心星 + 收藏」，点赞同理（无障碍硬约束 4）。
  * 3. **计数缺失时不渲染数字**。真实后端尚未落地 M8 时 `favorite_count` 是
  *    `undefined`，`formatCount(undefined)` 会渲染成 "0" —— 那是在编造数据。
- *    因此这一组组件在字段缺失时整体隐藏（见 `available`），后端落地后自动出现。
+ *    因此这一组组件在字段缺失时整体隐藏（见 `supportsFavorites` / `supportsLikes`），
+ *    后端落地后自动出现。
+ *
+ * M9 补一条（CONTRACT §25.1）：**`viewer` 也不显示切换控件**。后端
+ * `engagement_guard` 不含 `viewer`（实测 PUT favorite/like 均 403），所以「登录了
+ * 就能投票」是错的前端假设。处理方式与匿名一致 —— **不渲染可交互的按钮**，而不是
+ * 渲染一个点下去必报错的控件；原因由 `EngagementPermissionNote` 在详情页给出
+ * （沿用下载按钮「当前角色无下载权限」的措辞风格，且不泄漏内部角色名）。
  */
 
 type EngagementTool = ToolListItem | ToolDetail;
@@ -34,6 +42,22 @@ function supportsLikes(tool: EngagementTool): boolean {
   return readCount(tool.like_count) !== null;
 }
 
+/**
+ * 「角色还没加载完」这一态的处理（M9 硬约束）。
+ *
+ * `status === "unknown"` 是启动态：`/auth/refresh` 还没回来，此时**什么都不渲染**。
+ * 之所以不会「先闪一下按钮再消失」，是因为判定从「已认证 + 有投票角色」出发 ——
+ * 未知一律按「不渲染」处理，等角色确定后只有该看到的人会看到它出现；反过来
+ * （先乐观渲染、发现是 viewer 再撤掉）才会闪。下载按钮同理：它在拿到工具详情前
+ * 也不会给出任何可点的入口。
+ */
+function canUseEngagementControls(
+  status: AuthStatus,
+  user: User | null,
+): boolean {
+  return status === "authenticated" && canEngage(user);
+}
+
 export interface FavoriteToggleProps {
   tool: EngagementTool;
   /** `labeled`：详情页标题区用的「图标 + 文字 + 计数」按钮；否则是卡片上的图标按钮。 */
@@ -42,11 +66,11 @@ export interface FavoriteToggleProps {
 }
 
 export function FavoriteToggle({ tool, labeled = false, className }: FavoriteToggleProps) {
-  const { status } = useAuth();
+  const { status, user } = useAuth();
   const { toggle, isPending } = useFavoriteToggle(tool.slug);
   const count = readCount(tool.favorite_count);
 
-  if (status !== "authenticated") return null;
+  if (!canUseEngagementControls(status, user)) return null;
   if (!supportsFavorites(tool)) return null;
 
   const favorited = tool.is_favorited === true;
@@ -90,11 +114,11 @@ export interface LikeToggleProps {
  * 后端不下发平均分，前端也不去算。
  */
 export function LikeToggle({ tool, labeled = false, className }: LikeToggleProps) {
-  const { status } = useAuth();
+  const { status, user } = useAuth();
   const { toggle, isPending } = useLikeToggle(tool.slug);
   const count = readCount(tool.like_count);
 
-  if (status !== "authenticated") return null;
+  if (!canUseEngagementControls(status, user)) return null;
   if (!supportsLikes(tool)) return null;
 
   const liked = tool.is_liked === true;
@@ -123,6 +147,49 @@ export function LikeToggle({ tool, labeled = false, className }: LikeToggleProps
         </>
       ) : null}
     </Button>
+  );
+}
+
+/**
+ * M9 · 权限说明（CONTRACT §25.1）：`viewer` 看不到切换控件，但**不能静默消失** ——
+ * 用户得知道这是权限问题，而不是页面坏了。
+ *
+ * 三条刻意的设计：
+ *
+ * 1. **只对「已登录但没有投票角色」的账号渲染**。匿名不渲染：对未登录的人说
+ *    「无权限」是错的，他只需要登录（与下载按钮区分「登录后可下载」对
+ *    「当前角色无下载权限」是同一条推理）。
+ * 2. **不是按钮、不可聚焦**：读屏软件读到的是一个说明性段落（`<p>`），而不是一个
+ *    不可用的控件。这正是「隐藏」与「留一个点了必报错的按钮」之间的区别。
+ * 3. **文案不泄漏内部角色名**：说「当前角色」，与既有「当前角色无下载权限」
+ *    同一句式（FR-ACL-05 / AC-15）。
+ *
+ * 计数不归它管：`favorite_count` / `like_count` 是全站可见的公共数字，`viewer`
+ * 照常看得到（卡片页脚、详情页信息栏），本组件只解释「为什么没有按钮」。
+ *
+ * 第 4 条与按钮同一口径：**服务端还没这两个字段时整条不渲染**。否则会出现
+ * 「说明里说『仅可查看计数』，而页面上根本没有计数」这种自相矛盾（M8 的
+ * `supportsFavorites` / `supportsLikes` 就是这条规则）。
+ */
+export function EngagementPermissionNote({
+  tool,
+  className,
+}: {
+  tool: EngagementTool;
+  className?: string;
+}) {
+  const { status, user } = useAuth();
+  // 先判角色（与按钮同一顺序）：那三个角色下本组件永远返回 null
+  if (status !== "authenticated" || canEngage(user)) return null;
+  if (!supportsFavorites(tool) && !supportsLikes(tool)) return null;
+
+  return (
+    <p
+      data-testid="engagement-permission-note"
+      className={cn("text-xs text-muted-foreground", className)}
+    >
+      当前角色无收藏、点赞权限，仅可查看计数。
+    </p>
   );
 }
 
