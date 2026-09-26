@@ -205,7 +205,7 @@ else
         sed_i "s|^DATA_DIR=.*|DATA_DIR=${DATA_DIR}|" "$ENV_FILE"
         sed_i "s|^DATABASE_URL=.*|DATABASE_URL=sqlite+aiosqlite:///${DATA_DIR}/localcraft.db|" "$ENV_FILE"
     fi
-    warn "已生成 ${ENV_FILE}，请检查 DATABASE_URL / LOCALCRAFT_PUBLIC_BASE_URL / COOKIE_SECURE 后继续"
+    warn "已生成 ${ENV_FILE}，请检查 DATABASE_URL / DATA_DIR / COOKIE_SECURE 后继续"
 fi
 
 # 数据库目录必须由服务账号可写，否则首次迁移会失败

@@ -173,23 +173,27 @@ LOCALCRAFT_SKIP_SYSTEMD=1 bash install.sh    # 跳过 useradd/chown/systemctl，
 
 ## 配置
 
-所有配置走环境变量，生产放 `/etc/localcraft/localcraft.env`（`0640 root:localcraft`）。完整示例见 [`deploy/localcraft.env.example`](deploy/localcraft.env.example)。
+所有配置走环境变量，生产放 `/etc/localcraft/localcraft.env`（`0640 root:localcraft`）。完整示例见 [`deploy/localcraft.env.example`](deploy/localcraft.env.example)，逐项说明见 [`docs/05` §14.2](docs/05-部署与运维方案.md)。
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
-| `LOCALCRAFT_HOST` / `LOCALCRAFT_PORT` | `127.0.0.1` / `8000` | 监听地址；生产由 nginx 反代，不直接对外 |
-| `LOCALCRAFT_PUBLIC_BASE_URL` | `http://127.0.0.1:8000` | 生成签名 URL 与下载链接的基址 |
-| `DATABASE_URL` | `sqlite+aiosqlite:///…/localcraft.db` | 换 PostgreSQL 时改这里 |
-| `DATA_DIR` | `./var` | 上传文件、封面、归档、备份的根目录 |
+| `LOCALCRAFT_HOST` / `LOCALCRAFT_PORT` | `127.0.0.1` / `8000` | 监听地址。nginx 反代保持回环；**直连 `IP:PORT` 必须改 `0.0.0.0`** |
+| `LOCALCRAFT_WEB_MODE` | `nginx` | `nginx` / `direct`。**应用不读**，只决定安装自检检查哪些前置条件 |
+| `DATABASE_URL` | `sqlite+aiosqlite:///…/localcraft.db` | 换 PostgreSQL 时改这里（注意绝对路径要**四个斜杠**） |
+| `DATA_DIR` | `./var` | 数据根目录；`files/`、`backups/` 都由它派生 |
 | `SECRET_KEY` | —— | **必改**。`openssl rand -hex 32` 生成 |
 | `ACCESS_TOKEN_MINUTES` / `REFRESH_TOKEN_DAYS` | `30` / `7` | 访问令牌与刷新令牌有效期 |
-| `COOKIE_SECURE` | `true` | 生产必须 `true`（HTTPS）；本机预览置 `false` |
+| `COOKIE_SECURE` | `false` | 上 TLS 时置 `true`；直连明文 HTTP 保持 `false`，否则刷新 cookie 不会被带上 |
 | `API_DOCS_ENABLED` | `false` | 生产默认关闭 `/docs` |
 | `LOGIN_MAX_FAILURES` / `LOCKOUT_MINUTES` | `5` / `15` | 登录失败锁定策略 |
-| `DB_BUSY_TIMEOUT` | `5000` | SQLite 忙等待毫秒数 |
+| `DB_BUSY_TIMEOUT` | `5000` | SQLite 忙等待**毫秒**数 |
 | `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` | `5` / `5` | 连接池；仅 PostgreSQL 生效 |
+| `LOCALCRAFT_LOG_LEVEL` / `LOG_LEVEL` | `info` / `INFO` | 前者给 uvicorn 的 `--log-level`，后者是应用自身的 JSON 日志级别 —— **两个都要设** |
 
-> 环境变量名不做统一前缀：`LOCALCRAFT_*` 只用于应用自身的 5 个字段（host/port/debug/version/public_base_url），其余沿用直觉命名（`DATABASE_URL`、`SECRET_KEY`…）。
+> 环境变量名不做统一前缀：只有 4 个字段带 `LOCALCRAFT_`（host / port / debug / version），其余沿用直觉命名（`DATABASE_URL`、`SECRET_KEY`…）。
+> 写错名字会被**静默忽略**，表现为「改了配置没反应」。
+>
+> 配额、版本保留数、上传白名单这类**运行期可调**的设置不在环境变量里，而在数据库 `system_settings` 表（管理员界面或管理 API 修改）。完整名单见 [`docs/05` §14.2](docs/05-部署与运维方案.md) 末两张表。
 
 ## 项目结构
 
