@@ -1508,3 +1508,182 @@ current_version.can_download = True      ← 错误
 | 不加白名单 | 前端 | **A** | M5 任务书开工前已含（第 0.2 节） |
 | 重跑 verify 与 e2e:real（M6 落地后） | 前端 | **A** | M5 任务书第 4 节 |
 | `/directory` 接入 ACL 选择器 | 前端 | **A** | M5 任务书第 1 节 |
+
+---
+
+## 23. M7 契约冻结（收藏 / 点赞 / 去重 / 数字概览）
+
+本节是 **M7 开工前**由监控方冻结的接口形状。前端与后端 agent 都以本节为准，
+`backend/openapi.json` 是 M7 新增部分之外的形状权威（§15.6）。
+
+### 23.0 本轮的用户决策（先记下来源）
+
+| # | 问题 | 用户裁定 |
+| --- | --- | --- |
+| Q1 | 总览大屏 | **维持 D9 / D10**，不推翻。把**纯数字概览做强**，不做图表、不做投屏 |
+| Q2 | 效率/人力指标来源 | **工具作者自填**预计节省时长，平台只做聚合，**必须标注为估算**并给出填写覆盖率 |
+| Q3 | 新功能 | 收藏夹、上传去重提示、工具点赞/评分（三选三） |
+
+### 23.1 三条会影响设计的既有事实（已核实，不要重新论证）
+
+1. **`tool_versions.file_sha256` 已存在且有索引**（`ix_tool_versions_sha256`）。
+   去重检测**不需要新增字段或新增哈希计算**。
+2. **`download_logs.user_id` 已存在**，因此「去重受益人数」= `COUNT(DISTINCT user_id)`
+   是**可计算的**。不要用原始下载量代替它 —— 原始量会把「同一人重复下载 / 版本升级」
+   重复计数，使估算进一步虚高。
+3. **管理统计已有 3 个路由**：`/admin/overview`（数字概览，含 `download_count`、
+   `view_count`、`downloads_last_7_days`、`tools_by_status`、存储水位）、
+   `/admin/stats/tools`（**下载量 Top N 已存在**）、`/admin/stats/storage`。
+   **不要再造一遍 Top 榜单。**
+
+### 23.2 去重检测必须在服务端做（**安全上下文限制**）
+
+浏览器端算 SHA-256 需要 `crypto.subtle`，而它**只在安全上下文可用**
+（HTTPS 或 localhost）。用户已明确选择 **`http://<ip>:<port>` 直接访问**
+（不经 nginx 反代），该场景下 `crypto.subtle` 为 `undefined`。
+
+代码库里已有同类先例：`web/src/components/common/CopyButton.tsx:24` 用
+`window.isSecureContext` 守卫 `navigator.clipboard`，并有 `execCommand` 回退。
+**但 Web Crypto 没有可接受的回退**（引 JS 哈希库既增依赖又慢）。
+
+**裁定**：去重检测**不做**客户端预检，改为**上传完成后由响应回带命中信息**。
+前端据此展示非阻塞提示。不新增任何端点，不新增依赖。
+
+### 23.3 新增数据模型（3 项）
+
+**① `tool_favorites`（新表）**
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | Integer | PK |
+| `user_id` | Integer | NOT NULL, FK `users.id` ON DELETE CASCADE |
+| `tool_id` | Integer | NOT NULL, FK `tools.id` ON DELETE CASCADE |
+| `created_at` | DateTime(tz) | NOT NULL |
+
+- `UNIQUE(user_id, tool_id)`
+- `INDEX(user_id, created_at DESC)` —— 支撑「我的收藏」倒序
+- `INDEX(tool_id)`
+
+**② `tool_likes`（新表）** —— 结构与 `tool_favorites` **完全一致**，仅表名不同。
+
+**③ `tools` 新增 3 列**
+
+| 列 | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `favorite_count` | Integer | 0 | NOT NULL，与 `tool_favorites` 同事务维护 |
+| `like_count` | Integer | 0 | NOT NULL，与 `tool_likes` 同事务维护 |
+| `estimated_saving_minutes` | Integer | NULL | 作者自述的**单次使用**预计节省分钟数，可空 |
+
+- `estimated_saving_minutes` 取值范围 **1 ~ 1440**，超出即 `VALIDATION_ERROR`。
+  `NULL` 表示作者未填写，**不是一个可以当成 0 的值**。
+- 两个计数字段是**反规范化**：列表接口否则需要 JOIN + GROUP BY，而 `docs/11` §2.2
+  已记录列表当前是 4 条查询、且 CPU 随并发放大尚未定位。**禁止**改为实时聚合。
+
+### 23.4 新增接口（93 → **99**）
+
+**收藏（2 个）**
+
+| 方法 | 路径 | 语义 |
+| --- | --- | --- |
+| `PUT` | `/api/v1/tools/{slug}/favorite` | 收藏。**幂等**：已收藏再调返回成功，不报错 |
+| `DELETE` | `/api/v1/tools/{slug}/favorite` | 取消收藏。**幂等**：未收藏再调返回成功 |
+
+**点赞（2 个）** —— 形状与收藏完全对称：
+
+| 方法 | 路径 | 语义 |
+| --- | --- | --- |
+| `PUT` | `/api/v1/tools/{slug}/like` | 点赞，幂等 |
+| `DELETE` | `/api/v1/tools/{slug}/like` | 取消点赞，幂等 |
+
+**我的收藏（1 个）**
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/api/v1/me/favorites` | 分页，**复用门户列表项形状**（`ToolListItem`），按 `created_at DESC` |
+
+**管理数字概览增强（1 个）**
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/api/v1/admin/stats/insights` | 见 23.6 |
+
+> **为什么不扩 `/admin/overview`**：insights 含 30 天序列与去重人数聚合，明显更重。
+> 独立端点让管理台首页先渲染轻量数字，重聚合可以后到/懒加载。
+> 这**不违反 D10** —— D10 排除的是「看板图表」，这里全部仍是数字与列表。
+
+### 23.5 既有响应新增字段
+
+**`ToolListItem` 与 `ToolDetail` 各新增 4 个字段**（均为向后兼容的新增）：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `favorite_count` | int | 收藏数 |
+| `like_count` | int | 点赞数 |
+| `is_favorited` | bool | **当前请求者**是否已收藏 |
+| `is_liked` | bool | **当前请求者**是否已点赞 |
+
+**匿名请求者**（门户默认允许未登录浏览，D11 相关配置）下 `is_favorited` /
+`is_liked` 恒为 `false`，两个计数字段**照常返回**。
+
+**实现约束**：`is_favorited` / `is_liked` **不得**通过给列表查询加 JOIN 实现。
+按 §23.3 的裁定，用**一条附加查询**取当前用户的 `tool_id` 集合
+（`SELECT tool_id FROM tool_favorites WHERE user_id = :uid`），在 Python 侧合并。
+该集合大小以用户自己的收藏数为界，与列表页大小无关。
+
+**`ToolCreateRequest` / `ToolUpdateRequest` 新增 1 个可选字段**：
+
+| 字段 | 类型 | 约束 |
+| --- | --- | --- |
+| `estimated_saving_minutes` | int \| null | 1 ~ 1440，可空 |
+
+### 23.6 `AdminInsightsResponse` 形状（冻结）
+
+```
+downloads_last_30_days : int
+downloads_daily        : list[{ date: date, downloads: int }]   # 恰好 30 条，缺口补 0
+active_contributors_30d: int          # 30 天内上传/更新过工具的去重用户数
+tools_by_category      : list[{ category_id: int|null, name: str,
+                                tool_count: int, download_count: int }]
+savings                : {
+    total_minutes        : int        # 见下方公式
+    covered_tool_count   : int        # 已填 estimated_saving_minutes 的工具数
+    total_tool_count     : int        # 全部工具数（含未填）
+    basis                : "author_estimate"   # 常量，声明口径
+}
+```
+
+**效率估算公式（冻结，不得自行改动）**：
+
+```
+total_minutes = Σ_over_tools ( estimated_saving_minutes × COUNT(DISTINCT download_logs.user_id) )
+                仅计入 estimated_saving_minutes IS NOT NULL 且 user_id IS NOT NULL
+```
+
+**`basis` 字段是刻意设计的**：它让接口本身声明「这是估算而不是实测」，
+使前端**无法**在不暴露口径的情况下单独渲染 `total_minutes`。
+前端**必须**同时展示：`basis` 对应的文案、`covered_tool_count / total_tool_count`
+覆盖率、以及未填工具数。**禁止**只显示一个孤零零的「已节省 X 人时」。
+
+### 23.7 点赞而不是评分（**监控方对 Q3 的收窄**）
+
+用户勾选的是「工具点赞/评分」。监控方**收窄为「点赞」**，即
+**每人每工具至多一票、可取消、只展示整数计数**，**不做 1~5 平均分**。
+
+理由（已向用户说明）：百人规模的小团队里，平均分会产出 `4.7` 这类
+**假装精确**的数字，且极易变成人情分；整数点赞数不承诺精度，因此不误导。
+
+**若将来要改回星级评分**，属于推翻本裁定，需要用户明确指示。
+
+### 23.8 台账（判据见 §21）
+
+| 裁定 | 目标端 | 判据 | 证据 |
+| --- | --- | --- | --- |
+| 收藏 `PUT`/`DELETE` 幂等 | 后端 | **A** | §23.4，M7 任务书开工前已含 |
+| 点赞 `PUT`/`DELETE` 幂等 | 后端 | **A** | 同上 |
+| `GET /me/favorites` 复用 `ToolListItem` | 后端 | **A** | 同上 |
+| 列表新增 4 字段，附加以外不加 JOIN | 后端 | **A** | §23.5，同上 |
+| 去重检测走服务端、响应回带 | 后端 + 前端 | **A** | §23.2，同上 |
+| 计数用反规范化列，禁止实时聚合 | 后端 | **A** | §23.3，同上 |
+| `savings.basis` 必须随数字一起展示 | 前端 | **A** | §23.6，同上 |
+| 点赞只做整数计数、不做平均分 | 前端 + 后端 | **A** | §23.7，同上 |
+| 不新增图表依赖、不做投屏 | 前端 | **A** | §23.0 Q1，同上 |
