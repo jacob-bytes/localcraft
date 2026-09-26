@@ -43,17 +43,23 @@ jobs:
           set -uo pipefail
 
           echo "tag=${GITHUB_REF_NAME}  repo=${GITHUB_REPOSITORY}"
+          echo "::notice::gh 版本=$(gh --version 2>&1 | head -1)"
 
           # --- 判重 -------------------------------------------------------
-          # 显式取退出码，不用 `if cmd`（那样会把 404 与网络错误混在一起，
-          # 也没法把原因打进日志）。
-          VIEW="$(gh release view "${GITHUB_REF_NAME}" 2>&1)"; VIEW_RC=$?
-          echo "::notice::gh release view rc=${VIEW_RC}"
-          if [ "$VIEW_RC" -eq 0 ]; then
+          # 不用 `gh release view`：实测同一仓库、同一 tag，本机 gh 2.101.0 返回
+          # rc=1「release not found」，CI 上却返回 rc=0 —— 于是判重误判成
+          # 「已存在」，后续步骤全被跳过，job 报 success 而 Release 根本没建出来。
+          # 这是本项目第二次栽在「空转成功」上（docs/09 §11），所以这里：
+          #   1) 换用 REST API（404 语义明确，不依赖 gh 子命令的退出码约定）
+          #   2) 再加一道保险 —— 只有真拿到带 id 的 release 对象才算存在
+          REL_JSON="$(gh api "/repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" 2>&1)"
+          REL_RC=$?
+          echo "::notice::releases/tags API rc=${REL_RC}"
+          if [ "$REL_RC" -eq 0 ] && printf '%s' "$REL_JSON" | grep -q '"id"'; then
             echo "Release ${GITHUB_REF_NAME} 已存在，跳过。"
             exit 0
           fi
-          echo "判重未命中（rc=${VIEW_RC}），继续创建。首行输出：$(printf '%s' "$VIEW" | head -1)"
+          echo "判重未命中，继续创建。API 首行输出：$(printf '%s' "$REL_JSON" | head -1)"
 
           # --- 取 tag 注释生成标题与正文 -----------------------------------
           NOTES="$RUNNER_TEMP/notes.md"
