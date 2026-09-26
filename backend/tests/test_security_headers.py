@@ -112,21 +112,31 @@ def test_hash_cache_invalidates_when_file_changes(tmp_path: Path) -> None:
     assert inline_script_hashes(html) == (_sha256_csp("var v = 22222;"),)
 
 
+def test_inline_script_same_in_source_and_dist() -> None:
+    """Vite 不改写那段内联脚本 —— 源码与产物逐字节相同。
+
+    这条是后面几条守卫能在**没有 dist 的环境**（CI）里用源码代替产物的前提。
+    哪天 Vite 开始改写它，这条会失败，提醒我们守卫的替代前提不成立了。
+    """
+    src = REPO_ROOT / "web" / "index.html"
+    dist = REPO_ROOT / "web" / "dist" / "index.html"
+    if not dist.is_file():
+        pytest.skip("web/dist 不存在（前端未构建）")
+    assert inline_script_hashes(src) == inline_script_hashes(dist)
+
+
 def test_csp_matches_the_shipped_nginx_hash() -> None:
-    """`deploy/nginx-localcraft-*.conf` 里写死的 CSP 哈希必须与构建产物一致。
+    """`deploy/nginx-localcraft-*.conf` 里写死的 CSP 哈希必须与前端内联脚本一致。
 
     nginx 直接读盘发 SPA 的 HTML（`root` + `try_files`），请求**不经过应用**，
     所以那条路径上的 CSP 只能写死在 nginx 里。写死就会过期 —— 这里守住它。
 
-    前端产物不存在时跳过：本用例的职责是「产物与配置一致」，
-    没有产物时无从判断（CI 的 backend job 也没有 web/dist）。
+    **用 `web/index.html`（源文件）而不是 `web/dist/index.html`**：两者那段内联脚本
+    逐字节相同（见上一条测试），而源文件在任何环境下都存在。这一点很关键 ——
+    如果依赖 dist，这条守卫在 CI 上会被 skip，等于**没在 CI 里生效**。
     """
-    index = REPO_ROOT / "web" / "dist" / "index.html"
-    if not index.is_file():
-        pytest.skip("web/dist/index.html 不存在（前端未构建）")
-
-    actual = set(inline_script_hashes(index))
-    assert actual, "构建产物里应当有内联脚本（防主题闪烁那段）"
+    actual = set(inline_script_hashes(REPO_ROOT / "web" / "index.html"))
+    assert actual, "web/index.html 里应当有内联脚本（防主题闪烁那段）"
 
     confs = sorted((REPO_ROOT / "deploy").glob("nginx-localcraft*.conf"))
     assert confs, "找不到 nginx 配置"
@@ -138,7 +148,7 @@ def test_csp_matches_the_shipped_nginx_hash() -> None:
             assert bare in actual, (
                 f"{conf.name} 里的 CSP 哈希已过期：{bare}\n"
                 f"  实际应为：{sorted(actual)}\n"
-                "  改前端内联脚本后必须同步这里的哈希（或改用应用侧运行时计算的那份）"
+                "  改前端内联脚本后必须同步这里的哈希（或直接用应用侧运行时计算的那份）"
             )
 
 
@@ -202,19 +212,59 @@ async def test_app_responses_carry_security_headers(client) -> None:
     _assert_headers(missing)
 
 
-async def test_spa_entry_is_not_cacheable(client) -> None:
-    """index.html 不能长缓存：否则升级后旧入口引用已删除的 assets，页面白屏。"""
-    if not (REPO_ROOT / "web" / "dist" / "index.html").is_file():
-        pytest.skip("web/dist 不存在")
-    r = await client.get("/some/frontend/route")
-    assert r.status_code == 200
-    assert "no-store" in (r.headers.get("cache-control") or "")
+async def test_spa_entry_is_not_cacheable(tmp_path, monkeypatch) -> None:
+    """index.html 不能长缓存：否则升级后旧入口引用已删除的 assets，页面白屏。
+
+    **自建一个带 dist 的应用**而不是依赖仓库里的 `web/dist` ——
+    否则 CI 上没有构建产物时这条会被 skip，`no-store` 就没人守了。
+    """
+    from fastapi import FastAPI
+
+    from app.core.config import Settings
+    from app.main import _mount_spa
+
+    (tmp_path / "index.html").write_text("<html>spa</html>", encoding="utf-8")
+    monkeypatch.setattr(Settings, "web_dist_dir", property(lambda self: tmp_path))
+
+    test_app = FastAPI()
+    test_app.add_middleware(SecurityHeadersMiddleware)
+    _mount_spa(test_app)
+
+    transport = httpx.ASGITransport(app=test_app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+        r = await c.get("/some/frontend/route")  # 前端路由 → 回退 index.html
+        assert r.status_code == 200
+        assert "no-store" in (r.headers.get("cache-control") or ""), (
+            f"SPA 入口必须 no-store，实际 {r.headers.get('cache-control')!r}"
+        )
+        _assert_headers(r)
+
+        # 真实存在的散装静态文件（favicon 之类）可以缓存，不该被一并加上 no-store
+        (tmp_path / "favicon.ico").write_bytes(b"\x00")
+        icon = await c.get("/favicon.ico")
+        assert icon.status_code == 200
+        assert "no-store" not in (icon.headers.get("cache-control") or "")
 
 
-def test_csp_header_is_cached_not_recomputed_per_call() -> None:
-    """`csp_header()` 命中缓存时不应重复读盘。"""
-    first = csp_header()
+def test_csp_header_is_cached_not_recomputed_per_call(tmp_path, monkeypatch) -> None:
+    """缓存键带 mtime+size，重复调用不该重复读盘。
+
+    **把 `web_dist_dir` 指到 tmp_path**，而不是依赖仓库里的 `web/dist`：
+    产物不存在时 `csp_header()` 走的是"退化"分支（没有文件可 stat，也就没有缓存），
+    在 CI 上会让断言变成 `currsize == 0` 而失败 —— 我第一版就是这么挂的。
+    """
+    from app.core.config import Settings
+
+    (tmp_path / "index.html").write_text("<script>var a = 1;</script>", encoding="utf-8")
+    monkeypatch.setattr(Settings, "web_dist_dir", property(lambda self: tmp_path))
     security_headers._csp_cached.cache_clear()
+
+    first = csp_header()
     assert csp_header() == first
     info = security_headers._csp_cached.cache_info()
-    assert info.currsize >= 1
+    assert info.currsize >= 1, "有产物时应当走缓存"
+    assert info.hits >= 1, "第二次调用应命中缓存，而不是重新读盘"
+
+    # 产物变化后必须失效（mtime+size 参与缓存键）
+    (tmp_path / "index.html").write_text("<script>var a = 22222;</script>", encoding="utf-8")
+    assert csp_header() != first, "构建产物变了，CSP 必须跟着变（缓存要失效）"
