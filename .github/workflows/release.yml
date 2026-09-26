@@ -2,21 +2,34 @@ name: Release
 
 # 推 tag 即发 Release。
 #
-# 为什么用 Actions 而不是手工点网页：Release 是 REST API 对象，git 协议调不了它。
-# 任何人只要能推 tag（SSH 或带写权限的 token）就应该能发版，不该依赖某人的浏览器
-# 会话或一枚长期 PAT。用 runner 内置的 GITHUB_TOKEN，不引入任何 secret。
+# 设计取舍（都是踩过坑之后定的）：
 #
-# 为什么全部用 curl 而不是 gh 子命令：本项目在 gh 的退出码上栽过两次（见下），
-# 而 HTTP 状态码是不会有歧义的 —— 201 建成功、403 没权限、404 不存在、422 参数错。
-# 错误现场能一眼看明白，比事后猜 gh 的语义便宜得多。
+# 1) 用 Actions 而不是手工点网页：Release 是 REST API 对象，git 协议调不了它。
+#    任何人只要能推 tag 就该能发版，不该依赖某人的浏览器会话或一枚长期 PAT。
+#    用 runner 内置的 GITHUB_TOKEN，不引入任何 secret。
+#
+# 2) 全部用 curl + 显式 HTTP 状态码，不用 gh 子命令。gh 的退出码在本项目坑了两次：
+#      - `if gh release view` 把 404 与网络错误混为一谈；
+#      - 同一仓库同一 tag，本机 gh 2.101.0 返回 rc=1，CI 上返回 rc=0，
+#        导致判重误判「已存在」、步骤全跳过、job 报 success 而 Release 是 0 个。
+#    HTTP 状态码没有歧义：201 建成功、200 改成功、403 没权限、404 不存在。
+#
+# 3) **不 checkout**，tag 注释从 API 取。原先用 `git tag -l --format='%(contents)'`，
+#    而 actions/checkout 默认不取 annotated tag 对象（fetch-tags 默认 false），
+#    显式置 true 也没带下来 —— 于是 %(contents) **静默**退化成提交信息，
+#    Release 标题变成提交标题而 job 一切正常。API 里 ref 的 `object.type`
+#    明确区分 annotated（tag）与轻量（commit），没有静默退化这回事。
+#
+# 4) 失败时把 HTTP 码与响应体打进 ::error::。公开仓库的原始 job 日志要 admin
+#    才能经 API 拉取，而 ::notice:: 在成功的运行里根本不会保留成 annotation。
 
 on:
   push:
     tags: ["v*"]
 
-# GITHUB_TOKEN 默认是只读的，创建 Release 必须显式提权。
+# GITHUB_TOKEN 默认只读，创建 Release 必须显式提权。
 # 注意这只是「申请」：若仓库 Settings → Actions → General → Workflow permissions
-# 被锁成只读，那才是硬上限，这里救不了。
+# 被锁成只读，那才是硬上限，这里救不了 —— 预检会明确指出这一点。
 permissions:
   contents: write
 
@@ -26,145 +39,99 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
-        with:
-          # 需要完整历史才能取出 tag 的注释对象（浅克隆拿不到）
-          fetch-depth: 0
-          # **必须显式置 true**：checkout@v4 的 fetch-tags 默认是 false，
-          # 于是本地只有 tag 指向的提交、没有 annotated tag 对象本身，
-          # `git tag -l --format='%(contents)'` 会**静默退化**成取提交信息 ——
-          # Release 标题就变成了提交标题。这个坑踩过一次（v1.0.0 首建时标题错了）。
-          fetch-tags: true
-
-      # -----------------------------------------------------------------------
-      # 单步完成 判重 → 取注释 → 写权限预检 → 创建。
-      #
-      # 合并成单步的理由：跨步骤的 `if: steps.x.outputs.y == 'false'` 一旦 output
-      # 因为任何原因没落进 GITHUB_OUTPUT，条件就恒为假，步骤被静默跳过而 job 报
-      # success —— 也就是「空转成功」，比红叉危险。本项目已经栽过一次。
-      #
-      # 诊断写进 $GITHUB_STEP_SUMMARY（会出现在 check-run 的 output.summary 里，
-      # 公开仓库无需 admin 即可读取），而不是只 echo —— 原始 job 日志要 admin
-      # 才能经 API 拉取，出事时看不到现场。
-      # -----------------------------------------------------------------------
-      - name: 创建 Release（已存在则跳过）
+      - name: 创建或更新 Release（数据全部来自 API）
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -uo pipefail
 
-          #: 同时写 stdout 与 step summary —— 后者是我（和任何没有仓库 admin
-          #: 权限的人）唯一能经 API 读到的 CI 输出。
-          say() { printf '%s\n' "$*"; printf '%s\n' "$*" >> "$GITHUB_STEP_SUMMARY"; }
-          die() { say "ERROR: $*"; exit 1; }
-
           API="https://api.github.com/repos/${GITHUB_REPOSITORY}"
           AUTH=(-H "Authorization: Bearer ${GH_TOKEN}"
                 -H "Accept: application/vnd.github+json"
                 -H "X-GitHub-Api-Version: 2022-11-28")
+          TAG="${GITHUB_REF_NAME}"
 
-          say "## Release ${GITHUB_REF_NAME}"
-          say ""
-          say "- repo: \`${GITHUB_REPOSITORY}\`"
-          say "- commit: \`${GITHUB_SHA:0:7}\`"
+          #: 失败时把所有现场塞进**一条** ::error:: —— 这是唯一可靠的对外通道。
+          #: 多条 notice 在成功的运行里会被丢弃，试过了。
+          fail() {
+            echo "::error::${1//$'\n'/%0A}"
+            exit 1
+          }
 
-          # --- 判重：只看 HTTP 状态码 ---------------------------------------
-          # 不用 `gh release view`：实测同一仓库同一 tag，本机 gh 2.101.0 返回
-          # rc=1「release not found」，CI 上却返回 rc=0，导致判重误判为「已存在」。
-          #
-          # 已存在时**更新**而不是跳过：tag 注释是 Release 正文的唯一来源，
-          # 重推 tag 即「重新发版」，应当把正文同步过来。
-          # （副作用要知情：在网页上手工改过的正文会被覆盖。）
+          echo "tag=${TAG} repo=${GITHUB_REPOSITORY}"
+
+          # --- 1. 判重 ------------------------------------------------------
           CODE="$(curl -sS -o /dev/null -w '%{http_code}' "${AUTH[@]}" \
-                    "${API}/releases/tags/${GITHUB_REF_NAME}")"
-          say "- 判重 \`GET /releases/tags/${GITHUB_REF_NAME}\` → HTTP \`${CODE}\`"
+                    "${API}/releases/tags/${TAG}")"
           case "$CODE" in
             200) MODE="update" ;;
             404) MODE="create" ;;
-            *)   die "判重请求返回了意料之外的 ${CODE}（期望 200 或 404），不敢继续。" ;;
+            *)   fail "判重 GET /releases/tags/${TAG} 返回 ${CODE}（期望 200/404），不敢继续。" ;;
           esac
-          say "- 动作：\`${MODE}\`"
+          echo "判重 HTTP ${CODE} → ${MODE}"
 
-          # --- 取 tag 注释生成标题与正文 -------------------------------------
-          # 先断言拿到的是 annotated tag 对象。没有这一步，checkout 少取了 tag
-          # 对象时会**静默**退化成提交信息，标题错了却一切"绿"（踩过）。
-          TAG_TYPE="$(git cat-file -t "refs/tags/${GITHUB_REF_NAME}" 2>/dev/null || echo missing)"
-          say "- tag 对象类型：\`${TAG_TYPE}\`（annotated 应为 \`tag\`）"
-          if [ "$TAG_TYPE" != "tag" ]; then
-            say ""
-            say "> ⚠️ 拿到的不是 annotated tag 对象，标题与正文会退化成提交信息。"
-            say "> 检查 checkout 是否设了 \`fetch-tags: true\`，以及建 tag 时用的是 \`git tag -a\`。"
-          fi
+          # --- 2. 取 tag 注释（走 API，零本地 git 依赖）----------------------
+          REF="$(curl -sS "${AUTH[@]}" "${API}/git/ref/tags/${TAG}")"
+          OBJ_TYPE="$(printf '%s' "$REF" | jq -r '.object.type // empty')"
+          OBJ_SHA="$(printf '%s' "$REF" | jq -r '.object.sha // empty')"
+          echo "tag ref: type=${OBJ_TYPE} sha=${OBJ_SHA:0:7}"
 
           NOTES="$RUNNER_TEMP/notes.md"
-          git tag -l --format='%(contents)' "${GITHUB_REF_NAME}" > "$NOTES"
+          if [ "$OBJ_TYPE" = "tag" ]; then
+            curl -sS "${AUTH[@]}" "${API}/git/tags/${OBJ_SHA}" \
+              | jq -r '.message // empty' > "$NOTES"
+            echo "已取到 annotated tag 注释（$(wc -l < "$NOTES" | tr -d ' ') 行）"
+          elif [ "$OBJ_TYPE" = "commit" ]; then
+            curl -sS "${AUTH[@]}" "${API}/commits/${OBJ_SHA}" \
+              | jq -r '.commit.message // empty' > "$NOTES"
+            echo "注意：这是轻量 tag（type=commit），正文退化为提交信息。建议用 git tag -a。"
+          else
+            fail "无法解析 tag ref：type=${OBJ_TYPE}。原始响应：$(printf '%s' "$REF" | head -c 500)"
+          fi
+
           TITLE="$(grep -m1 -v '^[[:space:]]*$' "$NOTES" || true)"
-          if [ -z "$TITLE" ]; then
-            TITLE="localcraft ${GITHUB_REF_NAME}"
-            printf '%s\n' "$TITLE" > "$NOTES"
-          fi
+          [ -n "$TITLE" ] || TITLE="localcraft ${TAG}"
           tail -n +2 "$NOTES" | sed '/./,$!d' > "$RUNNER_TEMP/body.md"
-          if [ ! -s "$RUNNER_TEMP/body.md" ]; then
-            printf '%s\n' "$TITLE" > "$RUNNER_TEMP/body.md"
-          fi
-          say "- 标题：\`${TITLE}\`"
-          say "- 正文行数：$(wc -l < "$RUNNER_TEMP/body.md" | tr -d ' ')"
+          [ -s "$RUNNER_TEMP/body.md" ] || printf '%s\n' "$TITLE" > "$RUNNER_TEMP/body.md"
+          echo "标题=${TITLE}；正文 $(wc -l < "$RUNNER_TEMP/body.md" | tr -d ' ') 行"
 
-          # --- 写权限预检 -----------------------------------------------------
-          # 直接试写一个 blob。`GET /actions/permissions/workflow` 需要 admin，
+          # --- 3. 写权限预检 -------------------------------------------------
+          # 直接试写一个 blob。`GET /actions/permissions/workflow` 需要 admin、
           # 读不到；「能不能写」只有真写一次才可靠。探针 blob 未被引用，会被回收。
-          PROBE_CODE="$(curl -sS -o "$RUNNER_TEMP/probe.json" -w '%{http_code}' "${AUTH[@]}" \
-            -X POST "${API}/git/blobs" \
-            -d '{"content":"cHJvYmU=","encoding":"utf-8"}')"
-          say "- 写权限预检 \`POST /git/blobs\` → HTTP \`${PROBE_CODE}\`"
-          if [ "$PROBE_CODE" != "201" ]; then
-            say ""
-            say "**响应**："
-            say '```json'
-            say "$(cat "$RUNNER_TEMP/probe.json")"
-            say '```'
-            die "GITHUB_TOKEN 没有写权限。修法：仓库 Settings → Actions → General → Workflow permissions 选 “Read and write permissions” 保存后重跑；这一步需要仓库 admin，workflow 里的 permissions: 越不过它。"
+          PROBE="$(curl -sS -o "$RUNNER_TEMP/probe.json" -w '%{http_code}' "${AUTH[@]}" \
+            -X POST "${API}/git/blobs" -d '{"content":"cHJvYmU=","encoding":"utf-8"}')"
+          if [ "$PROBE" != "201" ]; then
+            fail "GITHUB_TOKEN 无写权限（POST /git/blobs → ${PROBE}）。响应：$(head -c 300 "$RUNNER_TEMP/probe.json")
+          修法：仓库 Settings → Actions → General → Workflow permissions 选 “Read and write permissions” 后重跑。这一步需要仓库 admin，workflow 里的 permissions: 越不过它。"
           fi
+          echo "写权限预检通过（HTTP 201）"
 
-          # --- 创建 或 更新 ---------------------------------------------------
-          jq -n --arg tag "$GITHUB_REF_NAME" --arg name "$TITLE" \
-                --rawfile body "$RUNNER_TEMP/body.md" \
+          # --- 4. 创建或更新 --------------------------------------------------
+          jq -n --arg tag "$TAG" --arg name "$TITLE" --rawfile body "$RUNNER_TEMP/body.md" \
                 '{tag_name:$tag, name:$name, body:$body, draft:false, prerelease:false}' \
             > "$RUNNER_TEMP/payload.json"
 
           if [ "$MODE" = "update" ]; then
-            REL_ID="$(curl -sS "${AUTH[@]}" "${API}/releases/tags/${GITHUB_REF_NAME}" \
-                      | jq -r '.id // empty')"
-            [ -n "$REL_ID" ] || die "已判定为 update，但取不到 release id。"
-            # tag_name 不允许在 PATCH 里改，去掉它
+            REL_ID="$(curl -sS "${AUTH[@]}" "${API}/releases/tags/${TAG}" | jq -r '.id // empty')"
+            [ -n "$REL_ID" ] || fail "判定为 update，但取不到 release id。"
+            # tag_name 不允许在 PATCH 中修改
             jq 'del(.tag_name)' "$RUNNER_TEMP/payload.json" > "$RUNNER_TEMP/patch.json"
-            SAY_METHOD="PATCH"
-            ENDPOINT="${API}/releases/${REL_ID}"
-            EXPECT=200
+            METHOD="PATCH"; ENDPOINT="${API}/releases/${REL_ID}"; EXPECT=200
             PAYLOAD="$RUNNER_TEMP/patch.json"
           else
-            SAY_METHOD="POST"
-            ENDPOINT="${API}/releases"
-            EXPECT=201
+            METHOD="POST"; ENDPOINT="${API}/releases"; EXPECT=201
             PAYLOAD="$RUNNER_TEMP/payload.json"
           fi
 
-          RES_CODE="$(curl -sS -o "$RUNNER_TEMP/result.json" -w '%{http_code}' "${AUTH[@]}" \
-            -X "$SAY_METHOD" "$ENDPOINT" -d @"$PAYLOAD")"
-          say "- \`${SAY_METHOD}\` → HTTP \`${RES_CODE}\`（期望 ${EXPECT}）"
-
-          if [ "$RES_CODE" != "$EXPECT" ]; then
-            say ""
-            say "**响应**："
-            say '```json'
-            say "$(cat "$RUNNER_TEMP/result.json")"
-            say '```'
-            die "${SAY_METHOD} Release 失败（HTTP ${RES_CODE}）。"
+          RES="$(curl -sS -o "$RUNNER_TEMP/result.json" -w '%{http_code}' "${AUTH[@]}" \
+            -X "$METHOD" "$ENDPOINT" -d @"$PAYLOAD")"
+          if [ "$RES" != "$EXPECT" ]; then
+            fail "${METHOD} /releases 返回 ${RES}（期望 ${EXPECT}）。响应：$(head -c 600 "$RUNNER_TEMP/result.json")"
           fi
 
           URL="$(jq -r '.html_url // empty' "$RUNNER_TEMP/result.json")"
-          say ""
-          say "✅ ${MODE} 完成：${URL}"
+          echo "✅ ${MODE} 完成：${URL}"
+          echo "标题：$(jq -r '.name // empty' "$RUNNER_TEMP/result.json")"
 
       # -----------------------------------------------------------------------
       # 刻意**不**附离线发布包。
