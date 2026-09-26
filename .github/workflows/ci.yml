@@ -98,15 +98,33 @@ jobs:
   # 就不必去付「解释这条线在哪」的成本。仓库卫生 job 也只检查文件，不检查 CI。
   # ---------------------------------------------------------------------------
   backend-postgres:
-    name: 后端（PostgreSQL 方言）
+    name: 后端（PostgreSQL 方言 · ${{ matrix.pg_timezone }}）
     runs-on: ubuntu-latest
     # ---------------------------------------------------------------------------
-    # ⚠️ 暂时非阻塞：本 job 首次运行就发现 6 个 PG 专属失败，其中 2 个是**真 bug**
+    # ⚠️ 暂时非阻塞：本 job 首次运行就发现 PG 专属失败，其中 2 个是**真 bug**
     #    （见 docs/09 §16）。在修掉之前不让它把主分支变红，但**照常运行照常出结果** ——
     #    不跑就等于没有信号，那正是这个 job 存在的原因。
     #    修完后必须把这一行删掉，恢复为阻塞门禁。
     # ---------------------------------------------------------------------------
     continue-on-error: true
+    # ---------------------------------------------------------------------------
+    # ★ 时区矩阵：**必须同时测非 UTC**
+    #
+    # 这不是"顺手多测一点"，而是补一个被实测发现的盲区：
+    # 首版只跑 UTC 时，套件报 6 个失败；把同一份代码放到 PG 会话时区
+    # 为 Asia/Shanghai 的库上跑，报 7 个 —— 多出来的那条
+    # `test_token_revoke_is_idempotent` 是**时区相关的**：同一个时间字段
+    # 在不同代码路径下带上了不同的 UTC 偏移（+00:00 vs +08:00），
+    # 而该测试用 `.replace(tzinfo=None)` 后比较，于是露出 8 小时差值。
+    # 只跑 UTC 的 CI 永远看不到这一类问题（见 docs/09 §16.8）。
+    #
+    # 为什么选 Asia/Shanghai：目标部署是**内网**，时区大概率就是它。
+    # 在部署实际会用的时区下测，比在 CI 方便的时区下测更有意义。
+    # ---------------------------------------------------------------------------
+    strategy:
+      fail-fast: false
+      matrix:
+        pg_timezone: ["UTC", "Asia/Shanghai"]
     defaults:
       run:
         working-directory: backend
@@ -147,6 +165,13 @@ jobs:
             -c "CREATE USER localcraft WITH PASSWORD 'localcraft' CREATEDB;"
           sudo -u postgres psql -v ON_ERROR_STOP=1 \
             -c "CREATE DATABASE localcraft_test OWNER localcraft;"
+          # 把矩阵指定的时区固化到**数据库级**，这样每个新连接都拿到它，
+          # 不依赖客户端/服务端的默认值。实测：设为 UTC 时那条时区敏感的
+          # 用例会"通过"，设为 Asia/Shanghai 时失败 —— 正是我们要覆盖的差异。
+          sudo -u postgres psql -v ON_ERROR_STOP=1 -d localcraft_test \
+            -c "ALTER DATABASE localcraft_test SET timezone TO '${{ matrix.pg_timezone }}';"
+          PGCONNECT_TIMEOUT=5 psql "postgresql://localcraft:localcraft@127.0.0.1:5432/localcraft_test" \
+            -tAc "show timezone;" | sed "s/^/  PG 会话时区: /"
 
       - name: 安装依赖（含 PG 驱动）
         run: |
