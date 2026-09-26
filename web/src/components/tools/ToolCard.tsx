@@ -3,6 +3,7 @@ import * as React from "react";
 import { Link } from "react-router-dom";
 
 import type { ToolListItem } from "@/api/types";
+import { EngagementCounts, FavoriteToggle } from "@/components/tools/EngagementActions";
 import { ToolTypeBadge } from "@/components/tools/ToolTypeBadge";
 import { Badge } from "@/components/ui/badge";
 import { formatCount, formatRelativeTime } from "@/lib/format";
@@ -14,11 +15,15 @@ const MAX_TAGS = 3;
 /**
  * Portal tool card (docs/04 §6.3, §7.2).
  *
- * The WHOLE card is a `<Link>` — never `onClick` — so middle-click (new tab),
- * cmd-click and "copy link address" all behave (docs/04 §6.3, acceptance #6).
+ * M8 · F7：卡片右上角多了收藏切换。收藏是**按钮**，而按钮不能嵌在 `<a>` 里，
+ * 所以整卡链接从「包一层 `<Link>`」改成 `ToolListTable` 已经在用的**拉伸链接**：
+ * 外层 `div` 承载 `data-testid="tool-card"` 与 `group`，一个 `absolute inset-0`
+ * 的 `<Link>` 盖住整张卡（`z-10`），收藏按钮浮在它上面（`z-20`）。
  *
- * M7 · F4：原来的 `variant="row"` 紧凑列表已删除，列表视图改走
- * `ToolListTable`（表格式）。卡片视图只负责封面浏览，保持低信息密度。
+ * 这样做的代价与收益都写在这里，便于后续复查：
+ *  - 中键 / ⌘-click / 右键复制链接仍然成立（链接依然是真实的 `<a href>`）；
+ *  - 点击卡片任意位置仍然进详情（拉伸链接是 `tool-card` 的**后代**，命中测试通过）；
+ *  - 收藏按钮不再被链接吞掉点击（原来 `<button>` 嵌在 `<a>` 里是非法 HTML）。
  */
 export interface ToolCardProps {
   tool: ToolListItem;
@@ -110,29 +115,37 @@ function ToolCover({ tool }: { tool: ToolListItem }) {
           {VISIBILITY_LABELS[tool.visibility]}
         </span>
       ) : null}
-
-      {tool.has_pending_version ? (
-        <Badge variant="warning" className="absolute right-2 top-2">
-          新版待审
-        </Badge>
-      ) : null}
     </div>
   );
 }
 
 function ToolCardGrid({ tool }: { tool: ToolListItem }) {
   return (
-    <Link
-      to={`/tools/${tool.slug}`}
+    <div
       data-testid="tool-card"
       data-tool-slug={tool.slug}
-      aria-label={`查看工具 ${tool.name}`}
       className={cn(
-        "group flex h-full w-full flex-col overflow-hidden rounded-xl border bg-card text-card-foreground",
-        "transition duration-150 hover:-translate-y-0.5 hover:shadow-md focus-visible:-translate-y-0.5 focus-visible:shadow-md",
+        "group relative flex h-full w-full flex-col overflow-hidden rounded-xl border bg-card text-card-foreground",
+        "transition duration-150 hover:-translate-y-0.5 hover:shadow-md focus-within:-translate-y-0.5 focus-within:shadow-md",
       )}
     >
+      {/* 拉伸链接：整卡可点，同时保留真实 `<a href>`（中键 / ⌘-click 均可用）。 */}
+      <Link
+        to={`/tools/${tool.slug}`}
+        aria-label={`查看工具 ${tool.name}`}
+        className="absolute inset-0 z-10 rounded-xl focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none"
+      />
+
       <ToolCover tool={tool} />
+
+      {/*
+        封面右上角：待审徽标与收藏切换竖排。两者都可能出现（作者本人看到自己
+        待审的工具），所以用一个 flex 列容器而不是各自定位到同一个坐标。
+      */}
+      <div className="pointer-events-none absolute right-2 top-2 z-20 flex flex-col items-end gap-1">
+        {tool.has_pending_version ? <Badge variant="warning">新版待审</Badge> : null}
+        <FavoriteToggle tool={tool} className="pointer-events-auto" />
+      </div>
 
       <div className="flex flex-1 flex-col gap-2 p-3">
         <h3 data-testid="tool-card-name" className="line-clamp-1 text-base font-semibold" title={tool.name}>
@@ -160,6 +173,8 @@ function ToolCardGrid({ tool }: { tool: ToolListItem }) {
                 <span className="tabular-nums">{formatCount(tool.view_count)}</span>
                 <span className="sr-only">次浏览</span>
               </span>
+              {/* 收藏 / 点赞在卡片上**只显示计数**（F8.2：不放可点按钮，避免误触）。 */}
+              <EngagementCounts tool={tool} />
               <span className="max-w-[6rem] truncate" title={tool.owner?.display_name}>
                 {tool.owner?.display_name ?? "—"}
               </span>
@@ -172,6 +187,6 @@ function ToolCardGrid({ tool }: { tool: ToolListItem }) {
           </div>
         </div>
       </div>
-    </Link>
+    </div>
   );
 }

@@ -17,6 +17,11 @@ export const ADMIN: Credentials = { username: "admin", password: "Admin@12345" }
 export const AUTHOR: Credentials = { username: "zhangsan", password: "Author@12345" };
 /** Seeded for the M2 acceptance walkthrough (viewer role, docs/01 §3.2). */
 export const VIEWER: Credentials = { username: "viewer", password: "Viewer@12345" };
+/**
+ * 兼具 `approver` 的账号（M8 · F11 用它验证「非超管打开管理概览页」的降级路径：
+ * `/admin/overview` 放行，`/admin/stats/insights` 403）。
+ */
+export const APPROVER: Credentials = { username: "wangwu", password: "Author@12345" };
 
 /**
  * Collects genuine errors. Browsers log every non-2xx response as a console

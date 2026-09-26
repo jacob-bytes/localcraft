@@ -36,6 +36,10 @@ const NotFoundPage = lazyWithRetry(() => import("@/pages/NotFoundPage"), "NotFou
 
 const ProfilePage = lazyWithRetry(() => import("@/pages/me/ProfilePage"), "ProfilePage");
 const MyToolsPage = lazyWithRetry(() => import("@/pages/me/MyToolsPage"), "MyToolsPage");
+const MyFavoritesPage = lazyWithRetry(
+  () => import("@/pages/me/MyFavoritesPage"),
+  "MyFavoritesPage",
+);
 const ToolEditorPage = lazyWithRetry(() => import("@/pages/me/ToolEditorPage"), "ToolEditorPage");
 const VersionsPage = lazyWithRetry(() => import("@/pages/me/VersionsPage"), "VersionsPage");
 
@@ -137,6 +141,16 @@ export const router = createBrowserRouter([
                 ),
                 children: [
                   { path: "change-password", element: <ChangePasswordPage /> },
+
+                  /*
+                   * M8 · F7.3：我的收藏。
+                   *
+                   * **刻意放在 `RequireRole(AUTHOR_ROLES)` 之外** —— 收藏与作者角色
+                   * 无关，`viewer` 也应该能收藏并看到自己的收藏夹（契约 §23 对收藏
+                   * 没有任何角色限制）。放进 `me` 的 children 里会让 viewer 被挡在
+                   * 「发不了工具的只读访客」这层门外。
+                   */
+                  { path: "me/favorites", element: <MyFavoritesPage /> },
 
                   {
                     path: "me",

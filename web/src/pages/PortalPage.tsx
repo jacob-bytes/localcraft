@@ -28,6 +28,7 @@ import { ErrorState } from "@/components/common/ErrorState";
 import { Markdown } from "@/components/common/Markdown";
 import { PageSkeleton } from "@/components/common/PageSkeleton";
 import { Pagination } from "@/components/common/Pagination";
+import { PortalSideNav } from "@/components/layout/PortalSideNav";
 import { ToolFilters } from "@/components/tools/ToolFilters";
 import { ToolGrid } from "@/components/tools/ToolGrid";
 import { Button } from "@/components/ui/button";
@@ -315,6 +316,8 @@ export default function PortalPage() {
         {/* ---- Left rail (lg+) ---- */}
         <aside aria-label="筛选条件" className="hidden lg:block">
           <div className="sticky top-20 rounded-xl border bg-card p-2">
+            {/* M8 · F7.4：「我的收藏」入口（匿名不渲染，见 PortalSideNav）。 */}
+            <PortalSideNav />
             <ToolFilters {...filterProps} />
           </div>
         </aside>
@@ -346,6 +349,7 @@ export default function PortalPage() {
                     <SheetTitle>筛选</SheetTitle>
                   </SheetHeader>
                   <div className="px-4 pb-8">
+                    <PortalSideNav />
                     <ToolFilters {...filterProps} />
                   </div>
                 </SheetContent>

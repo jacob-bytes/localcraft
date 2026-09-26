@@ -17,6 +17,7 @@ import {
   ACTION_VARIANTS,
 } from "@/components/admin/ApprovalHistoryTable";
 import { OverviewCards } from "@/components/admin/OverviewCards";
+import { InsightsPanel } from "@/components/admin/InsightsPanel";
 import { EmptyState } from "@/components/common/EmptyState";
 import { ErrorState } from "@/components/common/ErrorState";
 import { PageSkeleton } from "@/components/common/PageSkeleton";
@@ -91,6 +92,13 @@ export default function AdminIndexPage() {
       ) : (
         <>
           <OverviewCards overview={overviewQuery.data} />
+
+          {/*
+            M8 · F11：30 日数字概览（下载趋势 / 活跃贡献者 / 分类分布 / 效率估算）。
+            它有自己的 query key 与自己的 loading / error 边界，所以这个重聚合端点
+            迟到或失败**不会**影响上面那四个轻量数字卡（§23.4 的拆分理由）。
+          */}
+          <InsightsPanel />
 
           <div className="grid gap-6 xl:grid-cols-2">
             {/* 最近审批（docs/04 §6.9）。 */}

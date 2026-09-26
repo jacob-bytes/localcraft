@@ -6,6 +6,7 @@ import { useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
 
 import { ApiError, getErrorMessage } from "@/api/client";
+import { readDuplicateOf } from "@/api/engagement";
 import {
   createTool,
   fetchMyVersions,
@@ -19,15 +20,23 @@ import {
   withdrawTool,
 } from "@/api/me";
 import { categoriesQueryKey, fetchCategories } from "@/api/tools";
-import type { ToolDetail, ToolImage, ToolType, VersionUploadResponse } from "@/api/types";
+import type {
+  DuplicateVersionMatch,
+  ToolDetail,
+  ToolImage,
+  ToolType,
+  VersionUploadResponse,
+} from "@/api/types";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import type { AclDraftEntry } from "@/components/me/AclEditor";
 import type { PendingImage } from "@/components/me/ImageUploader";
 import { MetadataSections } from "@/components/me/MetadataSections";
 import { isSkillParseError, MAX_UPLOAD_BYTES, type UploadedFile } from "@/components/me/ToolTypeFields";
+import { DuplicateUploadNotice } from "@/components/tools/DuplicateUploadNotice";
 import {
   emptyFormValues,
   emptyVersionContent,
+  savingMinutesToPayload,
   toMetadataPayload,
   toolToFormValues,
   toolFormSchema,
@@ -57,6 +66,16 @@ function isJustNow(at: Date): boolean {
  * survives the route change for the lifetime of the tab (never persisted).
  */
 const lastSavedAtByTool = new Map<number, Date>();
+
+/**
+ * M8 · F9：最近一次上传的**去重命中**，按工具 id 记住。
+ *
+ * 为什么需要模块级：创建流程上传完版本后会从 `/me/tools/new` 跳到
+ * `/me/tools/{id}/edit`，本组件被**重建**，组件内的提示 state 会随之丢失
+ * —— 那样「新建工具时上传了重复文件」这条路径就永远看不到提示。
+ * 与 `lastSavedAtByTool` 同一套做法（只活在当前标签页，不落任何持久存储）。
+ */
+const lastDuplicateByTool = new Map<number, DuplicateVersionMatch>();
 
 /** Newest entry in `lastSavedAtByTool` — the create flow's tool id is unknown to
  *  the remounted form until its detail query lands. */
@@ -201,6 +220,16 @@ function ToolFormInner({
       : null,
   );
   const [formError, setFormError] = React.useState<ApiErrorState | null>(null);
+  /** M8 · F9：最近一次上传的去重命中（编辑器里还有第二个上传入口）。 */
+  const [duplicateHit, setDuplicateHit] = React.useState<DuplicateVersionMatch | null>(() =>
+    tool ? (lastDuplicateByTool.get(tool.id) ?? null) : null,
+  );
+
+  /** 关闭提示：同时清掉模块级的记忆，重新上传前不再出现。 */
+  const dismissDuplicate = React.useCallback(() => {
+    setDuplicateHit(null);
+    if (toolId !== null) lastDuplicateByTool.delete(toolId);
+  }, [toolId]);
   const [busy, setBusy] = React.useState<Busy>(null);
   const [uploadProgress, setUploadProgress] = React.useState<number | null>(null);
   const [dragging, setDragging] = React.useState(false);
@@ -263,18 +292,19 @@ function ToolFormInner({
     return () => window.removeEventListener("beforeunload", handler);
   }, [dirty]);
 
-  const metadataPayload = React.useCallback(
-    (values: ToolFormValues) => toMetadataPayload(values),
-    [],
-  );
-
   /** PATCH metadata + PUT the ACL list. Returns false when the server refuses. */
   const saveMetadata = React.useCallback(
     async (values: ToolFormValues, silent: boolean): Promise<boolean> => {
       const id = toolId;
       if (id === null) return false;
+      /*
+       * M8 · F10：`estimated_saving_minutes` **总是**进 PATCH 体 —— 与创建态同语义
+       * （留空 → `null` = 未填写，**不是 0**，契约 §23.3）。后端把该字段也放进了
+       * `ToolDetail`（`openapi.json` 为准），所以编辑页能回显，不存在「一次自动保存
+       * 把作者已填的值抹掉」的情况。
+       */
       try {
-        await updateTool(id, metadataPayload(values));
+        await updateTool(id, toMetadataPayload(values, { includeSavingMinutes: true }));
         await replaceAcl(id, {
           visibility: values.visibility,
           entries: aclEntries.map((entry) => ({
@@ -298,7 +328,7 @@ function ToolFormInner({
         return false;
       }
     },
-    [aclEntries, metadataPayload, setSavedAt, toolId],
+    [aclEntries, setSavedAt, toolId],
   );
 
   /* ---- autosave: 30s while dirty + on blur (docs/04 §6.7) ---- */
@@ -394,6 +424,12 @@ function ToolFormInner({
         sha256: result.file_sha256 ?? "",
         version: result.version,
       });
+      // M8 · F9：上传成功是主结果，去重只是**附加**提示（非阻塞、可关闭）。
+      const hit = readDuplicateOf(result);
+      setDuplicateHit(hit);
+      // 记住它：创建流程随后会跳到编辑页并重建本组件（见 lastDuplicateByTool）。
+      if (hit) lastDuplicateByTool.set(id, hit);
+      else lastDuplicateByTool.delete(id);
       skillParseErrorRef.current = null;
       setSkillError(
         result.skill?.parse_error
@@ -468,6 +504,11 @@ function ToolFormInner({
           webapp_url: values.tool_type === "webapp" ? values.webapp_url.trim() : null,
           webapp_health_url:
             values.tool_type === "webapp" ? values.webapp_health_url.trim() || null : null,
+          /*
+           * M8 · F10：**总是**带上这个字段（空 → `null`，不是 `0`）。
+           * 契约 §23.3：「`NULL` 表示作者未填写，不是一个可以当成 0 的值」。
+           */
+          estimated_saving_minutes: savingMinutesToPayload(values.estimated_saving_minutes),
         });
         setToolId(created.id);
         await afterCreate(created.id, values, created, onSubmit);
@@ -845,6 +886,10 @@ function ToolFormInner({
               仍可保存草稿（FR-TOOL-06），但提交审批已禁用。
             </AlertDescription>
           </Alert>
+        ) : null}
+
+        {duplicateHit ? (
+          <DuplicateUploadNotice duplicate={duplicateHit} onDismiss={dismissDuplicate} />
         ) : null}
 
         {formError ? (

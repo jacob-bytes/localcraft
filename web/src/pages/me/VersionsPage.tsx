@@ -12,6 +12,7 @@ import * as React from "react";
 import { useNavigate, useParams } from "react-router-dom";import { toast } from "sonner";
 
 import { getErrorMessage } from "@/api/client";
+import { readDuplicateOf } from "@/api/engagement";
 import {
   deleteVersion,
   fetchMyTool,
@@ -21,7 +22,7 @@ import {
   patchVersion,
 } from "@/api/me";
 import { createDownloadTicket } from "@/api/tools";
-import type { VersionStatus, VersionSummary } from "@/api/types";
+import type { DuplicateVersionMatch, VersionStatus, VersionSummary } from "@/api/types";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { CopyButton } from "@/components/common/CopyButton";
 import { EmptyState } from "@/components/common/EmptyState";
@@ -29,6 +30,7 @@ import { ErrorState } from "@/components/common/ErrorState";
 import { Markdown } from "@/components/common/Markdown";
 import { PageSkeleton } from "@/components/common/PageSkeleton";
 import { VersionUploadDialog } from "@/components/me/VersionUploadDialog";
+import { DuplicateUploadNotice } from "@/components/tools/DuplicateUploadNotice";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -87,6 +89,12 @@ export default function VersionsPage() {
   const [pendingDelete, setPendingDelete] = React.useState<VersionSummary | null>(null);
   const [editing, setEditing] = React.useState(false);
   const [changelogDraft, setChangelogDraft] = React.useState("");
+  /**
+   * M8 · F9：最近一次上传的去重命中（`null` = 没有命中 / 后端还没回带这个字段）。
+   * 它**只影响提示的显示**：上传成功的 toast、选中新版本、invalidate 都与它无关，
+   * 所以「重复提示」永远不会掩盖「上传成功」这个事实。
+   */
+  const [duplicateHit, setDuplicateHit] = React.useState<DuplicateVersionMatch | null>(null);
 
   const toolQuery = useQuery({
     queryKey: myToolDetailQueryKey(toolId),
@@ -235,6 +243,14 @@ export default function VersionsPage() {
           上传新版本
         </Button>
       </header>
+
+      {/* M8 · F9：去重提示放在版本列表之上、历史版本说明之上 —— 它是「刚才这次
+          上传」的附加信息，不阻塞任何操作（可关闭）。 */}
+      <DuplicateUploadNotice
+        duplicate={duplicateHit}
+        onDismiss={() => setDuplicateHit(null)}
+        className="mb-4"
+      />
 
       <Alert
         className={cn(
@@ -495,6 +511,8 @@ export default function VersionsPage() {
               tool.current_version?.version ?? "—"
             } 继续对外提供服务。`,
           );
+          // M8 · F9：先报成功（上面的 toast），重复提示是**附加**信息。
+          setDuplicateHit(readDuplicateOf(result));
           setSelectedId(result.id);
           void queryClient.invalidateQueries({ queryKey: myVersionsQueryKey(toolId) });
           void queryClient.invalidateQueries({ queryKey: myToolDetailQueryKey(toolId) });

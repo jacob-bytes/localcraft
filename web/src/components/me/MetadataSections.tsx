@@ -181,6 +181,65 @@ export function MetadataSections(props: MetadataSectionsProps) {
     )}
   />
 </section>
+
+  {/*
+    M8 · F10（契约 §23.5）：预计节省时长。
+
+    这一节的三条文案是任务书点名要求的，缺一不可：
+    1. 明确是**单次使用**的预计节省分钟数（不是总量、不是每次迭代）；
+    2. 说明它会被平台用于效率估算 —— 这不是一个可有可无的备注字段；
+    3. 明说**留空会让该工具从估算里消失**，不要让作者以为不填也没事。
+    第 3 条在编辑态另有「留空 = 不修改」的语义（契约没有把该字段放进
+    `ToolDetail`，编辑页读不到当前值），所以在编辑态额外给一行说明。
+  */}
+  <section
+    aria-labelledby="section-efficiency"
+    data-testid="section-efficiency"
+    className="space-y-4 rounded-xl border bg-card p-4"
+  >
+    <h2 id="section-efficiency" className="text-base font-semibold">
+      效率估算
+    </h2>
+    <FormField
+      control={form.control}
+      name="estimated_saving_minutes"
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel htmlFor="tool-field-estimated_saving_minutes">
+            预计节省时长（分钟，可选）
+          </FormLabel>
+          <FormControl>
+            <Input
+              {...field}
+              id="tool-field-estimated_saving_minutes"
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={1440}
+              step={1}
+              disabled={locked}
+              placeholder="例如 30"
+              onBlur={onAutosave}
+            />
+          </FormControl>
+          <FormDescription className="space-y-1">
+            <span className="block">
+              填「单次使用」这个工具大约能省下多少分钟（1 ~ 1440，最大 24 小时）。
+            </span>
+            <span className="block">
+              这个数字会被平台汇总成「效率估算」，显示在管理概览里，并标注为基于作者自述的估算（非实测）。
+            </span>
+            <span className="block">
+              {mode === "create"
+                ? "留空也允许；但如果作者都不填，平台就算不出节省量，这个工具也不会被计入估算覆盖率。"
+                : "留空 = 清空该值：这个工具会从平台的效率估算里消失，不再计入覆盖率。"}
+            </span>
+          </FormDescription>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  </section>
   <section aria-labelledby="section-type" className="space-y-4 rounded-xl border bg-card p-4">
     <h2 id="section-type" className="text-base font-semibold">
       工具类型

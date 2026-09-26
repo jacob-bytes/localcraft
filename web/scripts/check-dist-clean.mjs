@@ -30,6 +30,21 @@ function walk(dir) {
   return out;
 }
 
+/**
+ * 内容里的 `msw` 必须是**独立出现**的（前后不能是字母/数字/下划线）。
+ *
+ * 为什么加这个边界（M8 实测的误报）：Vite 的 chunk 文件名形如
+ * `ConfirmDialog-DMSWScg1.js`，那 8 位 base64 内容哈希**可能**含 `MSW`。旧的
+ * `/msw/i` 会因此把 **14 个无关 chunk** 判成「MSW 被打进产物」，让 `verify` 在一个
+ * **完全干净**的构建上失败（本轮就是这样：产物里没有任何 MSW 代码，命中的全是
+ * 同一个文件名的哈希）。
+ *
+ * 边界不会放过真正的泄漏：真被打进来的 MSW 代码会出现 `"msw"`、`msw/`、
+ * `msw@x.y.z`、`mockServiceWorker` 这类**独立 token**，它们的前后都不是
+ * `[A-Za-z0-9_]`，仍然会被命中。
+ */
+const MSW_IN_CONTENT = /(?<![A-Za-z0-9_])msw(?![A-Za-z0-9_])/i;
+
 const files = walk(distDir);
 const offenders = [];
 
@@ -47,8 +62,8 @@ for (const file of files) {
   } catch {
     continue;
   }
-  if (/msw/i.test(text)) {
-    offenders.push(`${base}（内容命中 /msw/i）`);
+  if (MSW_IN_CONTENT.test(text)) {
+    offenders.push(`${base}（内容命中 MSW 标记）`);
   }
 }
 

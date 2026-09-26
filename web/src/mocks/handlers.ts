@@ -6,6 +6,7 @@ import type {
   AdminCategoryCreateRequest,
   AdminCategoryOut,
   AdminCategoryUpdateRequest,
+  AdminInsightsResponse,
   AdminOverviewResponse,
   AdminRoleReplaceRequest,
   AdminTagListResponse,
@@ -34,6 +35,7 @@ import type {
   CurrentVersionBrief,
   DownloadLogItem,
   DownloadTicket,
+  DuplicateVersionMatch,
   ErrorDetails,
   FieldError,
   GeneratedPassword,
@@ -99,6 +101,7 @@ import type {
   WithdrawResponse,
 } from "@/api/types";
 import {
+  buildEngagementSeed,
   buildInitialApprovalRecords,
   buildInitialDownloadLogs,
   buildInitialToolRecords,
@@ -116,7 +119,9 @@ import {
   LONG_TOOL_NAME,
   MOCK_CATEGORIES,
   MOCK_GROUPS,
+  MOCK_INSIGHTS_ANCHOR,
   MOCK_ROLES,
+  MOCK_SAVING_MINUTES,
   MOCK_SETTINGS,
   MOCK_SKILL_MANIFEST,
   MOCK_SKILL_README,
@@ -125,6 +130,7 @@ import {
   MOCK_TOOLS,
   MOCK_USERS,
   MOCK_VERSION_HISTORY_LIMIT,
+  mockInsightsDates,
   skillTreeSummary,
   toolSeedToListItem,
   waitingHoursFor,
@@ -318,6 +324,187 @@ const downloadTickets = new Map<
   string,
   { tool_id: number; version_id: number; user_id: number; expires_at: number }
 >();
+
+/* -------------------------------------------------------------------------- */
+/* M8 state（收藏 / 点赞 / 上传去重 / 数字概览）                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 收藏 / 点赞的**有状态**存储（任务书 F12.4）。
+ *
+ * 设计取舍（这是本轮最容易造成 flaky 的地方，所以写清楚）：
+ *
+ * - 状态放 `localStorage`，键 `localcraft.msw.engagement`。理由：e2e 要验
+ *   「刷新后状态保持」（F12.3），内存态一 F5 就没了，那条断言根本不可能通过。
+ *   与既有的 `localcraft.msw.sessions` / `localcraft.msw.credentials` 同一套做法。
+ * - **可显式重置**：`POST /api/v1/__mock__/reset` 恢复成 `buildEngagementSeed()`，
+ *   并清空故障注入。用例之间互相污染的路径被这一点掐断（Playwright 每个用例本来
+ *   也有独立 context，两条防线叠加）。
+ * - 键是用户 id 的字符串形式；未被任何用户收藏/点赞的工具不占键。
+ */
+interface MockEngagementStore {
+  favorites: Record<string, number[]>;
+  likes: Record<string, number[]>;
+}
+
+const ENGAGEMENT_STORAGE_KEY = "localcraft.msw.engagement";
+
+function loadEngagement(): MockEngagementStore {
+  try {
+    const raw = window.localStorage.getItem(ENGAGEMENT_STORAGE_KEY);
+    if (raw) {
+      const parsed: unknown = JSON.parse(raw);
+      if (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        "favorites" in parsed &&
+        "likes" in parsed
+      ) {
+        return parsed as MockEngagementStore;
+      }
+    }
+  } catch {
+    /* ignore — 落到种子 */
+  }
+  return { favorites: {}, likes: {} };
+}
+
+let engagement: MockEngagementStore = loadEngagement();
+
+function saveEngagement(next: MockEngagementStore): void {
+  engagement = next;
+  try {
+    window.localStorage.setItem(ENGAGEMENT_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 重置成确定性种子，并清掉注入的故障。 */
+function resetMockState(): void {
+  const seed = buildEngagementSeed();
+  saveEngagement({ favorites: seed.favorites, likes: seed.likes });
+  savingMinutes = seedSavingMinutes();
+  injectedFailures.clear();
+}
+
+/** 把种子里的 favorites/likes 当作初始值写回 localStorage（首次启动）。 */
+function seedEngagementIfEmpty(): void {
+  if (Object.keys(engagement.favorites).length > 0 || Object.keys(engagement.likes).length > 0) {
+    return;
+  }
+  const seed = buildEngagementSeed();
+  saveEngagement({ favorites: seed.favorites, likes: seed.likes });
+}
+
+seedEngagementIfEmpty();
+
+/**
+ * `estimated_saving_minutes`（M8 · F10）：可被创建 / 更新改写，重置回种子。
+ *
+ * 值是 `number | null`：`null` = 作者**未填写**，与契约 §23.3 的语义一致
+ * （「不是一个可以当成 0 的值」），所以这里也不把 null 折成 0。
+ */
+function seedSavingMinutes(): Map<number, number | null> {
+  return new Map(
+    Object.entries(MOCK_SAVING_MINUTES).map(([id, minutes]) => [Number(id), minutes]),
+  );
+}
+
+let savingMinutes: Map<number, number | null> = seedSavingMinutes();
+
+/**
+ * 故障注入（仅 mock）：`POST /api/v1/__mock__/fail-next` 让某个端点失败 N 次。
+ *
+ * 用来测**乐观更新的回滚**（F7.5）：真实网络层的拦截在 MSW 的 service worker
+ * 面前并不可靠，所以在 mock 内部注入才是确定性的。`delay_ms` 让失败「慢到可以
+ * 观察」—— 先看到乐观更新后的界面，再看到它回滚，否则两者在同一帧里，断言只能靠
+ * 运气。
+ */
+const injectedFailures = new Map<string, { times: number; delayMs: number }>();
+
+/**
+ * 命中注入的故障则返回一个 500，并消耗一次计数。
+ *
+ * 键接受两种写法：`"PUT /api/v1/tools/x/favorite"`（精确到方法）与
+ * `"/api/v1/tools/x/favorite"`（只到路径）。两种都认，是因为「路径 + 方法」是精确
+ * 匹配所必需的，而只写路径是更容易记住的写法 —— 写错键会让注入静默失效
+ * （第一版就踩过：注入没生效，用例看起来像「回滚坏了」）。
+ */
+async function consumeInjectedFailure(request: Request): Promise<Response | null> {
+  const url = new URL(request.url);
+  const pathname = url.pathname;
+  const methodKey = `${request.method.toUpperCase()} ${pathname}`;
+  const key = injectedFailures.has(methodKey) ? methodKey : pathname;
+  const entry = injectedFailures.get(key);
+  if (!entry || entry.times <= 0) return null;
+  if (entry.times === 1) injectedFailures.delete(key);
+  else injectedFailures.set(key, { ...entry, times: entry.times - 1 });
+  if (entry.delayMs > 0) await delay(entry.delayMs);
+  return errorResponse(500, "INTERNAL_ERROR", `mock 注入的故障：${key}`);
+}
+
+/** 某个用户已收藏 / 已点赞的工具 id 集合。 */
+function engagedToolIds(kind: "favorites" | "likes", userId: number): Set<number> {
+  return new Set(engagement[kind][String(userId)] ?? []);
+}
+
+function isEngaged(kind: "favorites" | "likes", userId: number, toolId: number): boolean {
+  return engagedToolIds(kind, userId).has(toolId);
+}
+
+/** 幂等写入：`next = true` 收藏，`false` 取消收藏；返回写入后的集合大小是否变化。 */
+function setEngaged(
+  kind: "favorites" | "likes",
+  userId: number,
+  toolId: number,
+  next: boolean,
+): void {
+  const key = String(userId);
+  const current = new Set(engagement[kind][key] ?? []);
+  if (next) current.add(toolId);
+  else current.delete(toolId);
+  saveEngagement({ ...engagement, [kind]: { ...engagement[kind], [key]: [...current] } });
+}
+
+/**
+ * 收藏 / 点赞 4 个端点的**统一**响应（`ToolEngagementResponse`，见 openapi）。
+ *
+ * 后端刻意回「操作后的完整状态」而不是 `{status:"ok"}`：前端点一次按钮就拿到最新
+ * 计数，不必再拉一次详情；幂等语义也在响应里自解释（重复 `PUT` 返回同样的
+ * `is_favorited=true` 与同一个 `favorite_count`）。
+ */
+function engagementResponse(record: MockToolRecord, user: MockUser) {
+  return {
+    tool_id: record.seed.id,
+    slug: record.seed.slug,
+    is_favorited: isEngaged("favorites", user.id, record.seed.id),
+    favorite_count: engagementCount("favorites", record.seed.id),
+    is_liked: isEngaged("likes", user.id, record.seed.id),
+    like_count: engagementCount("likes", record.seed.id),
+  };
+}
+
+/**
+ * 反规范化计数（§23.3）：**种子基线 + 运行时开关**。
+ *
+ * 契约禁止实时聚合，所以这里也照着「维护一个数」来模拟：基线代表种子数据里
+ * 未建模的其他用户，mock 用户的开关在它之上 ±1。
+ */
+/** 种子基线（每次调用重建对象没有意义，提到模块级）。 */
+const ENGAGEMENT_BASELINE = buildEngagementSeed().baseline;
+
+function engagementCount(kind: "favorites" | "likes", toolId: number): number {
+  const baseline =
+    kind === "favorites"
+      ? (ENGAGEMENT_BASELINE[toolId]?.favorites ?? 0)
+      : (ENGAGEMENT_BASELINE[toolId]?.likes ?? 0);
+  let extra = 0;
+  for (const ids of Object.values(engagement[kind])) {
+    if (ids.includes(toolId)) extra += 1;
+  }
+  return baseline + extra;
+}
 
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                    */
@@ -614,6 +801,11 @@ function toToolListItem(record: MockToolRecord, user: MockUser | null): ToolList
     can_download: canDownload(record, user),
     published_at: record.seed.published_at || null,
     updated_at: record.seed.updated_at || null,
+    // M8（§23.5）：计数**始终**返回（匿名也一样），两个 bool 匿名恒 false。
+    favorite_count: engagementCount("favorites", record.seed.id),
+    like_count: engagementCount("likes", record.seed.id),
+    is_favorited: user !== null && isEngaged("favorites", user.id, record.seed.id),
+    is_liked: user !== null && isEngaged("likes", user.id, record.seed.id),
   };
 }
 
@@ -786,6 +978,13 @@ function toToolDetail(record: MockToolRecord, user: MockUser | null): ToolDetail
         : record.acl.map((entry) => aclEntryOut(entry)),
     skill: skillDetailFor(record),
     prompt: promptDetailFor(record),
+    // M8（§23.5）：详情与列表同形。
+    favorite_count: engagementCount("favorites", record.seed.id),
+    like_count: engagementCount("likes", record.seed.id),
+    is_favorited: user !== null && isEngaged("favorites", user.id, record.seed.id),
+    is_liked: user !== null && isEngaged("likes", user.id, record.seed.id),
+    // M8 · F10：`null` = 作者未填写（契约 §23.3：「不是一个可以当成 0 的值」）。
+    estimated_saving_minutes: savingMinutes.get(record.seed.id) ?? null,
   };
 }
 
@@ -1269,6 +1468,164 @@ function toQueueItem(record: MockToolRecord): ApprovalQueueItem {
     submitted_at: record.submitted_at,
     waiting_hours: waitingHours(record),
     version_seq: record.version_seq,
+  };
+}
+
+/** M8 · F10：`estimated_saving_minutes` 的取值约束（§23.3：1 ~ 1440 的整数）。 */
+function isValidSavingMinutes(value: unknown): boolean {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 1440;
+}
+
+/**
+ * M8 · F11：`GET /admin/stats/insights` 的 mock 聚合（CONTRACT §23.6 冻结形状）。
+ *
+ * 公式照契约抄，一个字都不改：
+ *
+ *   total_minutes = Σ_over_tools( estimated_saving_minutes × COUNT(DISTINCT download_logs.user_id) )
+ *                   仅计入 estimated_saving_minutes IS NOT NULL 且 user_id IS NOT NULL
+ *
+ * 「缺口补 0、恰好 30 条」也是契约原文；`tools_by_category` / `active_contributors_30d`
+ * 与后端同一口径（后者 = 30 天内上传/更新过工具的去重用户数）。
+ *
+ * 两处 mock 专属的简化，写在明面上：
+ *  1. 「今天」是固定锚点 `MOCK_INSIGHTS_ANCHOR`（否则输出会逐日漂移，断言无法稳定）；
+ *  2. 每日下载 = 种子下载明细 + 一个按日期派生的确定性基线，否则 30 天里绝大多数
+ *     是 0，看起来像坏掉的数据。
+ */
+function buildInsights(): AdminInsightsResponse {
+  const dates = mockInsightsDates();
+  const anchorMs = Date.parse(`${MOCK_INSIGHTS_ANCHOR}T23:59:59Z`);
+  const windowStartMs = anchorMs - 29 * 86_400_000;
+  const windowStartIso = new Date(windowStartMs).toISOString().slice(0, 10);
+
+  const downloadsByDate = new Map<string, number>();
+  for (const date of dates) downloadsByDate.set(date, 0);
+  for (const log of downloadLogs) {
+    const date = log.created_at.slice(0, 10);
+    if (downloadsByDate.has(date)) {
+      downloadsByDate.set(date, (downloadsByDate.get(date) ?? 0) + 1);
+    }
+  }
+  const downloadsDaily = dates.map((date, index) => ({
+    date,
+    // 确定性基线：3 ~ 13 次/天，逐日不同、跨运行稳定。
+    downloads: (downloadsByDate.get(date) ?? 0) + 3 + ((index * 7) % 11),
+  }));
+  const downloadsLast30Days = downloadsDaily.reduce((total, point) => total + point.downloads, 0);
+
+  // 活跃贡献者：窗口内更新过工具的去重作者（含被驳回/下架的工具，与后端一致）。
+  const contributors = new Set<number>();
+  for (const record of toolRecords) {
+    if (record.deleted_at) continue;
+    const updated = record.seed.updated_at.slice(0, 10);
+    if (updated >= windowStartIso && updated <= MOCK_INSIGHTS_ANCHOR) {
+      contributors.add(ownerOf(record).id);
+    }
+  }
+
+  // 分类分布：门户可见（approved / pending_update）且未删除的工具。
+  const categories = new Map<
+    string,
+    { category_id: number | null; name: string; tool_count: number; download_count: number }
+  >();
+  for (const record of toolRecords) {
+    if (record.deleted_at) continue;
+    if (record.status !== "approved" && record.status !== "pending_update") continue;
+    const category = MOCK_CATEGORIES.find((item) => item.slug === record.seed.category_slug);
+    const key = category ? String(category.id) : "none";
+    const entry = categories.get(key) ?? {
+      category_id: category?.id ?? null,
+      name: category?.name ?? "未分类",
+      tool_count: 0,
+      download_count: 0,
+    };
+    entry.tool_count += 1;
+    entry.download_count += record.seed.download_count;
+    categories.set(key, entry);
+  }
+
+  // 效率估算：作者自填分钟数 × 该工具的**去重**受益人数。
+  let totalMinutes = 0;
+  let coveredToolCount = 0;
+  let totalToolCount = 0;
+  for (const record of toolRecords) {
+    if (record.deleted_at) continue;
+    totalToolCount += 1;
+    const minutes = savingMinutes.get(record.seed.id) ?? null;
+    if (minutes === null) continue;
+    coveredToolCount += 1;
+    const beneficiaries = new Set(
+      downloadLogs
+        .filter((log) => log.tool_id === record.seed.id && log.user_id !== null)
+        .map((log) => log.user_id),
+    );
+    totalMinutes += minutes * beneficiaries.size;
+  }
+
+  return {
+    downloads_last_30_days: downloadsLast30Days,
+    downloads_daily: downloadsDaily,
+    active_contributors_30d: contributors.size,
+    tools_by_category: [...categories.values()].sort((a, b) => b.tool_count - a.tool_count),
+    savings: {
+      total_minutes: totalMinutes,
+      covered_tool_count: coveredToolCount,
+      total_tool_count: totalToolCount,
+      basis: "author_estimate",
+    },
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* M8 · 上传去重命中（任务书 F9 / 后端 B9）                                      */
+/* -------------------------------------------------------------------------- */
+/**
+ * 服务端去重命中：命中范围是**其他工具**已有的版本；同一工具的新版本不算重复
+ * （那是正常迭代）。
+ *
+ * 真实逻辑是比对 `file_sha256`（契约 §23.1：该列与索引都已存在）。但 mock 的假哈希
+ * 由 `slug|version|size` 派生，**e2e 造不出与另一个工具相同的值**，所以额外提供两个
+ * 确定性入口（与既有的 `simulate=bad-zip` 是同一套约定，只存在于 mock）：
+ *
+ *   - 上传的文件名包含 `duplicate-hint`
+ *   - multipart 字段 `simulate=duplicate`
+ *
+ * 命中**不阻断上传**，只回带信息（§23.2）。
+ */
+function duplicateHitFor(
+  record: MockToolRecord,
+  sha: string | null,
+  fileName: string | null,
+  simulate: string,
+): DuplicateVersionMatch | null {
+  const forced = simulate === "duplicate" || (fileName ?? "").includes("duplicate-hint");
+  const other = forced
+    ? toolRecords.find(
+        (item) =>
+          item.seed.id !== record.seed.id &&
+          !item.deleted_at &&
+          (item.status === "approved" || item.status === "pending_update") &&
+          item.versions.some((version) => version.file_sha256 !== null),
+      )
+    : toolRecords.find(
+        (item) =>
+          item.seed.id !== record.seed.id &&
+          !item.deleted_at &&
+          item.versions.some((version) => sha !== null && version.file_sha256 === sha),
+      );
+  if (!other) return null;
+  const version =
+    other.versions.find((item) => item.status === "approved") ?? other.versions[0];
+  if (!version) return null;
+  return {
+    tool_id: other.seed.id,
+    slug: other.seed.slug,
+    name: other.seed.name,
+    version_id: version.id,
+    version: version.version,
+    file_sha256: version.file_sha256 ?? "",
+    is_current: other.versions.find((item) => item.status === "approved")?.id === version.id,
+    uploaded_at: version.created_at,
   };
 }
 
@@ -1845,6 +2202,65 @@ export const handlers = [
     HttpResponse.json({ status: "ok", database: "ok", storage: "ok" }),
   ),
 
+  /*
+   * ---- mock 控制面（仅测试用，不属于任何契约） ----
+   *
+   * M8 的收藏 / 点赞是**有状态**的：不重置，用例之间就会互相污染，进而 flaky
+   * （任务书 F12.4 点名的头号风险）。这两个端点给出确定性的重置与故障注入，
+   * 而且只能在页面里通过 `fetch` 调到（MSW 的 service worker 只拦页面内的请求），
+   * 生产构建里 MSW 根本不会被打包（CONTRACT §11 #11，由 `check:dist` 守卫）。
+   *
+   * 用法（e2e 里）：
+   *   await page.evaluate(() => fetch("/api/v1/__mock__/reset", { method: "POST" }));
+   *   await page.evaluate(() =>
+   *     fetch("/api/v1/__mock__/fail-next", {
+   *       method: "POST",
+   *       headers: { "Content-Type": "application/json" },
+   *       body: JSON.stringify({
+   *         endpoint: "/api/v1/tools/x/favorite",
+   *         times: 1,
+   *         delay_ms: 800, // 让乐观更新「看得见」，再看到回滚
+   *       }),
+   *     }),
+   *   );
+   */
+  http.post(`${API}/__mock__/reset`, () => {
+    resetMockState();
+    return HttpResponse.json({ status: "ok", reset: ["engagement", "saving_minutes", "failures"] });
+  }),
+  http.post(`${API}/__mock__/fail-next`, async ({ request }) => {
+    const body = (await request.json().catch(() => null)) as unknown;
+    const record =
+      typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
+    const endpoint = typeof record["endpoint"] === "string" ? record["endpoint"] : "";
+    const times =
+      typeof record["times"] === "number" && record["times"] > 0
+        ? Math.floor(record["times"])
+        : 1;
+    const delayMs =
+      typeof record["delay_ms"] === "number" && record["delay_ms"] > 0
+        ? Math.floor(record["delay_ms"])
+        : 0;
+    if (!endpoint) return validationError([{ field: "endpoint", message: "endpoint 必填" }]);
+    injectedFailures.set(endpoint, { times, delayMs });
+    return HttpResponse.json({ status: "ok", endpoint, times, delay_ms: delayMs });
+  }),
+  /*
+   * 读回 mock 里存的 `estimated_saving_minutes`（仅 mock，仅测试用）。
+   *
+   * 为什么需要它：F10 的硬要求是「留空必须真的提交 **null**，不要提交 0」。只从 UI
+   * 上看不出 `null` 与 `0` 的差别（输入框都是空的），所以 e2e 直接读 mock 侧落地值
+   * —— 这是对「到底提交了什么」最直接的证据。
+   */
+  http.get(`${API}/__mock__/tools/:id/saving-minutes`, ({ params }) => {
+    const id = Number(params.id);
+    if (!Number.isFinite(id)) return validationError([{ field: "id", message: "id 不合法" }]);
+    return HttpResponse.json({
+      tool_id: id,
+      estimated_saving_minutes: savingMinutes.get(id) ?? null,
+    });
+  }),
+
   /* ---- meta ---- */
   http.get(`${API}/meta`, async () => {
     await delay(30);
@@ -2101,6 +2517,65 @@ export const handlers = [
     });
   }),
 
+  /* ---- M8 · 收藏 / 点赞（CONTRACT §23.4） ---- */
+
+  /*
+   * `PUT` / `DELETE /tools/{slug}/favorite`：**幂等**（§23.4）。
+   * 已收藏再 PUT 返回成功、未收藏再 DELETE 返回成功 —— 前端因此可以直接按
+   * 目标状态发请求，不需要「先查再写」。
+   *
+   * 匿名一律 401（收藏是登录态功能；§23.5 里匿名 `is_favorited` 恒为 false，
+   * 前端也不会渲染按钮，这里再兜一层）。
+   */
+  http.put(`${API}/tools/:slug/favorite`, async ({ request, params }) => {
+    await delay(40);
+    const injected = await consumeInjectedFailure(request);
+    if (injected) return injected;
+    const user = authenticate(request);
+    if (!user) return tokenExpired();
+    const record = findToolBySlug(String(params.slug));
+    if (!record || record.deleted_at || !canView(record, user)) return notFound("工具不存在或已被删除");
+    setEngaged("favorites", user.id, record.seed.id, true);
+    return HttpResponse.json(engagementResponse(record, user));
+  }),
+
+  http.delete(`${API}/tools/:slug/favorite`, async ({ request, params }) => {
+    await delay(40);
+    const injected = await consumeInjectedFailure(request);
+    if (injected) return injected;
+    const user = authenticate(request);
+    if (!user) return tokenExpired();
+    const record = findToolBySlug(String(params.slug));
+    if (!record || record.deleted_at || !canView(record, user)) return notFound("工具不存在或已被删除");
+    setEngaged("favorites", user.id, record.seed.id, false);
+    return HttpResponse.json(engagementResponse(record, user));
+  }),
+
+  /* 点赞：形状与收藏完全对称（§23.4）。**只有整数计数，没有平均分**（§23.7）。 */
+  http.put(`${API}/tools/:slug/like`, async ({ request, params }) => {
+    await delay(40);
+    const injected = await consumeInjectedFailure(request);
+    if (injected) return injected;
+    const user = authenticate(request);
+    if (!user) return tokenExpired();
+    const record = findToolBySlug(String(params.slug));
+    if (!record || record.deleted_at || !canView(record, user)) return notFound("工具不存在或已被删除");
+    setEngaged("likes", user.id, record.seed.id, true);
+    return HttpResponse.json(engagementResponse(record, user));
+  }),
+
+  http.delete(`${API}/tools/:slug/like`, async ({ request, params }) => {
+    await delay(40);
+    const injected = await consumeInjectedFailure(request);
+    if (injected) return injected;
+    const user = authenticate(request);
+    if (!user) return tokenExpired();
+    const record = findToolBySlug(String(params.slug));
+    if (!record || record.deleted_at || !canView(record, user)) return notFound("工具不存在或已被删除");
+    setEngaged("likes", user.id, record.seed.id, false);
+    return HttpResponse.json(engagementResponse(record, user));
+  }),
+
   /* ---- portal detail (CONTRACT §6.1) ---- */
   http.get(`${API}/tools/:slug`, async ({ request, params }) => {
     await delay(SIMULATED_LATENCY_MS);
@@ -2137,8 +2612,7 @@ export const handlers = [
     return HttpResponse.json(toToolDetail(record, user));
   }),
 
-  http.get(`${API}/tools/:slug/versions`, async ({ request, params }) => {
-    await delay(80);
+  http.get(`${API}/tools/:slug/versions`, async ({ request, params }) => {    await delay(80);
     // 门户读接口：匿名按 MOCK_ALLOW_ANONYMOUS_VIEW 放行（对应后端 portal_access）
     const { user, deny } = portalRead(request);
     if (deny) return deny;
@@ -2389,6 +2863,43 @@ export const handlers = [
     return HttpResponse.json(paginate(items, page, pageSize));
   }),
 
+  /* ---- M8 · 我的收藏（CONTRACT §23.4） ---- */
+  /*
+   * `GET /me/favorites`：分页，**复用门户列表项形状**（`ToolListItem`），
+   * 按 `created_at DESC`（§23.3 的索引就是为它建的）。
+   *
+   * 两条必须守住的规则（后端任务书 B7 点名的同一条）：
+   *  1. 收藏关系**不能**成为可见性的后门 —— 收藏了但已变成 private / 已下架 /
+   *     已删除的工具不能出现在这里，所以这里复用 `canView` 与门户状态口径；
+   *  2. 排序按「收藏时间倒序」，mock 没有收藏时间戳，用种子里列表的顺序倒序近似，
+   *     并把这个简化写在这里（真实后端按 `tool_favorites.created_at`）。
+   */
+  http.get(`${API}/me/favorites`, async ({ request }) => {
+    await delay(SIMULATED_LATENCY_MS);
+    const user = authenticate(request);
+    if (!user) return tokenExpired();
+    const { page, pageSize } = pageOf(request);
+
+    const favoriteIds = engagedToolIds("favorites", user.id);
+    const items = toolRecords
+      .filter((record) => favoriteIds.has(record.seed.id))
+      .filter(
+        (record) =>
+          (record.status === "approved" || record.status === "pending_update") &&
+          !record.deleted_at,
+      )
+      .filter((record) => canView(record, user))
+      .map((record) => toToolListItem(record, user))
+      .reverse();
+
+    /*
+     * 响应是门户的 `ToolListResponse`（含 `facets` 键，见 openapi）。这里刻意回
+     * `facets: null`：门户的 facets 是「全站分类聚合」，对「我的收藏」这个子集没有
+     * 正确含义，编一份出来反而会误导（前端也不用它）。
+     */
+    return HttpResponse.json({ ...paginate(items, page, pageSize), facets: null });
+  }),
+
   /* ---- me: tools ---- */
   http.get(`${API}/me/tools`, async ({ request }) => {
     await delay(SIMULATED_LATENCY_MS);
@@ -2432,6 +2943,7 @@ export const handlers = [
       tags?: string[];
       visibility?: Visibility;
       webapp_url?: string | null;
+      estimated_saving_minutes?: number | null;
     };
     const fields: FieldError[] = [];
     const name = (body.name ?? "").trim();
@@ -2452,6 +2964,13 @@ export const handlers = [
     if (body.category_id != null && categoryIdToSlug(body.category_id) === null) {
       fields.push({ field: "category_id", message: "分类不存在或已停用" });
     }
+    // M8 · F10（§23.5）：1 ~ 1440 的整数；`null` = 未填写，**不是 0**。
+    if (body.estimated_saving_minutes != null && !isValidSavingMinutes(body.estimated_saving_minutes)) {
+      fields.push({
+        field: "estimated_saving_minutes",
+        message: "预计节省时长需在 1 ~ 1440 分钟之间",
+      });
+    }
     const tags = body.tags ?? [];
     if (tags.length > 8) fields.push({ field: "tags", message: "标签最多 8 个" });
     if (fields.length > 0) return validationError(fields);
@@ -2466,6 +2985,7 @@ export const handlers = [
       visibility: body.visibility ?? "public",
       webapp_url: body.webapp_url ?? null,
     });
+    savingMinutes.set(record.seed.id, body.estimated_saving_minutes ?? null);
     return HttpResponse.json(toToolDetail(record, user), { status: 201 });
   }),
 
@@ -2496,6 +3016,7 @@ export const handlers = [
       tags?: string[];
       visibility?: Visibility;
       webapp_url?: string | null;
+      estimated_saving_minutes?: number | null;
     };
     const fields: FieldError[] = [];
     if (body.name !== undefined) {
@@ -2508,6 +3029,12 @@ export const handlers = [
     }
     if (body.category_id != null && categoryIdToSlug(body.category_id) === null) {
       fields.push({ field: "category_id", message: "分类不存在或已停用" });
+    }
+    if (body.estimated_saving_minutes != null && !isValidSavingMinutes(body.estimated_saving_minutes)) {
+      fields.push({
+        field: "estimated_saving_minutes",
+        message: "预计节省时长需在 1 ~ 1440 分钟之间",
+      });
     }
     if ((body.tags ?? []).length > 8) fields.push({ field: "tags", message: "标签最多 8 个" });
     if (fields.length > 0) return validationError(fields);
@@ -2526,6 +3053,10 @@ export const handlers = [
     if (body.webapp_url !== undefined) {
       record.webapp_url = body.webapp_url;
       record.seed.webapp_url = body.webapp_url;
+    }
+    // M8 · F10：`null` 是合法的（表示「未填写」），**不是 0**。
+    if (body.estimated_saving_minutes !== undefined) {
+      savingMinutes.set(record.seed.id, body.estimated_saving_minutes ?? null);
     }
     record.seed.updated_at = nowIso();
     return HttpResponse.json(toToolDetail(record, user));
@@ -2867,6 +3398,8 @@ export const handlers = [
       skill,
       tool_status: record.status,
       created_at: version.created_at,
+      // M8 · F9：上传成功照旧 201；命中信息只是**附加**字段（§23.2 不阻断）。
+      duplicate_of: duplicateHitFor(record, version.file_sha256, fileName, simulate),
     };
     return HttpResponse.json(body, { status: 201 });
   }),
@@ -3493,6 +4026,22 @@ export const handlers = [
     const actor = requireApprover(request);
     if (actor instanceof Response) return actor;
     return HttpResponse.json(overviewNumbers());
+  }),
+
+  /*
+   * M8 · F11：数字概览增强（CONTRACT §23.6 冻结形状）。
+   *
+   * 权限镜像 `/admin/overview`（approver 或 superadmin）——它就在同一个页面上，
+   * 后端任务书 B10 说的是「走既有管理端鉴权依赖」，前端也用同一个管理台入口。
+   * 它**独立于** `/admin/overview`，所以重聚合迟到/失败不会拖垮那四个轻量卡片。
+   */
+  http.get(`${API}/admin/stats/insights`, async ({ request }) => {
+    await delay(120);
+    // 真机实测：该端点是**超管专属**（approver 会 403，而 /admin/overview 不会）。
+    // mock 必须同样严格，否则「approver 打开概览页」这条路径在 mock 里永远测不出来。
+    const actor = requireSuperadmin(request);
+    if (actor instanceof Response) return actor;
+    return HttpResponse.json(buildInsights());
   }),
 
   http.get(`${API}/admin/stats/tools`, async ({ request }) => {
@@ -4733,6 +5282,12 @@ export const handlers = [
       skill,
       tool_status: record.status,
       created_at: version.created_at,
+      /*
+       * M8 · F9：管理端代传路径**不做**去重提示（B9 描述的是作者自己的上传流程，
+       * 且管理员代传通常是在修复/补档）。这里显式给 `null` 而不是省略字段 ——
+       * 契约 §23.5 的既定约定是「可空字段显式返回 null，不省略字段」。
+       */
+      duplicate_of: null,
     };
     return HttpResponse.json(response, { status: 201 });
   }),

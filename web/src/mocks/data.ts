@@ -972,6 +972,15 @@ export function toolSeedToListItem(seed: ToolSeed): ToolListItem {
     can_download: true,
     published_at: seed.published_at,
     updated_at: seed.updated_at,
+    /*
+     * M8（CONTRACT §23.5）。这里是**匿名 / 纯读者视角**的默认值：
+     * `handlers.ts` 的 `toToolListItem` 会按请求者重算这 4 个字段
+     * （匿名恒为 false，计数照常返回 —— §23.5 的原文）。
+     */
+    favorite_count: 0,
+    like_count: 0,
+    is_favorited: false,
+    is_liked: false,
   };
 }
 
@@ -2440,3 +2449,88 @@ export const MOCK_SEED_NOTES = {
   totalCategories: MOCK_CATEGORIES.length,
   waitingHours: MOCK_WAITING_HOURS,
 };
+
+/* ========================================================================== */
+/* M8 —— 收藏 / 点赞 / 数字概览的确定性种子                                     */
+/* ========================================================================== */
+
+/**
+ * 收藏 / 点赞的可重置种子（任务书 F12.4）。
+ *
+ * **为什么要有它**：收藏与点赞是**有状态**的，同一个浏览器上下文里连续操作会互相
+ * 污染；而「刷新后状态保持」（F12.3）又要求它不能被 F5 抹掉。所以：
+ *
+ *   - 状态存在 `localStorage`（与既有的 `localcraft.msw.sessions` 同一套做法），
+ *     因此 F5 之后仍然保持 —— 这正是要测的行为；
+ *   - **可显式重置**：`POST /api/v1/__mock__/reset` 把状态恢复成这个种子，
+ *     每个用例开头调一次，用例之间就不会互相污染。Playwright 每个用例本来就有
+ *     独立 context（localStorage 也是新的），两条防线叠加，杜绝 flaky。
+ *
+ * `favorites` / `likes` 的键是**用户 id 的字符串形式**，值是工具 id 列表。
+ * `baseline` 代表「种子数据里未建模的其他用户」的互动量，运行时某个 mock 用户的
+ * 开关在它之上 ±1。三个数据合起来覆盖了任务书 F12.1 的四种情况：
+ * 未登录（只有 baseline 计数）、已登录未收藏（tool 2）、已登录已收藏（tool 1）、
+ * 计数非零（tool 1/2/3/7）。
+ */
+export interface MockEngagementSeed {
+  favorites: Record<string, number[]>;
+  likes: Record<string, number[]>;
+  baseline: Record<number, { favorites: number; likes: number }>;
+}
+
+export function buildEngagementSeed(): MockEngagementSeed {
+  return {
+    favorites: {
+      // zhangsan（id 3，tool 1 的作者）：已收藏 tool 1；**未**收藏 tool 2。
+      "3": [1],
+      // lisi（id 4，tool 2 的作者）：收藏 2 / 3。
+      "4": [2, 3],
+      // admin（id 1）：空收藏夹 → 「我的收藏」空态也能测。
+      "1": [],
+    },
+    likes: {
+      "3": [1],
+      "4": [2],
+    },
+    baseline: {
+      1: { favorites: 4, likes: 7 },
+      2: { favorites: 2, likes: 5 },
+      3: { favorites: 0, likes: 3 },
+      7: { favorites: 1, likes: 0 },
+    },
+  };
+}
+
+/**
+ * `estimated_saving_minutes` 的种子（作者自填，单位：分钟，1 ~ 1440）。
+ *
+ * 只给 4 个工具填了值 ⟹ 覆盖率 ≈ 4/26 ≈ 15%，**故意低于 50%**：
+ * 契约 §23.6 与任务书 F11.3 要求「覆盖率很低时必须显式提示数据不足以支撑结论」，
+ * 这份种子让那条路径在 mock 里默认就能被看到（否则它只存在于代码里）。
+ */
+export const MOCK_SAVING_MINUTES: Record<number, number> = {
+  1: 30, // 日志分析器：一次省 30 分钟
+  2: 15, // 部署助手
+  4: 45, // 巡检脚本集
+  7: 120, // 灰度发布编排
+};
+
+/**
+ * `/admin/stats/insights` 的「今天」。
+ *
+ * 用固定锚点而不是 `Date.now()`：mock 的其余数据（下载明细、更新时间）都在
+ * 2025-03 上旬，用真实当前时间会让 30 天窗口里空无一物，还会让输出逐日漂移。
+ * 锚点取下载明细里最后一条的日期。
+ */
+export const MOCK_INSIGHTS_ANCHOR = "2025-03-12";
+
+/** 生成 `downloads_daily` 的 30 个日期（升序，含锚点当天）。 */
+export function mockInsightsDates(): string[] {
+  const anchor = new Date(`${MOCK_INSIGHTS_ANCHOR}T00:00:00Z`);
+  const dates: string[] = [];
+  for (let offset = 29; offset >= 0; offset -= 1) {
+    const day = new Date(anchor.getTime() - offset * 86_400_000);
+    dates.push(day.toISOString().slice(0, 10));
+  }
+  return dates;
+}

@@ -318,6 +318,13 @@ const PAIRS = [
   "GeneratedPassword→GeneratedPassword",
   "ToolImportItem→ToolImportItem",
   "ToolImportRequest→ToolImportRequest",
+  // M8（契约 §23）—— 收藏 / 点赞 / 去重 / 数字概览
+  "ToolEngagementResponse→ToolEngagementResponse",
+  "DuplicateVersionMatch→DuplicateVersionMatch",
+  "AdminInsightsResponse→AdminInsightsResponse",
+  "DailyDownloadPoint→DailyDownloadPoint",
+  "CategoryInsightItem→CategoryInsightItem",
+  "SavingsInsight→SavingsInsight",
 ];
 
 /* -------------------------------------------------------------------------- */

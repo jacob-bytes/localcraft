@@ -308,6 +308,13 @@ export interface ToolListItem {
   can_download: boolean;
   published_at: string | null;
   updated_at: string | null;
+  /* ---- M8（CONTRACT §23.5）—— 收藏 / 点赞 ---------------------------------- */
+  /** 反规范化计数（§23.3）。匿名请求者也会收到。 */
+  favorite_count: number;
+  like_count: number;
+  /** **当前请求者**是否已收藏 / 已点赞；匿名恒为 `false`（§23.5）。 */
+  is_favorited: boolean;
+  is_liked: boolean;
 }
 
 /** Query parameters for `GET /tools` (docs/03 §3.3). Arrays are repeated params. */
@@ -468,6 +475,20 @@ export interface ToolDetail {
   acl: AclEntry[] | null;
   skill: SkillDetailInfo | null;
   prompt: PromptDetailInfo | null;
+  /* ---- M8（CONTRACT §23.5）—— 收藏 / 点赞 ---------------------------------- */
+  favorite_count: number;
+  like_count: number;
+  is_favorited: boolean;
+  is_liked: boolean;
+  /**
+   * M8（§23.5）：作者自述的**单次使用**预计节省分钟数，`1 ~ 1440`，`null` = 未填写。
+   *
+   * **契约 §23.5 的字段表里没有列出这一条**（它只写了「`ToolCreateRequest` /
+   * `ToolUpdateRequest` 新增 1 个可选字段」），但后端实现把该字段也放进了
+   * `ToolDetail` —— 这对前端是好事（编辑页终于能回显当前值），所以这里跟上
+   * `backend/openapi.json`（§15.6：openapi 是形状权威）。已上报监控方。
+   */
+  estimated_saving_minutes: number | null;
 }
 
 /** `GET /tools/{slug}/versions/{version}/skill-preview` (docs/03 §3.5). */
@@ -549,6 +570,13 @@ export interface ToolCreateRequest {
   visibility?: Visibility;
   webapp_url?: string | null;
   webapp_health_url?: string | null;
+  /**
+   * M8（CONTRACT §23.5）：作者自述的**单次使用**预计节省分钟数。
+   *
+   * 取值 **1 ~ 1440**（超出 → `VALIDATION_ERROR`）；**`null` 表示未填写，
+   * 不是一个可以当成 0 的值**（§23.3）。留空必须提交 `null`。
+   */
+  estimated_saving_minutes?: number | null;
 }
 
 export interface ToolUpdateRequest {
@@ -560,6 +588,8 @@ export interface ToolUpdateRequest {
   visibility?: Visibility;
   webapp_url?: string | null;
   webapp_health_url?: string | null;
+  /** 同 `ToolCreateRequest.estimated_saving_minutes`；**省略字段 = 不修改**。 */
+  estimated_saving_minutes?: number | null;
 }
 
 export interface SubmitResponse {
@@ -608,6 +638,35 @@ export interface VersionUploadResponse {
   skill: SkillVersionInfo | null;
   tool_status: string;
   created_at: string | null;
+  /**
+   * M8 · 上传去重（CONTRACT §23.2 / 后端 B9）。
+   *
+   * 去重**在服务端**做：浏览器端算 SHA-256 需要 `crypto.subtle`，而它只在安全
+   * 上下文可用，本项目按 D39 走 `http://<ip>:<port>` 直连，该 API 为 `undefined`。
+   * 因此命中信息由上传响应回带，前端只负责展示**非阻塞**提示。
+   *
+   * 字段名与形状以 `backend/openapi.json` 的 `DuplicateVersionMatch` 为准
+   * （契约 §23.2 只冻结了「响应回带」，命名留给后端）。
+   */
+  duplicate_of: DuplicateVersionMatch | null;
+}
+
+/**
+ * 上传去重命中信息（M8 / `backend/openapi.json` 的 `DuplicateVersionMatch`）。
+ *
+ * 命中依据是 `tool_versions.file_sha256`（§23.1：该列与索引都已存在，不新增哈希
+ * 计算）；命中范围是**其他工具**已有的版本，同一工具的新版本不算重复。
+ * 命中**不阻断上传**。
+ */
+export interface DuplicateVersionMatch {
+  tool_id: number;
+  slug: string;
+  name: string;
+  version_id: number;
+  version: string;
+  file_sha256: string;
+  is_current: boolean;
+  uploaded_at: string | null;
 }
 
 export interface VersionUploadFields {
@@ -1434,4 +1493,82 @@ export interface ToolImportRequest {
 export interface ExportScopeParams {
   include_roles?: boolean;
   status?: UserStatus;
+}
+
+/* ========================================================================== */
+/* M8 —— 收藏 / 点赞 / 数字概览（CONTRACT §23，任务书 F7~F11）                 */
+/* ========================================================================== */
+
+/* -------------------------------------------------------------------------- */
+/* 收藏与点赞（§23.4）                                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `PUT` / `DELETE /api/v1/tools/{slug}/favorite` **与** 点赞的两个端点，
+ * 共用同一个响应模型（`backend/openapi.json` 的 `ToolEngagementResponse`）。
+ *
+ * 契约 §23.4 只冻结了方法、路径与「幂等」语义，响应形状由后端定。后端刻意回
+ * **操作后的完整状态**（两个计数 + 两个当前请求者布尔），前端因此点一次按钮就拿到
+ * 最新计数，不必再拉一次详情。
+ *
+ * `tool_id` / `slug` 是必填，其余字段后端都带默认值，所以运行时一定存在。
+ */
+export interface ToolEngagementResponse {
+  tool_id: number;
+  slug: string;
+  is_favorited: boolean;
+  favorite_count: number;
+  is_liked: boolean;
+  like_count: number;
+}
+
+/** `GET /api/v1/me/favorites` —— 与门户列表**同一个**响应模型（`ToolListResponse`）。 */
+export type FavoriteListResponse = ToolListResponse;
+
+/* -------------------------------------------------------------------------- */
+/* 管理数字概览（§23.6 冻结形状）                                               */
+/* -------------------------------------------------------------------------- */
+
+/** `downloads_daily` 的一项：恰好 30 条，缺口补 0（§23.6）。 */
+export interface DailyDownloadPoint {
+  /** ISO 日期（`YYYY-MM-DD`）。 */
+  date: string;
+  downloads: number;
+}
+
+/** `tools_by_category` 的一项（§23.6）。 */
+export interface CategoryInsightItem {
+  category_id: number | null;
+  name: string;
+  tool_count: number;
+  download_count: number;
+}
+
+/**
+ * 效率估算（§23.6）。
+ *
+ * `basis` **不是装饰**：它让接口自己声明「这是估算而不是实测」，前端因此**无法**
+ * 在脱离口径的情况下单独渲染 `total_minutes`。展示时必须同时给出 `basis` 文案、
+ * `covered_tool_count / total_tool_count` 覆盖率与未填工具数（任务书 F11.2）。
+ *
+ * `total_minutes = Σ(estimated_saving_minutes × COUNT(DISTINCT download_logs.user_id))`，
+ * 仅计入 `estimated_saving_minutes IS NOT NULL` 且 `user_id IS NOT NULL` 的工具。
+ */
+export interface SavingsInsight {
+  total_minutes: number;
+  covered_tool_count: number;
+  /** 全部工具数（含未填 `estimated_saving_minutes` 的）。 */
+  total_tool_count: number;
+  /** 常量，声明口径。 */
+  basis: "author_estimate";
+}
+
+/** `GET /api/v1/admin/stats/insights`（§23.6，形状冻结）。 */
+export interface AdminInsightsResponse {
+  downloads_last_30_days: number;
+  downloads_daily: DailyDownloadPoint[];
+  /** 30 天内上传/更新过工具的去重用户数。 */
+  active_contributors_30d: number;
+  tools_by_category: CategoryInsightItem[];
+  savings: SavingsInsight;
 }

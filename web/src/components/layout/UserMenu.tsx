@@ -4,6 +4,7 @@ import {
   LogOut,
   Package as PackageIcon,
   ShieldCheck,
+  Star as StarIcon,
   User as UserIcon,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
@@ -104,6 +105,15 @@ export function UserMenu({ minimal = false }: { minimal?: boolean }) {
             >
               <PackageIcon aria-hidden="true" className="size-4" />
               我的工具
+            </DropdownMenuItem>
+            {/* M8 · F7.4：我的收藏直达链接（登录后才可能看到这个菜单）。 */}
+            <DropdownMenuItem
+              onSelect={() => {
+                navigate("/me/favorites");
+              }}
+            >
+              <StarIcon aria-hidden="true" className="size-4" />
+              我的收藏
             </DropdownMenuItem>
             {canApprove(user) ? (
               <DropdownMenuItem

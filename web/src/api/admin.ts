@@ -3,6 +3,7 @@ import type {
   AdminCategoryCreateRequest,
   AdminCategoryOut,
   AdminCategoryUpdateRequest,
+  AdminInsightsResponse,
   AdminRoleReplaceRequest,
   AdminTagListResponse,
   AdminTagOut,
@@ -548,6 +549,20 @@ export const overviewQueryKey = ["admin", "overview"] as const;
 export const toolRankQueryKey = (limit: number) => ["admin", "stats", "tools", { limit }] as const;
 export const storageStatsQueryKey = (limit: number, offset: number) =>
   ["admin", "stats", "storage", { limit, offset }] as const;
+
+/**
+ * M8 · F11：`GET /admin/stats/insights`（CONTRACT §23.6 冻结形状）。
+ *
+ * 独立端点、独立 query key —— 它是重聚合（30 天序列 + 去重人数），所以管理台首页
+ * 先渲染轻量的 `/admin/overview`，这一块可以后到（§23.4 的「为什么不扩
+ * `/admin/overview`」）。
+ */
+export const insightsQueryKey = ["admin", "stats", "insights"] as const;
+
+/** `GET /admin/stats/insights` —— 仅管理员（后端走既有管理端鉴权依赖）。 */
+export function fetchInsights(signal?: AbortSignal): Promise<AdminInsightsResponse> {
+  return request<AdminInsightsResponse>("/admin/stats/insights", { signal });
+}
 
 /** `GET /admin/overview`（docs/04 §6.9 的四个数字卡）。 */
 export function fetchOverview(signal?: AbortSignal): Promise<AdminOverviewResponse> {

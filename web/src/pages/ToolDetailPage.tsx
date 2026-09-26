@@ -5,6 +5,7 @@ import * as React from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { getErrorMessage, isApiError } from "@/api/client";
+import { readCount } from "@/api/engagement";
 import { fetchToolDetail, toolDetailQueryKey } from "@/api/tools";
 import type { ToolDetail, Visibility } from "@/api/types";
 import { CopyButton } from "@/components/common/CopyButton";
@@ -12,6 +13,7 @@ import { ErrorState } from "@/components/common/ErrorState";
 import { Markdown } from "@/components/common/Markdown";
 import { PageSkeleton } from "@/components/common/PageSkeleton";
 import { DownloadButton } from "@/components/tools/DownloadButton";
+import { FavoriteToggle, LikeToggle } from "@/components/tools/EngagementActions";
 import { FileInfoCard } from "@/components/tools/FileInfoCard";
 import { PromptViewer } from "@/components/tools/PromptViewer";
 import { SkillPreview } from "@/components/tools/SkillPreview";
@@ -134,6 +136,19 @@ export default function ToolDetailPage() {
                 ))}
               </ul>
             ) : null}
+
+            {/*
+              M8 · F7.2 / F8.1：标题区的收藏与点赞。
+              - 收藏是**切换控件**：`aria-pressed` + 实心/空心星 + 「收藏 / 已收藏」文字，
+                状态不靠颜色单独表达。
+              - 点赞**只有整数计数**（CONTRACT §23.7 / D37）：没有平均分、没有星级。
+              - 匿名访客这两个按钮**不渲染**（与「登录后可下载」同一套匿名策略），
+                计数仍在页面上（信息栏 + 卡片）。
+            */}
+            <div className="flex flex-wrap items-center gap-2">
+              <FavoriteToggle tool={detail} labeled />
+              <LikeToggle tool={detail} labeled />
+            </div>
           </header>
 
           <TypeSection detail={detail} />
@@ -347,6 +362,21 @@ function ToolSidebar({ detail }: { detail: ToolDetail }) {
           <InfoRow label="浏览量">
             <span className="tabular-nums">{formatCount(detail.view_count)}</span>
           </InfoRow>
+          {/*
+            M8：收藏 / 点赞计数**始终可见**（匿名也是），按钮另有权限门 —— 这两行
+            让匿名访客也能看到互动数据。字段缺失（后端未落地）时整行不渲染，
+            避免显示编造的 0。
+          */}
+          {readCount(detail.favorite_count) !== null ? (
+            <InfoRow label="收藏">
+              <span className="tabular-nums">{formatCount(detail.favorite_count)}</span>
+            </InfoRow>
+          ) : null}
+          {readCount(detail.like_count) !== null ? (
+            <InfoRow label="点赞">
+              <span className="tabular-nums">{formatCount(detail.like_count)}</span>
+            </InfoRow>
+          ) : null}
           <InfoRow label="分类">{detail.category?.name ?? "未分类"}</InfoRow>
         </dl>
       </div>
