@@ -4,16 +4,15 @@ name: Release
 #
 # 为什么要用 Actions 而不是手工点网页：Release 是 REST API 对象，git 协议调不了它。
 # 任何人只要能推 tag（SSH 或者有写权限的 token）就应该能发版，而不该依赖
-# 某个人的浏览器会话或者一枚长期 PAT。
-#
-# 用 runner 内置的 GITHUB_TOKEN，不引入任何 secret。
+# 某人的浏览器会话或一枚长期 PAT。用 runner 内置的 GITHUB_TOKEN，不引入任何 secret。
 
 on:
   push:
     tags: ["v*"]
 
 # GITHUB_TOKEN 默认权限是只读的，创建 Release 必须显式提权。
-# 若仓库设置里把 workflow 权限锁成了「只读」，这一句也救不了 —— 详见下文说明。
+# 注意这只是「申请」——若仓库 Settings → Actions → General 里的
+# Workflow permissions 被锁成只读，那才是上限，这里救不了。
 permissions:
   contents: write
 
@@ -25,90 +24,87 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # 需要完整历史，才能把 tag 的注释对象取出来（浅克隆拿不到）
+          # 需要完整历史，才能取出 tag 的注释对象（浅克隆拿不到）
           fetch-depth: 0
 
-      - name: 幂等检查（已存在同名 Release 就跳过）
-        id: check
+      # -----------------------------------------------------------------------
+      # 单步完成「判重 → 取注释 → 创建」。
+      #
+      # 为什么不用跨步骤的 `if: steps.x.outputs.y == 'false'`：
+      # 那种写法一旦 output 因为任何原因没落到 GITHUB_OUTPUT，条件就恒为假，
+      # 步骤被静默跳过、job 却报 success —— 也就是「空转成功」。
+      # 这个坑已经踩过一次（见 docs/09），所以改成单步内的普通 shell 判断，
+      # 并把关键中间值用 ::notice:: 打出来，宁可日志啰嗦也不要无声跳过。
+      # -----------------------------------------------------------------------
+      - name: 创建 Release（已存在则跳过）
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Release ${GITHUB_REF_NAME} 已存在，跳过。"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
+          set -uo pipefail
 
-      - name: 从 annotated tag 的注释生成标题与正文
-        if: steps.check.outputs.exists == 'false'
-        run: |
-          set -euo pipefail
+          echo "tag=${GITHUB_REF_NAME}  repo=${GITHUB_REPOSITORY}"
+
+          # --- 判重 -------------------------------------------------------
+          # 显式取退出码，不用 `if cmd`（那样会把 404 与网络错误混在一起，
+          # 也没法把原因打进日志）。
+          VIEW="$(gh release view "${GITHUB_REF_NAME}" 2>&1)"; VIEW_RC=$?
+          echo "::notice::gh release view rc=${VIEW_RC}"
+          if [ "$VIEW_RC" -eq 0 ]; then
+            echo "Release ${GITHUB_REF_NAME} 已存在，跳过。"
+            exit 0
+          fi
+          echo "判重未命中（rc=${VIEW_RC}），继续创建。首行输出：$(printf '%s' "$VIEW" | head -1)"
+
+          # --- 取 tag 注释生成标题与正文 -----------------------------------
           NOTES="$RUNNER_TEMP/notes.md"
           git tag -l --format='%(contents)' "${GITHUB_REF_NAME}" > "$NOTES"
+          echo "::notice::tag 注释行数=$(wc -l < "$NOTES" | tr -d ' ')"
 
-          # 标题取第一条非空行；正文是其后的内容，顺带去掉开头的空行。
-          # 这样 `git tag -a v1.0.0 -m "..."` 写的东西就是 Release 的面貌，
-          # 不需要在仓库里再维护一份 release notes。
           TITLE="$(grep -m1 -v '^[[:space:]]*$' "$NOTES" || true)"
           if [ -z "$TITLE" ]; then
             TITLE="localcraft ${GITHUB_REF_NAME}"
             printf '%s\n' "$TITLE" > "$NOTES"
           fi
           tail -n +2 "$NOTES" | sed '/./,$!d' > "$RUNNER_TEMP/body.md"
-
-          # 正文为空时 gh 会报错，用标题兜一下
           if [ ! -s "$RUNNER_TEMP/body.md" ]; then
             printf '%s\n' "$TITLE" > "$RUNNER_TEMP/body.md"
           fi
+          echo "::notice::标题=${TITLE}；正文行数=$(wc -l < "$RUNNER_TEMP/body.md" | tr -d ' ')"
 
-          printf 'title=%s\n' "$TITLE" > "$RUNNER_TEMP/title.txt"
-          echo "标题: $TITLE"
-          echo "正文行数: $(wc -l < "$RUNNER_TEMP/body.md")"
-
-      - name: 预检 GITHUB_TOKEN 是否真的有写权限
-        if: steps.check.outputs.exists == 'false'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -uo pipefail
-          # 为什么用「写一个 blob」来探而不是读设置：
-          # `GET /repos/{owner}/{repo}/actions/permissions/workflow` 需要 admin，
-          # 普通 token 读不到。直接试一次写，答案最直接。
-          # 探针 blob 是未被引用的对象，会被 GitHub 正常回收，不留痕迹。
-          if ERR="$(gh api -X POST "/repos/${GITHUB_REPOSITORY}/git/blobs" \
-                       -f content=cHJvYmU= -f encoding=utf-8 2>&1)"; then
-            echo "GITHUB_TOKEN 具备写权限，继续。"
-          else
-            msg="${ERR//'%'/'%25'}"; msg="${msg//$'\n'/%0A}"
-            echo "::error::GITHUB_TOKEN 没有写权限，无法创建 Release。%0A${msg}%0A%0A修法：仓库 Settings → Actions → General → Workflow permissions，选 “Read and write permissions” 并保存。这个开关需要仓库 admin，workflow 里的 permissions: 提权救不了它 —— 它是仓库层面的上限。改完点本次运行的 “Re-run failed jobs” 即可，不必重推 tag。"
+          # --- 写权限预检 --------------------------------------------------
+          # 直接试写一个 blob：设置接口要 admin、普通 token 读不到，
+          # 而「能不能写」这个答案只有真写一次才可靠。
+          # 探针 blob 未被引用，会被正常回收。
+          PROBE="$(gh api -X POST "/repos/${GITHUB_REPOSITORY}/git/blobs" \
+                     -f content=cHJvYmU= -f encoding=utf-8 2>&1)"; PROBE_RC=$?
+          echo "::notice::写权限预检 rc=${PROBE_RC}"
+          if [ "$PROBE_RC" -ne 0 ]; then
+            msg="${PROBE//'%'/'%25'}"; msg="${msg//$'\n'/%0A}"
+            echo "::error::GITHUB_TOKEN 没有写权限，无法创建 Release。%0A${msg}%0A%0A修法：仓库 Settings → Actions → General → Workflow permissions 选 “Read and write permissions” 保存后重跑。这一步需要仓库 admin，workflow 里的 permissions: 越不过它。"
             exit 1
           fi
 
-      - name: 创建 Release
-        if: steps.check.outputs.exists == 'false'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -uo pipefail
-          TITLE="$(grep -m1 -v '^[[:space:]]*$' "$RUNNER_TEMP/notes.md")"
-          if ! OUT="$(gh release create "${GITHUB_REF_NAME}" \
-                        --title "$TITLE" \
-                        --notes-file "$RUNNER_TEMP/body.md" \
-                        --verify-tag \
-                        --latest 2>&1)"; then
+          # --- 创建 --------------------------------------------------------
+          OUT="$(gh release create "${GITHUB_REF_NAME}" \
+                   --title "$TITLE" \
+                   --notes-file "$RUNNER_TEMP/body.md" \
+                   --verify-tag \
+                   --latest 2>&1)"; CREATE_RC=$?
+          echo "::notice::gh release create rc=${CREATE_RC}"
+          if [ "$CREATE_RC" -ne 0 ]; then
             msg="${OUT//'%'/'%25'}"; msg="${msg//$'\n'/%0A}"
-            echo "::error::创建 Release 失败：%0A${msg}"
+            echo "::error::创建 Release 失败（rc=${CREATE_RC}）：%0A${msg}"
             exit 1
           fi
+
           echo "$OUT"
-          gh release view "${GITHUB_REF_NAME}" --json url,isLatest \
-            --template '已创建: {{.url}}（latest={{.isLatest}}）{{"\n"}}'
+          URL="$(gh release view "${GITHUB_REF_NAME}" --json url --jq .url 2>/dev/null || echo '')"
+          echo "::notice::已创建 Release：${URL:-（取 URL 失败，但创建已成功）}"
 
       # -----------------------------------------------------------------------
       # 刻意**不**附离线发布包。
       #
       # 本项目的离线 wheelhouse 必须在**与目标机同版本同架构的 openEuler 构建机**
-      # 上产出（README D31），ubuntu runner 上产出的东西不满足这条约束，
+      # 上产出（README D31）。ubuntu runner 上产出的东西不满足这条约束，
       # 附上来反而会让人以为可以直接拿去装。发布包由构建机产出后手工上传。
       # -----------------------------------------------------------------------
