@@ -2,17 +2,21 @@ name: Release
 
 # 推 tag 即发 Release。
 #
-# 为什么要用 Actions 而不是手工点网页：Release 是 REST API 对象，git 协议调不了它。
-# 任何人只要能推 tag（SSH 或者有写权限的 token）就应该能发版，而不该依赖
-# 某人的浏览器会话或一枚长期 PAT。用 runner 内置的 GITHUB_TOKEN，不引入任何 secret。
+# 为什么用 Actions 而不是手工点网页：Release 是 REST API 对象，git 协议调不了它。
+# 任何人只要能推 tag（SSH 或带写权限的 token）就应该能发版，不该依赖某人的浏览器
+# 会话或一枚长期 PAT。用 runner 内置的 GITHUB_TOKEN，不引入任何 secret。
+#
+# 为什么全部用 curl 而不是 gh 子命令：本项目在 gh 的退出码上栽过两次（见下），
+# 而 HTTP 状态码是不会有歧义的 —— 201 建成功、403 没权限、404 不存在、422 参数错。
+# 错误现场能一眼看明白，比事后猜 gh 的语义便宜得多。
 
 on:
   push:
     tags: ["v*"]
 
-# GITHUB_TOKEN 默认权限是只读的，创建 Release 必须显式提权。
-# 注意这只是「申请」——若仓库 Settings → Actions → General 里的
-# Workflow permissions 被锁成只读，那才是上限，这里救不了。
+# GITHUB_TOKEN 默认是只读的，创建 Release 必须显式提权。
+# 注意这只是「申请」：若仓库 Settings → Actions → General → Workflow permissions
+# 被锁成只读，那才是硬上限，这里救不了。
 permissions:
   contents: write
 
@@ -24,17 +28,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # 需要完整历史，才能取出 tag 的注释对象（浅克隆拿不到）
+          # 需要完整历史才能取出 tag 的注释对象（浅克隆拿不到）
           fetch-depth: 0
 
       # -----------------------------------------------------------------------
-      # 单步完成「判重 → 取注释 → 创建」。
+      # 单步完成 判重 → 取注释 → 写权限预检 → 创建。
       #
-      # 为什么不用跨步骤的 `if: steps.x.outputs.y == 'false'`：
-      # 那种写法一旦 output 因为任何原因没落到 GITHUB_OUTPUT，条件就恒为假，
-      # 步骤被静默跳过、job 却报 success —— 也就是「空转成功」。
-      # 这个坑已经踩过一次（见 docs/09），所以改成单步内的普通 shell 判断，
-      # 并把关键中间值用 ::notice:: 打出来，宁可日志啰嗦也不要无声跳过。
+      # 合并成单步的理由：跨步骤的 `if: steps.x.outputs.y == 'false'` 一旦 output
+      # 因为任何原因没落进 GITHUB_OUTPUT，条件就恒为假，步骤被静默跳过而 job 报
+      # success —— 也就是「空转成功」，比红叉危险。本项目已经栽过一次。
+      #
+      # 诊断写进 $GITHUB_STEP_SUMMARY（会出现在 check-run 的 output.summary 里，
+      # 公开仓库无需 admin 即可读取），而不是只 echo —— 原始 job 日志要 admin
+      # 才能经 API 拉取，出事时看不到现场。
       # -----------------------------------------------------------------------
       - name: 创建 Release（已存在则跳过）
         env:
@@ -42,30 +48,39 @@ jobs:
         run: |
           set -uo pipefail
 
-          echo "tag=${GITHUB_REF_NAME}  repo=${GITHUB_REPOSITORY}"
-          echo "::notice::gh 版本=$(gh --version 2>&1 | head -1)"
+          #: 同时写 stdout 与 step summary —— 后者是我（和任何没有仓库 admin
+          #: 权限的人）唯一能经 API 读到的 CI 输出。
+          say() { printf '%s\n' "$*"; printf '%s\n' "$*" >> "$GITHUB_STEP_SUMMARY"; }
+          die() { say "ERROR: $*"; exit 1; }
 
-          # --- 判重 -------------------------------------------------------
-          # 不用 `gh release view`：实测同一仓库、同一 tag，本机 gh 2.101.0 返回
-          # rc=1「release not found」，CI 上却返回 rc=0 —— 于是判重误判成
-          # 「已存在」，后续步骤全被跳过，job 报 success 而 Release 根本没建出来。
-          # 这是本项目第二次栽在「空转成功」上（docs/09 §11），所以这里：
-          #   1) 换用 REST API（404 语义明确，不依赖 gh 子命令的退出码约定）
-          #   2) 再加一道保险 —— 只有真拿到带 id 的 release 对象才算存在
-          REL_JSON="$(gh api "/repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" 2>&1)"
-          REL_RC=$?
-          echo "::notice::releases/tags API rc=${REL_RC}"
-          if [ "$REL_RC" -eq 0 ] && printf '%s' "$REL_JSON" | grep -q '"id"'; then
-            echo "Release ${GITHUB_REF_NAME} 已存在，跳过。"
+          API="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+          AUTH=(-H "Authorization: Bearer ${GH_TOKEN}"
+                -H "Accept: application/vnd.github+json"
+                -H "X-GitHub-Api-Version: 2022-11-28")
+
+          say "## Release ${GITHUB_REF_NAME}"
+          say ""
+          say "- repo: \`${GITHUB_REPOSITORY}\`"
+          say "- commit: \`${GITHUB_SHA:0:7}\`"
+
+          # --- 判重：只看 HTTP 状态码 ---------------------------------------
+          # 不用 `gh release view`：实测同一仓库同一 tag，本机 gh 2.101.0 返回
+          # rc=1「release not found」，CI 上却返回 rc=0，导致判重误判为「已存在」。
+          CODE="$(curl -sS -o /dev/null -w '%{http_code}' "${AUTH[@]}" \
+                    "${API}/releases/tags/${GITHUB_REF_NAME}")"
+          say "- 判重 \`GET /releases/tags/${GITHUB_REF_NAME}\` → HTTP \`${CODE}\`"
+          if [ "$CODE" = "200" ]; then
+            say ""
+            say "Release 已存在，跳过。"
             exit 0
           fi
-          echo "判重未命中，继续创建。API 首行输出：$(printf '%s' "$REL_JSON" | head -1)"
+          if [ "$CODE" != "404" ]; then
+            die "判重请求返回了意料之外的 ${CODE}（期望 200 或 404），不敢继续。"
+          fi
 
-          # --- 取 tag 注释生成标题与正文 -----------------------------------
+          # --- 取 tag 注释生成标题与正文 -------------------------------------
           NOTES="$RUNNER_TEMP/notes.md"
           git tag -l --format='%(contents)' "${GITHUB_REF_NAME}" > "$NOTES"
-          echo "::notice::tag 注释行数=$(wc -l < "$NOTES" | tr -d ' ')"
-
           TITLE="$(grep -m1 -v '^[[:space:]]*$' "$NOTES" || true)"
           if [ -z "$TITLE" ]; then
             TITLE="localcraft ${GITHUB_REF_NAME}"
@@ -75,37 +90,47 @@ jobs:
           if [ ! -s "$RUNNER_TEMP/body.md" ]; then
             printf '%s\n' "$TITLE" > "$RUNNER_TEMP/body.md"
           fi
-          echo "::notice::标题=${TITLE}；正文行数=$(wc -l < "$RUNNER_TEMP/body.md" | tr -d ' ')"
+          say "- 标题：\`${TITLE}\`"
+          say "- 正文行数：$(wc -l < "$RUNNER_TEMP/body.md" | tr -d ' ')"
 
-          # --- 写权限预检 --------------------------------------------------
-          # 直接试写一个 blob：设置接口要 admin、普通 token 读不到，
-          # 而「能不能写」这个答案只有真写一次才可靠。
-          # 探针 blob 未被引用，会被正常回收。
-          PROBE="$(gh api -X POST "/repos/${GITHUB_REPOSITORY}/git/blobs" \
-                     -f content=cHJvYmU= -f encoding=utf-8 2>&1)"; PROBE_RC=$?
-          echo "::notice::写权限预检 rc=${PROBE_RC}"
-          if [ "$PROBE_RC" -ne 0 ]; then
-            msg="${PROBE//'%'/'%25'}"; msg="${msg//$'\n'/%0A}"
-            echo "::error::GITHUB_TOKEN 没有写权限，无法创建 Release。%0A${msg}%0A%0A修法：仓库 Settings → Actions → General → Workflow permissions 选 “Read and write permissions” 保存后重跑。这一步需要仓库 admin，workflow 里的 permissions: 越不过它。"
-            exit 1
+          # --- 写权限预检 -----------------------------------------------------
+          # 直接试写一个 blob。`GET /actions/permissions/workflow` 需要 admin，
+          # 读不到；「能不能写」只有真写一次才可靠。探针 blob 未被引用，会被回收。
+          PROBE_CODE="$(curl -sS -o "$RUNNER_TEMP/probe.json" -w '%{http_code}' "${AUTH[@]}" \
+            -X POST "${API}/git/blobs" \
+            -d '{"content":"cHJvYmU=","encoding":"utf-8"}')"
+          say "- 写权限预检 \`POST /git/blobs\` → HTTP \`${PROBE_CODE}\`"
+          if [ "$PROBE_CODE" != "201" ]; then
+            say ""
+            say "**响应**："
+            say '```json'
+            say "$(cat "$RUNNER_TEMP/probe.json")"
+            say '```'
+            die "GITHUB_TOKEN 没有写权限。修法：仓库 Settings → Actions → General → Workflow permissions 选 “Read and write permissions” 保存后重跑；这一步需要仓库 admin，workflow 里的 permissions: 越不过它。"
           fi
 
-          # --- 创建 --------------------------------------------------------
-          OUT="$(gh release create "${GITHUB_REF_NAME}" \
-                   --title "$TITLE" \
-                   --notes-file "$RUNNER_TEMP/body.md" \
-                   --verify-tag \
-                   --latest 2>&1)"; CREATE_RC=$?
-          echo "::notice::gh release create rc=${CREATE_RC}"
-          if [ "$CREATE_RC" -ne 0 ]; then
-            msg="${OUT//'%'/'%25'}"; msg="${msg//$'\n'/%0A}"
-            echo "::error::创建 Release 失败（rc=${CREATE_RC}）：%0A${msg}"
-            exit 1
+          # --- 创建 -----------------------------------------------------------
+          jq -n --arg tag "$GITHUB_REF_NAME" --arg name "$TITLE" \
+                --rawfile body "$RUNNER_TEMP/body.md" \
+                '{tag_name:$tag, name:$name, body:$body, draft:false, prerelease:false}' \
+            > "$RUNNER_TEMP/payload.json"
+
+          CREATE_CODE="$(curl -sS -o "$RUNNER_TEMP/create.json" -w '%{http_code}' "${AUTH[@]}" \
+            -X POST "${API}/releases" -d @"$RUNNER_TEMP/payload.json")"
+          say "- 创建 \`POST /releases\` → HTTP \`${CREATE_CODE}\`"
+
+          if [ "$CREATE_CODE" != "201" ]; then
+            say ""
+            say "**响应**："
+            say '```json'
+            say "$(cat "$RUNNER_TEMP/create.json")"
+            say '```'
+            die "创建 Release 失败（HTTP ${CREATE_CODE}）。"
           fi
 
-          echo "$OUT"
-          URL="$(gh release view "${GITHUB_REF_NAME}" --json url --jq .url 2>/dev/null || echo '')"
-          echo "::notice::已创建 Release：${URL:-（取 URL 失败，但创建已成功）}"
+          URL="$(jq -r '.html_url // empty' "$RUNNER_TEMP/create.json")"
+          say ""
+          say "✅ 已创建：${URL}"
 
       # -----------------------------------------------------------------------
       # 刻意**不**附离线发布包。
