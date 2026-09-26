@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { CornerDownLeft, Loader2, Search } from "lucide-react";
+import { CornerDownLeft, History, Loader2, Search } from "lucide-react";
 import * as React from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/command";
 import { ToolTypeBadge } from "@/components/tools/ToolTypeBadge";
 import { useDebounce } from "@/hooks/useDebounce";
+import { readRecentTools, recordRecentTool } from "@/lib/recentTools";
 
 /**
  * Global search in the top bar: a Command palette opened with ⌘K / Ctrl+K
@@ -23,6 +24,14 @@ import { useDebounce } from "@/hooks/useDebounce";
  * Selecting a result opens `/tools/:slug` (CONTRACT §14.10 — M2 landed the detail
  * page). The "在门户中搜索" row still jumps to the portal with `?q=` for free-text
  * searches that match nothing by name.
+ *
+ * M7 · F6：加了分组标题与「最近访问」。最近访问存在 localStorage
+ * （`localcraft:recent-tools`，最多 8 条，只存 slug/name/at，见
+ * `@/lib/recentTools`），读取失败静默降级为空列表。
+ *
+ * M7 · F1：触发器在窄屏（< sm）退化成纯图标按钮 —— 它现在位于右侧集群，
+ * `w-full` 会把 logo 与右侧图标挤爆。图标态没有文字也没有 ⌘K 提示，
+ * 但 `aria-label` 保留，可访问名不丢。
  */
 export function GlobalSearch() {
   const [open, setOpen] = React.useState(false);
@@ -41,6 +50,14 @@ export function GlobalSearch() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  /*
+   * 「最近访问」在每次面板打开时重新读一遍（`open` 变化时 useMemo 重算）。
+   * 用 useMemo 而不是 effect + setState：读 localStorage 是同步的派生值，
+   * 放进 effect 会多一次级联渲染（oxlint `react(set-state-in-effect)`）。
+   * `readRecentTools` 内部已吞掉所有异常，localStorage 不可用时就是 []。
+   */
+  const recent = React.useMemo(() => (open ? readRecentTools() : []), [open]);
+
   const keyword = debounced.trim();
   const { data, isFetching } = useQuery({
     queryKey: toolsQueryKey({ q: keyword, page_size: 8 }),
@@ -56,8 +73,11 @@ export function GlobalSearch() {
   }
 
   /** M2：详情页已落地，选中结果直接跳 /tools/:slug（CONTRACT §14.10）。 */
-  function goToTool(slug: string) {
+  function goToTool(slug: string, name: string) {
     setOpen(false);
+    // 只记 slug/name/at，绝不写任何凭据或个人信息（任务书 F6）。
+    // 面板随之关闭，无需回写 state；下次打开时 useMemo 会重新读取。
+    recordRecentTool({ slug, name });
     navigate(`/tools/${encodeURIComponent(slug)}`);
   }
 
@@ -69,11 +89,18 @@ export function GlobalSearch() {
         type="button"
         variant="outline"
         onClick={() => setOpen(true)}
-        className="h-9 w-full justify-start gap-2 px-3 text-muted-foreground sm:w-64 lg:w-80"
+        data-testid="global-search-trigger"
+        /*
+          窄屏（< sm）：纯图标按钮，`w-9` 保证 ≥36px 的触控目标，文字与 ⌘K 提示隐藏。
+          sm 起恢复带文字的搜索框（w-64，lg 升到 w-80）。
+          `sm:shrink` 是防溢出安全阀：窗口刚好在 640 时 logo 站点名与用户菜单
+          的角色文字会同时展开，允许搜索框先收缩（文字 truncate）而不是产生横向滚动。
+        */
+        className="h-9 w-9 shrink-0 justify-center px-0 text-muted-foreground sm:w-64 sm:shrink sm:justify-start sm:gap-2 sm:px-3 lg:w-80"
         aria-label="搜索工具（快捷键 Command K）"
       >
         <Search aria-hidden="true" className="size-4" />
-        <span className="truncate">搜索工具、Skill、提示词…</span>
+        <span className="hidden truncate sm:inline">搜索工具、Skill、提示词…</span>
         <kbd className="ml-auto hidden shrink-0 rounded border bg-muted px-1.5 font-mono text-[10px] text-muted-foreground sm:inline-block">
           ⌘K
         </kbd>
@@ -93,11 +120,37 @@ export function GlobalSearch() {
           aria-label="搜索关键词"
         />
         <CommandList>
-          {keyword.length === 0 ? (
+          {/* ---- 最近访问（仅在未输入关键词时出现）---- */}
+          {keyword.length === 0 && recent.length > 0 ? (
+            <CommandGroup
+              heading="最近访问"
+              data-testid="recent-tools-group"
+              /* 入场动效由 index.css 的 prefers-reduced-motion 全局规则自动关闭 */
+              className="animate-in fade-in-0 duration-150"
+            >
+              {recent.map((item) => (
+                <CommandItem
+                  key={item.slug}
+                  value={`__recent__${item.slug}`}
+                  onSelect={() => goToTool(item.slug, item.name)}
+                >
+                  <History aria-hidden="true" className="size-4" />
+                  <span className="min-w-0 flex-1 truncate">{item.name}</span>
+                  <span className="max-w-[10rem] truncate font-mono text-xs text-muted-foreground">
+                    {item.slug}
+                  </span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          ) : null}
+
+          {keyword.length === 0 && recent.length === 0 ? (
             <div className="px-3 py-6 text-center text-sm text-muted-foreground">
               输入关键词后回车，在门户中查看结果
             </div>
-          ) : (
+          ) : null}
+
+          {keyword.length > 0 ? (
             <CommandEmpty>
               {isFetching ? (
                 <span className="inline-flex items-center gap-2">
@@ -108,7 +161,7 @@ export function GlobalSearch() {
                 "没有匹配的工具"
               )}
             </CommandEmpty>
-          )}
+          ) : null}
 
           {items.length > 0 ? (
             <CommandGroup heading="工具">
@@ -116,7 +169,7 @@ export function GlobalSearch() {
                 <CommandItem
                   key={tool.id}
                   value={tool.name}
-                  onSelect={() => goToTool(tool.slug)}
+                  onSelect={() => goToTool(tool.slug, tool.name)}
                 >
                   <ToolTypeBadge type={tool.tool_type} />
                   <span className="min-w-0 flex-1 truncate">{tool.name}</span>
@@ -139,6 +192,29 @@ export function GlobalSearch() {
             </CommandGroup>
           ) : null}
         </CommandList>
+
+        {/*
+          V8 的「快捷键提示」：面板底部固定一行，不参与 cmdk 的键盘选择。
+          纯装饰，用 aria-hidden 避免读屏重复播报。
+        */}
+        <div
+          aria-hidden="true"
+          className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t px-3 py-2 text-[11px] text-muted-foreground"
+        >
+          <span className="inline-flex items-center gap-1">
+            <kbd className="rounded border bg-muted px-1 font-mono">↑</kbd>
+            <kbd className="rounded border bg-muted px-1 font-mono">↓</kbd>
+            选择
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <kbd className="rounded border bg-muted px-1 font-mono">↵</kbd>
+            打开
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <kbd className="rounded border bg-muted px-1 font-mono">esc</kbd>
+            关闭
+          </span>
+        </div>
       </CommandDialog>
     </>
   );

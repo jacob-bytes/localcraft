@@ -49,7 +49,8 @@ function GalleryPlaceholder({
         className,
       )}
     >
-      <Icon className="size-12 text-foreground/35" />
+      {/* M7 · F3：与卡片占位统一 —— 大号类型图标 + 较低不透明度的语义前景色。 */}
+      <Icon className="size-12 text-foreground/55" strokeWidth={1.25} />
     </div>
   );
 }

@@ -3,9 +3,7 @@ import {
   Info,
   LayoutGrid,
   List,
-  PackageOpen,
   Search,
-  SearchX,
   SlidersHorizontal,
   X,
 } from "lucide-react";
@@ -25,6 +23,7 @@ import {
 } from "@/api/tools";
 import type { ToolFacets, ToolListParams, ToolSort, ToolType } from "@/api/types";
 import { EmptyState } from "@/components/common/EmptyState";
+import { NoResultsArt, NoToolsArt } from "@/components/common/EmptyStateArt";
 import { ErrorState } from "@/components/common/ErrorState";
 import { Markdown } from "@/components/common/Markdown";
 import { PageSkeleton } from "@/components/common/PageSkeleton";
@@ -419,7 +418,7 @@ export default function PortalPage() {
           ) : items.length === 0 ? (
             hasFilters ? (
               <EmptyState
-                icon={SearchX}
+                illustration={<NoResultsArt />}
                 title="没有找到匹配的工具"
                 description="试试减少筛选条件，或换一个关键词。"
                 action={
@@ -430,7 +429,7 @@ export default function PortalPage() {
               />
             ) : (
               <EmptyState
-                icon={PackageOpen}
+                illustration={<NoToolsArt />}
                 title="平台上还没有工具"
                 description="等第一个工具上架后，这里就会热闹起来。"
               />

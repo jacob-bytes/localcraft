@@ -150,11 +150,15 @@ export function AdminToolTable({
       <TableHeader>
         <TableRow>
           <TableHead className="w-10">
-            <Checkbox
-              checked={allChecked ? true : someChecked ? "indeterminate" : false}
-              aria-label="全选本页工具"
-              onCheckedChange={(value) => onToggleAll(value === true)}
-            />
+            {/* M7 · F2（docs/12 §U3）：包一层 <label> 把命中区撑到 32×32，
+                `-m-2` 抵消多出的边距；checkbox 视觉尺寸仍是 16×16。 */}
+            <label className="-m-2 inline-flex size-8 cursor-pointer items-center justify-center">
+              <Checkbox
+                checked={allChecked ? true : someChecked ? "indeterminate" : false}
+                aria-label="全选本页工具"
+                onCheckedChange={(value) => onToggleAll(value === true)}
+              />
+            </label>
           </TableHead>
           <TableHead>工具</TableHead>
           <TableHead>类型</TableHead>
@@ -171,11 +175,14 @@ export function AdminToolTable({
         {items.map((tool) => (
           <TableRow key={tool.id} data-testid="admin-tool-row" data-tool-id={tool.id}>
             <TableCell>
-              <Checkbox
-                checked={checked.has(tool.id)}
-                aria-label={`选择 ${tool.name}`}
-                onCheckedChange={(value) => onToggleChecked(tool.id, value === true)}
-              />
+              {/* M7 · F2：命中区 32×32，视觉仍是 16×16（同表头）。 */}
+              <label className="-m-2 inline-flex size-8 cursor-pointer items-center justify-center">
+                <Checkbox
+                  checked={checked.has(tool.id)}
+                  aria-label={`选择 ${tool.name}`}
+                  onCheckedChange={(value) => onToggleChecked(tool.id, value === true)}
+                />
+              </label>
             </TableCell>
 
             <TableCell className="max-w-[20rem] whitespace-normal">

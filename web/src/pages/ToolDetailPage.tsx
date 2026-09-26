@@ -23,6 +23,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatCount, formatDateTime, formatRelativeTime } from "@/lib/format";
+import { recordRecentTool } from "@/lib/recentTools";
 import { VISIBILITY_LABELS } from "@/lib/toolMeta";
 import NotFoundPage from "@/pages/NotFoundPage";
 
@@ -44,6 +45,18 @@ export default function ToolDetailPage() {
     // docs/04 §9：工具详情 staleTime 5 分钟。
     staleTime: 5 * 60_000,
   });
+
+  /*
+   * M7 · F6「最近访问」：真正打开过详情页才算一次访问（只从 ⌘K 面板记录会漏掉
+   * 从卡片墙点进来的绝大多数访问）。写入的是 `@/lib/recentTools` 的
+   * {slug, name, at}，不含任何凭据或个人信息；写失败静默忽略。
+   * 必须在下面的提前 return 之前调用，否则违反 hooks 规则。
+   */
+  const detailName = detailQuery.data?.name;
+  React.useEffect(() => {
+    if (!slug || !detailName) return;
+    recordRecentTool({ slug, name: detailName });
+  }, [slug, detailName]);
 
   if (!slug) return <NotFoundPage />;
 

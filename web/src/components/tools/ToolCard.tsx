@@ -16,15 +16,15 @@ const MAX_TAGS = 3;
  *
  * The WHOLE card is a `<Link>` — never `onClick` — so middle-click (new tab),
  * cmd-click and "copy link address" all behave (docs/04 §6.3, acceptance #6).
- * `variant` covers the grid card and the compact list row.
+ *
+ * M7 · F4：原来的 `variant="row"` 紧凑列表已删除，列表视图改走
+ * `ToolListTable`（表格式）。卡片视图只负责封面浏览，保持低信息密度。
  */
 export interface ToolCardProps {
   tool: ToolListItem;
-  variant?: "grid" | "row";
 }
 
-export function ToolCard({ tool, variant = "grid" }: ToolCardProps) {
-  if (variant === "row") return <ToolCardRow tool={tool} />;
+export function ToolCard({ tool }: ToolCardProps) {
   return <ToolCardGrid tool={tool} />;
 }
 
@@ -58,6 +58,11 @@ function ToolTags({ tags, limit = MAX_TAGS }: { tags: string[]; limit?: number }
  * gives the placeholder the same box, so cards never jump (docs/04 §9).
  * A tool without a cover gets a category-tinted block + type icon — never a
  * broken `<img>` (acceptance #7).
+ *
+ * M7 · F3（docs/12 §6.2 V1）：占位再设计 —— 按分类的**柔和**渐变 + **大号**
+ * 类型图标（size-10 → size-16），图标用较低不透明度的语义令牌 `foreground`，
+ * 在浅色（深字）与深色（浅字）两端都留出余量。图标本身 `aria-hidden`，
+ * 不承载信息；类型仍由左上角的 `ToolTypeBadge` 文字徽标表达（docs/04 §8.1）。
  */
 function ToolCover({ tool }: { tool: ToolListItem }) {
   const meta = TOOL_TYPE_META[tool.tool_type];
@@ -90,7 +95,7 @@ function ToolCover({ tool }: { tool: ToolListItem }) {
             categoryTintClass(tool.category?.slug),
           )}
         >
-          <Icon className="size-10 text-foreground/35" />
+          <Icon className="size-16 text-foreground/55" strokeWidth={1.25} />
         </div>
       )}
 
@@ -167,36 +172,6 @@ function ToolCardGrid({ tool }: { tool: ToolListItem }) {
           </div>
         </div>
       </div>
-    </Link>
-  );
-}
-
-function ToolCardRow({ tool }: { tool: ToolListItem }) {
-  return (
-    <Link
-      to={`/tools/${tool.slug}`}
-      aria-label={`查看工具 ${tool.name}`}
-      className={cn(
-        "group flex w-full items-center gap-3 rounded-lg border bg-card px-3 py-2 text-card-foreground",
-        "transition duration-150 hover:border-ring/60 hover:bg-accent/40",
-      )}
-    >
-      <ToolTypeBadge type={tool.tool_type} className="shrink-0" />
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium">{tool.name}</span>
-        <span className="block truncate text-xs text-muted-foreground">{tool.summary}</span>
-      </span>
-      <span className="hidden shrink-0 items-center gap-2 text-xs text-muted-foreground sm:flex">
-        <span className="max-w-[6rem] truncate">{tool.category?.name ?? "未分类"}</span>
-        <span className="inline-flex items-center gap-1">
-          <Download aria-hidden="true" className="size-3" />
-          <span className="tabular-nums">{formatCount(tool.download_count)}</span>
-          <span className="sr-only">次下载</span>
-        </span>
-        <time dateTime={tool.updated_at ?? undefined} className="w-20 text-right">
-          {formatRelativeTime(tool.updated_at)}
-        </time>
-      </span>
     </Link>
   );
 }

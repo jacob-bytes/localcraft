@@ -122,11 +122,18 @@ export function UserTable({
       <TableHeader>
         <TableRow>
           <TableHead className="w-10">
-            <Checkbox
-              checked={allSelected ? true : someSelected ? "indeterminate" : false}
-              aria-label={allSelected ? "取消全选本页用户" : "全选本页用户"}
-              onCheckedChange={(value) => onToggleAll(value === true)}
-            />
+            {/*
+              M7 · F2（docs/12 §U3）：行选择 checkbox 的真实命中区原本只有 16×16。
+              外层 <label> 把它撑到 32×32，`-m-2` 抵消掉多出来的 8px 边距，
+              表格布局与视觉尺寸（仍是 16×16）都不变。
+            */}
+            <label className="-m-2 inline-flex size-8 cursor-pointer items-center justify-center">
+              <Checkbox
+                checked={allSelected ? true : someSelected ? "indeterminate" : false}
+                aria-label={allSelected ? "取消全选本页用户" : "全选本页用户"}
+                onCheckedChange={(value) => onToggleAll(value === true)}
+              />
+            </label>
           </TableHead>
           <TableHead>用户</TableHead>
           <TableHead>用户名</TableHead>
@@ -146,11 +153,14 @@ export function UserTable({
           return (
             <TableRow key={user.id} data-testid="user-row" data-user-id={user.id}>
               <TableCell>
-                <Checkbox
-                  checked={selected.has(user.id)}
-                  aria-label={`选择用户 ${displayName}`}
-                  onCheckedChange={(value) => onToggleSelected(user.id, value === true)}
-                />
+                {/* M7 · F2：命中区 32×32，视觉仍是 16×16（同表头）。 */}
+                <label className="-m-2 inline-flex size-8 cursor-pointer items-center justify-center">
+                  <Checkbox
+                    checked={selected.has(user.id)}
+                    aria-label={`选择用户 ${displayName}`}
+                    onCheckedChange={(value) => onToggleSelected(user.id, value === true)}
+                  />
+                </label>
               </TableCell>
 
               <TableCell>

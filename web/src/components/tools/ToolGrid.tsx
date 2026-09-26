@@ -1,8 +1,14 @@
 import type { ToolListItem } from "@/api/types";
 import { ToolCard } from "@/components/tools/ToolCard";
+import { ToolListTable } from "@/components/tools/ToolListTable";
 import { cn } from "@/lib/utils";
 
-/** Card wall / compact list (docs/04 §6.3). */
+/**
+ * 门户卡片墙 / 列表（docs/04 §6.3）。
+ *
+ * M7 · F4：两种视图不再只是密度差别 —— `list` 走表格式的 `ToolListTable`
+ * （名称/分类/类型/版本/下载数/更新时间），`grid` 保持封面浏览的卡片墙。
+ */
 export function ToolGrid({
   tools,
   variant = "grid",
@@ -13,15 +19,7 @@ export function ToolGrid({
   className?: string;
 }) {
   if (variant === "list") {
-    return (
-      <ul className={cn("space-y-2", className)}>
-        {tools.map((tool) => (
-          <li key={tool.id}>
-            <ToolCard tool={tool} variant="row" />
-          </li>
-        ))}
-      </ul>
-    );
+    return <ToolListTable tools={tools} className={className} />;
   }
 
   return (

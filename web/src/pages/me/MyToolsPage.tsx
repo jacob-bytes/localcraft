@@ -354,7 +354,9 @@ function MyToolRow({
             <div
               aria-hidden="true"
               className={cn(
-                "grid size-full place-items-center bg-gradient-to-br text-xs text-foreground/40",
+                // M7 · F3：这里的分类名是唯一「压在占位渐变上的文字」。渐变降饱和后
+                // （更亮的底）原 /40 的前景达不到 AA，提到 /70（实测见 M7 报告）。
+                "grid size-full place-items-center bg-gradient-to-br text-xs text-foreground/70",
                 categoryTintClass(tool.category?.slug),
               )}
             >

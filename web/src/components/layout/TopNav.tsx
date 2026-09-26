@@ -40,18 +40,30 @@ export function TopNav() {
           <span className="hidden max-w-[10rem] truncate sm:inline">{siteName(meta)}</span>
         </Link>
 
-        {minimal ? (
-          <Badge variant="warning" className="ml-1 gap-1.5 py-1">
-            <KeyRound aria-hidden="true" className="size-3.5" />
-            需先修改密码
-          </Badge>
-        ) : (
-          <div className="ml-2 flex flex-1 justify-start sm:justify-center">
-            <GlobalSearch />
-          </div>
-        )}
+        {/*
+          M7 · F1：搜索触发器从「正中」移到右侧集群，排在 ThemeToggle 左侧。
+          视觉顺序 = [logo] …(留白)… [搜索] [主题切换] [登录/用户菜单]。
 
-        <div className="ml-auto flex shrink-0 items-center gap-1">
+          左侧留白由本集群的 `ml-auto` 产生（不再用 `flex-1` + `justify-center`，
+          那种写法在窄屏会把 logo 和右侧图标挤爆）。
+
+          `min-w-0` + 搜索触发器的 `sm:shrink` 是防溢出的关键：窗口刚到 sm（640）
+          时 logo 站点名与用户菜单的角色文字同时展开，固定宽度会溢出；允许搜索框
+          先收缩（内部文字 `truncate`）比产生横向滚动条更好。
+
+          `minimal`（强制改密）下搜索被 Badge 取代；它同样留在右侧集群里，
+          这样不会出现一个孤立的左对齐徽标（任务书 F1 第 3 条）。
+        */}
+        <div className="ml-auto flex min-w-0 items-center gap-1">
+          {minimal ? (
+            <Badge variant="warning" className="gap-1.5 py-1">
+              <KeyRound aria-hidden="true" className="size-3.5" />
+              需先修改密码
+            </Badge>
+          ) : (
+            <GlobalSearch />
+          )}
+
           <ThemeToggle />
           {anonymous ? (
             <Button asChild size="sm" data-testid="login-link">

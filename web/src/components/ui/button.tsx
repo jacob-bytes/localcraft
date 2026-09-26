@@ -9,8 +9,12 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default: "bg-primary text-primary-foreground hover:bg-primary/90",
+        // U2 同类修复（docs/12 §2，M7 追加）：原为 `text-white` +
+        // `dark:bg-destructive/60`。硬编码白色忽略 --destructive-foreground
+        // （它在 .dark 下是深色文字），深色主题里就是「白字 + 60% 透明红底」。
+        // badge.tsx 已按同一处方式修过，button.tsx 当时漏了。
         destructive:
-          "bg-destructive text-white hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:bg-destructive/60 dark:focus-visible:ring-destructive/40",
+          "bg-destructive text-destructive-foreground hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40",
         outline:
           "border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50",
         secondary:

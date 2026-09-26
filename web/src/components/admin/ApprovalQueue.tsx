@@ -1,8 +1,9 @@
-import { AlertTriangle, ClipboardList, Inbox } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import * as React from "react";
 
 import type { ApprovalQueueItem, SubmissionType } from "@/api/types";
 import { EmptyState } from "@/components/common/EmptyState";
+import { NoPendingArt } from "@/components/common/EmptyStateArt";
 import { ToolTypeBadge } from "@/components/tools/ToolTypeBadge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -148,7 +149,7 @@ export function ApprovalQueue({
 
       {visible === 0 ? (
         <EmptyState
-          icon={typeFilter === "all" ? Inbox : ClipboardList}
+          illustration={<NoPendingArt />}
           title="没有待处理的审批"
           description={
             typeFilter === "all"
