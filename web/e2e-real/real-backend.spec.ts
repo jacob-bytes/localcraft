@@ -197,10 +197,74 @@ test.describe("真实后端联调（mock 之外的路径）", () => {
     });
   });
 
+  /*
+   * 放在最前面：这条**不登录**，而 `serial` 模式下后面的用例会登录并共享上下文，
+   * 一旦跑过登录再测匿名就说不清了。
+   *
+   * 它验证的是 mock 永远测不出的东西：真实后端在 `portal.allow_anonymous_view=true`
+   * （迁移 0005 之后的默认值）下，匿名到底能不能拿到数据、能拿到什么、拿不到什么。
+   */
+  test("A0. 匿名浏览：未登录即可看门户，但下载入口不可用", async ({ page, request }) => {
+    await page.goto("/");
+
+    // 没有被赶去登录页
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByRole("heading", { name: "发现内网工具与 Skill" })).toBeVisible();
+    await expect(page.getByTestId("tool-card").first()).toBeVisible();
+
+    // 顶栏给登录入口；用户菜单不出现
+    const nav = page.getByTestId("top-nav");
+    await expect(nav.getByTestId("login-link")).toBeVisible();
+    await expect(nav.getByTestId("user-menu-trigger")).toHaveCount(0);
+
+    /*
+     * 匿名只可能看到 public、且 can_download 必须为 false。
+     * 直接问后端而不是从 DOM 里猜：这条守的是**服务端契约**
+     * （`VisibilityContext.clause()` 的 is_anonymous 分支），
+     * 一旦哪天可见性谓词写漏，DOM 断言可能仍然"看起来对"。
+     */
+    const res = await request.get(`${API}/tools?page_size=50`);
+    expect(res.status()).toBe(200);
+    const body = (await res.json()) as {
+      items: { visibility: string; can_download: boolean }[];
+    };
+    expect(body.items.length).toBeGreaterThan(0);
+    expect(new Set(body.items.map((item) => item.visibility))).toEqual(new Set(["public"]));
+    expect(body.items.every((item) => item.can_download === false)).toBe(true);
+
+    // 详情页可看，下载按钮禁用且说明是「登录后可下载」而不是「无权限」
+    await page.getByTestId("tool-card").first().click();
+    await expect(page.getByTestId("download-button")).toBeVisible();
+    await expect(page.getByTestId("download-button")).toBeDisabled();
+
+    /*
+     * 断言禁用原因时**不要 hover 那个禁用的按钮**：Tooltip 的触发 span 包在它外面，
+     * 会拦住指针事件（`intercepts pointer events`），hover 会一直重试到超时。
+     * 改为直接读 trigger 的 `aria-label` —— 原因文案本来就在那里（无障碍属性），
+     * 既稳又不依赖悬浮时序。
+     */
+    const tooltipTrigger = page
+      .locator('[data-slot="tooltip-trigger"]')
+      .filter({ has: page.getByTestId("download-button") });
+    await expect(tooltipTrigger).toHaveAttribute("aria-label", /登录后可下载/);
+
+    // 匿名不得签发票据（服务端仍然拒绝）
+    const detailRes = await request.get(`${API}/tools?page_size=1`);
+    const first = ((await detailRes.json()) as { items: { slug: string }[] }).items[0];
+    if (!first) throw new Error("种子里应当至少有一个 public 工具");
+    const ticket = await request.post(`${API}/tools/${first.slug}/download-ticket`);
+    expect(ticket.status()).toBe(401);
+
+    // 需要登录的页面仍然把人挡在外面
+    await page.goto("/me/tools");
+    await expect(page).toHaveURL(/\/login/);
+    await expect(page.getByTestId("login-page")).toBeVisible();
+  });
+
   test("A. 会话恢复：refresh cookie 的真实 Path + F5 不闪登录页", async ({ page, context }) => {
     const auth = captureAuthHeader(page);
 
-    await page.goto("/");
+    await page.goto("/login");
     await expect(page).toHaveURL(/\/login/);
     await expect(page.getByLabel("用户名", { exact: true })).toBeVisible();
 
@@ -307,8 +371,15 @@ test.describe("真实后端联调（mock 之外的路径）", () => {
     expect(body.status).toBe("ok");
 
     await expect(page).toHaveURL(/\/login/);
+
+    /*
+     * 登出后重新访问 `/`：门户默认允许匿名浏览，所以**不再**跳回登录页 ——
+     * 但必须确认「已经不是登录态」。这比断言 URL 更贴近真正的不变量。
+     */
     await page.goto("/");
-    await expect(page).toHaveURL(/\/login/);
+    await expect(page.getByTestId("top-nav")).toBeVisible();
+    await expect(page.getByTestId("login-link")).toBeVisible();
+    await expect(page.getByTestId("user-menu-trigger")).toHaveCount(0);
   });
 
   test("C2. 改密接口的真实错误形状：400 VALIDATION_ERROR + details.fields[old_password]", async ({
@@ -718,7 +789,14 @@ test.describe("真实后端联调（mock 之外的路径）", () => {
   test("H. 生产拓扑：后端托管 dist、无 mock worker（验收 #30）", async ({ page }) => {
     const response = await page.goto("/");
     expect(response?.headers()["content-type"] ?? "").toContain("text/html");
-    // 未登录 → 落登录页；这一步同时验证入口 chunk 与登录页 chunk 可加载
+    /*
+     * 门户默认允许匿名浏览（迁移 0005），所以未登录访问 `/` 会**直接看到门户**
+     * 而不是登录页。这一步顺带验证了入口 chunk 与门户页 chunk 可加载；
+     * 登录页 chunk 的可加载性由下面显式 goto("/login") 覆盖。
+     */
+    await expectAfterNavigation(page.getByTestId("top-nav"), "顶栏");
+    await expect(page.getByTestId("tool-card").first()).toBeVisible();
+    await page.goto("/login");
     await expectAfterNavigation(page.getByTestId("login-page"), "登录页");
 
     // SPA fallback 会为未知路径返回 index.html（200 + text/html），所以不能断言 404：

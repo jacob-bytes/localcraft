@@ -282,7 +282,7 @@ test.describe("M2 · 审批台", () => {
   test("approver 角色看不到超管专属菜单（白名单 / 系统设置）", async ({ page }) => {
     const errors = watchPageErrors(page);
     // mock 的 wangwu 是 approver
-    await page.goto("/");
+    await page.goto("/login");
     await page.getByLabel("用户名", { exact: true }).fill("wangwu");
     await page.getByLabel("密码", { exact: true }).fill("Author@12345");
     await page.getByRole("button", { name: "登录", exact: true }).click();

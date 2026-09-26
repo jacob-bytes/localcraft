@@ -1,8 +1,9 @@
-import { Boxes, KeyRound } from "lucide-react";
+import { Boxes, KeyRound, LogIn } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { GlobalSearch } from "@/components/layout/GlobalSearch";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { UserMenu } from "@/components/layout/UserMenu";
 import { useAuth } from "@/hooks/useAuth";
@@ -17,9 +18,11 @@ import { siteName, useMeta } from "@/hooks/useMeta";
  * hidden (docs/04 §6.2).
  */
 export function TopNav() {
-  const { user } = useAuth();
+  const { status, user } = useAuth();
   const { data: meta } = useMeta();
   const minimal = user?.must_change_password === true;
+  /* 匿名访客（门户默认允许未登录浏览）——顶栏要给出登录入口，否则没地方登 */
+  const anonymous = status === "unauthenticated";
 
   return (
     <header
@@ -50,7 +53,16 @@ export function TopNav() {
 
         <div className="ml-auto flex shrink-0 items-center gap-1">
           <ThemeToggle />
-          <UserMenu minimal={minimal} />
+          {anonymous ? (
+            <Button asChild size="sm" data-testid="login-link">
+              <Link to="/login">
+                <LogIn aria-hidden="true" className="size-4" />
+                登录
+              </Link>
+            </Button>
+          ) : (
+            <UserMenu minimal={minimal} />
+          )}
         </div>
       </div>
     </header>

@@ -1178,46 +1178,48 @@ async def test_anonymous_download_requires_setting(client, seeded) -> None:
     依据 docs/01 §3.2 的权限矩阵：下载 public 工具需要角色 `user` 及以上
     （`viewer` 都不行）。匿名比 viewer 更低，所以即使开了匿名浏览，
     下载仍然 404 —— 这是刻意的：浏览是只读，下载是取走内容。
+
+    默认值已是 true（迁移 0005），所以下面按「默认开 → 显式关」两个分支断言，
+    两个方向都覆盖到。
     """
     owner = await login(client, "outsider")
     approver = await login(client, "approver")
     slug, _tool_id, content = await publish_tool(
         client, owner, approver, name="匿名下载工具"
     )
+    del content
 
     import httpx
 
-    async with httpx.AsyncClient(
-        transport=client._transport, base_url="http://testserver"
-    ) as anon:
-        assert (await anon.get(f"/api/v1/tools/{slug}/download")).status_code == 401
-
     from app.repositories import system_settings as settings_repo
 
+    def _anon() -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            transport=client._transport, base_url="http://testserver"
+        )
+
+    # ---- 分支 1：默认（允许匿名浏览）----
+    async with _anon() as anon:
+        # 浏览可以
+        browse = await anon.get(f"/api/v1/tools/{slug}")
+        assert browse.status_code == 200
+        assert browse.json()["can_download"] is False
+        # 下载不行 —— 404 而不是 401：用户能看见详情，报 401 只会让人困惑
+        assert (await anon.get(f"/api/v1/tools/{slug}/download")).status_code == 404
+        # 匿名不允许签发票据
+        assert (
+            await anon.post(f"/api/v1/tools/{slug}/download-ticket")
+        ).status_code == 401
+
+    # ---- 分支 2：显式关掉之后，连浏览都不行 ----
     async with SessionLocal() as session:
         row = await settings_repo.get_row(session, "portal.allow_anonymous_view")
         original = row.value
-        row.value = True
+        row.value = False
         await session.commit()
     try:
-        async with httpx.AsyncClient(
-            transport=client._transport, base_url="http://testserver"
-        ) as anon:
-            # 浏览可以
-            browse = await anon.get(f"/api/v1/tools/{slug}")
-            assert browse.status_code == 200
-            assert browse.json()["can_download"] is False
-            # 下载不行
-            response = await anon.get(f"/api/v1/tools/{slug}/download")
-        assert response.status_code == 404, "匿名不允许下载（即使开了匿名浏览）"
-        del content
-
-        # 匿名不允许签发票据
-        async with httpx.AsyncClient(
-            transport=client._transport, base_url="http://testserver"
-        ) as anon:
-            ticket = await anon.post(f"/api/v1/tools/{slug}/download-ticket")
-        assert ticket.status_code == 401
+        async with _anon() as anon:
+            assert (await anon.get(f"/api/v1/tools/{slug}")).status_code == 401
     finally:
         async with SessionLocal() as session:
             row = await settings_repo.get_row(session, "portal.allow_anonymous_view")

@@ -100,7 +100,10 @@ async function login(
 ) {
   // `goto: false` keeps an existing `/login?redirect=…` (a shared deep link)
   // instead of overwriting it with a plain "/".
-  if (options.goto ?? true) await page.goto("/");
+  //
+  // 注意必须直接去 `/login`：门户默认允许匿名浏览（迁移 0005），访问 `/` 会
+  // 直接渲染门户而**不再**重定向到登录页 —— 这里曾经依赖那个重定向。
+  if (options.goto ?? true) await page.goto("/login");
   await expect(page.getByTestId("login-page")).toBeVisible();
   await page.getByLabel("用户名", { exact: true }).fill(username);
   await page.getByLabel("密码", { exact: true }).fill(password);
@@ -125,14 +128,60 @@ async function expectedCards(page: Page, pageSize = 24): Promise<number> {
 
 test.describe("M1 验收（MSW mock 状态）", () => {
 
-  test("2. 未登录访问门户 → 跳转 /login，无空白页", async ({ page }) => {
+  test("2. 未登录访问门户 → 直接看到公开工具，顶栏给出登录入口", async ({ page }) => {
+    /*
+     * 默认值在 1.0.0 之后改了：`portal.allow_anonymous_view` 从 false 变 true
+     * （迁移 0005）。门户主页不登录即可访问，便于在内网里直接分享链接。
+     * 这条用例此前断言的是「跳转 /login」——已按新默认改写。
+     */
     const errors = watchPageErrors(page);
     await page.goto("/");
+
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByRole("heading", { name: "发现内网工具与 Skill" })).toBeVisible();
+    await expect(page.getByTestId("tool-card").first()).toBeVisible();
+
+    // 匿名也要能看到「去哪里登录」，否则没有入口
+    const nav = page.getByTestId("top-nav");
+    await expect(nav.getByTestId("login-link")).toBeVisible();
+    // 匿名不该出现用户菜单
+    await expect(nav.getByTestId("user-menu-trigger")).toHaveCount(0);
+
+    await page.screenshot({ path: `${ARTIFACTS}/02-portal-anonymous.png`, fullPage: true });
+    expect(errors).toEqual([]);
+  });
+
+  test("2b. 匿名点进详情 → 下载按钮禁用，提示「登录后可下载」", async ({ page }) => {
+    const errors = watchPageErrors(page);
+    await page.goto("/");
+    await page.getByTestId("tool-card").first().click();
+
+    await expect(page.getByTestId("download-button")).toBeVisible();
+    await expect(page.getByTestId("download-button")).toBeDisabled();
+
+    /*
+     * 文案必须区分「没登录」与「没权限」：服务端对两者都返回 404（不泄漏资源
+     * 存在性），所以只能由前端说清。匿名看到「当前角色无下载权限」会以为被禁。
+     *
+     * 断言读的是 Tooltip trigger 的 `aria-label`，**不 hover 那个禁用按钮** ——
+     * trigger 的 span 包在按钮外面会拦住指针事件，hover 会重试到超时。
+     */
+    const tooltipTrigger = page
+      .locator('[data-slot="tooltip-trigger"]')
+      .filter({ has: page.getByTestId("download-button") });
+    await expect(tooltipTrigger).toHaveAttribute("aria-label", /登录后可下载/);
+
+    expect(errors).toEqual([]);
+  });
+
+  test("2c. 未登录访问需登录的页面 → 跳转 /login，无空白页", async ({ page }) => {
+    /* 「关」不了开关（mock 里它默认开），但 /me、/admin 这些页面始终需要登录 */
+    const errors = watchPageErrors(page);
+    await page.goto("/me/tools");
     await expect(page).toHaveURL(/\/login/);
     await expect(page.getByTestId("login-page")).toBeVisible();
     await expect(page.getByRole("button", { name: "登录", exact: true })).toBeVisible();
     expect(await page.locator("main, form").count()).toBeGreaterThan(0);
-    await page.screenshot({ path: `${ARTIFACTS}/02-login.png`, fullPage: true });
     expect(errors).toEqual([]);
   });
 
@@ -235,13 +284,21 @@ test.describe("M1 验收（MSW mock 状态）", () => {
     const fresh = await context.browser()?.newContext({ locale: "zh-CN" });
     expect(fresh).toBeTruthy();
     const sharedPage = await fresh!.newPage();
-    // a fresh context has no refresh cookie → the shared link must land on /login
+
+    /*
+     * 新上下文没有 refresh cookie。门户默认允许匿名浏览（迁移 0005），
+     * 所以共享链接会**直接打开门户**并保留查询参数 —— 这恰恰是本用例要验的
+     * 「链接可还原」。原先这里断言「落到 /login?redirect=」，那是旧行为。
+     */
     await sharedPage.goto(sharedUrl);
-    await expect(sharedPage).toHaveURL(/\/login\?redirect=/);
-    await login(sharedPage, "admin", "Admin@12345", { goto: false });
     await expect(sharedPage).toHaveURL(/category=ops-tools/);
+    await expect(sharedPage).toHaveURL(/sort=hot/);
     await expect(sharedPage.getByTestId("tool-card")).toHaveCount(opsCards);
     await sharedPage.screenshot({ path: `${ARTIFACTS}/06-shared-link.png`, fullPage: true });
+
+    // 再验证匿名可以登录，且登录后回到门户
+    await login(sharedPage, "admin", "Admin@12345");
+    await expect(sharedPage).toHaveURL(/\/$/);
     await fresh!.close();
 
     // 越界页码：后端返回空数组 → 空态，但分页控件仍在（docs/04 §6.3）
@@ -408,9 +465,14 @@ test.describe("M1 验收（MSW mock 状态）", () => {
     await expect(page).toHaveURL(/\/login/);
     await expect(page.getByTestId("login-page")).toBeVisible();
 
-    // direct navigation to the portal must bounce back to /login too
+    /*
+     * 直接访问 `/`：门户默认允许匿名浏览，所以**不再**弹回 /login。
+     * 这里要验的不变量是「已经不是登录态」，而不是 URL —— 后者依赖匿名开关的取值。
+     */
     await page.goto("/");
-    await expect(page).toHaveURL(/\/login/);
+    await expect(page.getByTestId("top-nav")).toBeVisible();
+    await expect(page.getByTestId("login-link")).toBeVisible();
+    await expect(page.getByTestId("user-menu-trigger")).toHaveCount(0);
     await page.screenshot({ path: `${ARTIFACTS}/09-logout.png`, fullPage: true });
     expect(errors).toEqual([]);
   });
@@ -446,7 +508,7 @@ test.describe("M1 验收（MSW mock 状态）", () => {
 
   test("12. 错误密码：凭证错误不清空密码框；连续 5 次后锁定倒计时", async ({ page }) => {
     const errors = watchPageErrors(page);
-    await page.goto("/");
+    await page.goto("/login");
     await page.getByLabel("用户名", { exact: true }).fill("admin");
 
     for (let attempt = 1; attempt <= 5; attempt += 1) {

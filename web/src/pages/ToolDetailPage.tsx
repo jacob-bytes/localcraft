@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/useAuth";
 import { AlertCircle, Home, Lock, Pencil, RotateCcw } from "lucide-react";
 import * as React from "react";
 import { Link, useParams } from "react-router-dom";
@@ -266,12 +267,29 @@ function InfoRow({ label, children }: { label: string; children: React.ReactNode
 
 /** 右侧信息栏：下载、版本、SHA256、元信息、分享与作者操作（docs/04 §6.4）。 */
 function ToolSidebar({ detail }: { detail: ToolDetail }) {
+  const { status } = useAuth();
   const version = detail.current_version;
   const sha256 = version?.file_sha256 ?? null;
   const updatedAt = detail.last_version_at ?? detail.updated_at;
   // SPA 内 `window.location.href` 就是当前详情页地址，刷新后即最新值。
   const shareUrl = window.location.href;
   const canManage = detail.permissions.can_manage_versions;
+
+  /*
+   * 禁用原因要区分「没权限」与「没登录」。
+   *
+   * 匿名访客（门户默认允许未登录浏览）若看到「当前角色无下载权限」会以为
+   * 自己被禁用；实际只是没登录 —— 顶栏有登录入口，文案应当把人指过去。
+   * 服务端对这两种情况都返回 404（不泄漏资源存在性），所以只能由前端说清。
+   */
+  const downloadDisabledReason =
+    version === null
+      ? "该工具暂无可用版本"
+      : detail.permissions.can_download
+        ? undefined
+        : status === "unauthenticated"
+          ? "登录后可下载"
+          : "当前角色无下载权限";
 
   return (
     <div className="space-y-4 lg:sticky lg:top-20">
@@ -280,7 +298,7 @@ function ToolSidebar({ detail }: { detail: ToolDetail }) {
           slug={detail.slug}
           versionId={version?.id ?? null}
           disabled={!detail.permissions.can_download || version === null}
-          disabledReason={version === null ? "该工具暂无可用版本" : "当前角色无下载权限"}
+          disabledReason={downloadDisabledReason}
           fileName={version?.file_name ?? null}
           size={version?.file_size ?? null}
           ariaLabel={`下载 ${detail.name}`}

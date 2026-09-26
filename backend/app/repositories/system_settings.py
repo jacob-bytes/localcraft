@@ -60,7 +60,9 @@ SETTING_DEFAULTS: tuple[tuple[str, Any, str, bool, str], ...] = (
     ("security.lockout_minutes", 15, "int", False, "锁定时长（分钟）"),
     ("portal.site_name", "工具与 Skill 平台", "string", True, "站点名称"),
     ("portal.announcement_md", "", "string", True, "首页公告（Markdown）"),
-    ("portal.allow_anonymous_view", False, "bool", True, "是否允许未登录浏览门户"),
+    # 默认**允许**匿名浏览：门户主页不登录即可访问，下载等写操作仍需登录
+    # （FR-ACL-06）。改默认值走迁移 0005，不动已发布的 0002。
+    ("portal.allow_anonymous_view", True, "bool", True, "是否允许未登录浏览门户"),
     ("portal.allow_admin_view_private", True, "bool", False, "超管是否可见他人 private 工具"),
     ("portal.default_sort", "hot", "string", True, "门户默认排序"),
     ("portal.page_size", 24, "int", True, "门户每页条数"),

@@ -253,10 +253,39 @@ async def test_api_token_with_password_change_required_is_blocked(client) -> Non
 
 
 async def test_anonymous_portal_access_respects_setting(client) -> None:
-    """默认（false）匿名被拒；这里断言拒绝码是 UNAUTHENTICATED。"""
-    response = await client.get("/api/v1/categories")
-    assert response.status_code == 401
-    assert response.json()["code"] == "UNAUTHENTICATED"
+    """`/categories` 的匿名行为由 `portal.allow_anonymous_view` 决定。
+
+    默认值是 true（迁移 0005）：匿名放行。关掉之后必须回到 401 —— 两个分支都断言，
+    因为"关"失效是本轮改动最危险的回归。
+    """
+    from sqlalchemy import select as _select
+
+    from app.db.session import SessionLocal
+    from app.models.setting import SystemSetting
+
+    async def _set(value: bool) -> None:
+        async with SessionLocal() as session:
+            row = (
+                await session.execute(
+                    _select(SystemSetting).where(
+                        SystemSetting.key == "portal.allow_anonymous_view"
+                    )
+                )
+            ).scalar_one()
+            row.value = value
+            await session.commit()
+
+    # 默认：匿名可以读
+    allowed = await client.get("/api/v1/categories")
+    assert allowed.status_code == 200, allowed.text
+
+    await _set(False)
+    try:
+        denied = await client.get("/api/v1/categories")
+        assert denied.status_code == 401
+        assert denied.json()["code"] == "UNAUTHENTICATED"
+    finally:
+        await _set(True)
 
 
 async def test_disabled_user_jwt_is_rejected(client) -> None:

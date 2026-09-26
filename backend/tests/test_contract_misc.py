@@ -330,8 +330,14 @@ async def test_request_id_regenerated_when_invalid(client) -> None:
 
 
 async def test_request_id_appears_in_error_body(client) -> None:
-    response = await client.get("/api/v1/tools")  # 未登录 → 401
-    assert response.status_code == 401
+    """错误响应体里必须带 `request_id`，且与响应头一致。
+
+    用「不存在的 API 路径 → 404」作为载体，而不是原先的「未登录 → 401」：
+    后者依赖 `/api/v1/tools` 对匿名返回 401，而匿名浏览的默认值改成 true 之后
+    那条路径已经是 200 了。404 这个载体与鉴权配置无关，更稳。
+    """
+    response = await client.get("/api/v1/definitely-not-a-route")
+    assert response.status_code == 404
     assert response.json()["request_id"] == response.headers["X-Request-Id"]
 
 

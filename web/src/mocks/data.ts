@@ -2290,7 +2290,7 @@ export const MOCK_SETTINGS: MockSettingRecord[] = [
   },
   {
     key: "portal.allow_anonymous_view",
-    value: false,
+    value: true,
     value_type: "bool",
     is_public: true,
     description: "是否允许未登录浏览门户。",

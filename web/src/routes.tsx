@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { createBrowserRouter, Outlet } from "react-router-dom";
 
+import { AllowAnonymous } from "@/components/auth/AllowAnonymous";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import { RequireRole } from "@/components/auth/RequireRole";
 import { FullScreenLoader } from "@/components/common/PageSkeleton";
@@ -101,11 +102,10 @@ export const router = createBrowserRouter([
         ),
       },
       {
-        element: (
-          <RequireAuth>
-            <AppShell />
-          </RequireAuth>
-        ),
+        // 这里**不再**包 RequireAuth：门户首页与工具详情允许匿名访问（是否放行
+        // 由 AllowAnonymous 依 portal.allow_anonymous_view 判定），守卫因此下沉到
+        // 下面两层 —— 公开层用 AllowAnonymous，需要登录的用 RequireAuth。
+        element: <AppShell />,
         errorElement: <RouteErrorBoundary />,
         children: [
           {
@@ -115,99 +115,121 @@ export const router = createBrowserRouter([
              */
             errorElement: <RouteErrorBoundary />,
             children: [
-              { index: true, element: <PortalPage /> },
-              { path: "tools/:slug", element: <ToolDetailPage /> },
-              { path: "change-password", element: <ChangePasswordPage /> },
-
+              /* ---------- 公开层：匿名可看，是否放行由 portal.allow_anonymous_view 决定 ---------- */
               {
-                path: "me",
                 element: (
-                  <RequireRole roles={[...AUTHOR_ROLES]}>
+                  <AllowAnonymous>
                     <Outlet />
-                  </RequireRole>
+                  </AllowAnonymous>
                 ),
                 children: [
-                  { index: true, element: <ProfilePage /> },
-                  { path: "tools", element: <MyToolsPage /> },
-                  { path: "tools/new", element: <ToolEditorPage mode="create" /> },
-                  { path: "tools/:id/edit", element: <ToolEditorPage mode="edit" /> },
-                  { path: "tools/:id/versions", element: <VersionsPage /> },
+                  { index: true, element: <PortalPage /> },
+                  { path: "tools/:slug", element: <ToolDetailPage /> },
                 ],
               },
 
+              /* ---------- 以下需要登录 ---------- */
               {
-                path: "admin",
                 element: (
-                  <RequireRole roles={[...REVIEWER_ROLES]}>
-                    <AdminLayout />
-                  </RequireRole>
+                  <RequireAuth>
+                    <Outlet />
+                  </RequireAuth>
                 ),
                 children: [
-                  { index: true, element: <AdminIndexPage /> },
-                  { path: "approvals", element: <ApprovalsPage /> },
-                  { path: "approvals/history", element: <ApprovalHistoryPage /> },
-                  // approver 也能用的两项（docs/04 §5.2 的菜单分组）
-                  { path: "tools", element: <AdminToolsPage /> },
-                  { path: "categories", element: <CategoriesPage /> },
-                  { path: "tags", element: <TagsPage /> },
-                  // 以下全部是超管专属（服务端同样有 users:write / groups:write /
-                  // settings:write / admin:all 的 Scope 守卫）
+                  { path: "change-password", element: <ChangePasswordPage /> },
+
                   {
-                    path: "users",
+                    path: "me",
                     element: (
-                      <RequireRole roles={[...ADMIN_ROLES]}>
-                        <UsersPage />
+                      <RequireRole roles={[...AUTHOR_ROLES]}>
+                        <Outlet />
                       </RequireRole>
                     ),
+                    children: [
+                      { index: true, element: <ProfilePage /> },
+                      { path: "tools", element: <MyToolsPage /> },
+                      { path: "tools/new", element: <ToolEditorPage mode="create" /> },
+                      { path: "tools/:id/edit", element: <ToolEditorPage mode="edit" /> },
+                      { path: "tools/:id/versions", element: <VersionsPage /> },
+                    ],
                   },
+
                   {
-                    path: "groups",
+                    path: "admin",
                     element: (
-                      <RequireRole roles={[...ADMIN_ROLES]}>
-                        <GroupsPage />
+                      <RequireRole roles={[...REVIEWER_ROLES]}>
+                        <AdminLayout />
                       </RequireRole>
                     ),
+                    children: [
+                      { index: true, element: <AdminIndexPage /> },
+                      { path: "approvals", element: <ApprovalsPage /> },
+                      { path: "approvals/history", element: <ApprovalHistoryPage /> },
+                      // approver 也能用的两项（docs/04 §5.2 的菜单分组）
+                      { path: "tools", element: <AdminToolsPage /> },
+                      { path: "categories", element: <CategoriesPage /> },
+                      { path: "tags", element: <TagsPage /> },
+                      // 以下全部是超管专属（服务端同样有 users:write / groups:write /
+                      // settings:write / admin:all 的 Scope 守卫）
+                      {
+                        path: "users",
+                        element: (
+                          <RequireRole roles={[...ADMIN_ROLES]}>
+                            <UsersPage />
+                          </RequireRole>
+                        ),
+                      },
+                      {
+                        path: "groups",
+                        element: (
+                          <RequireRole roles={[...ADMIN_ROLES]}>
+                            <GroupsPage />
+                          </RequireRole>
+                        ),
+                      },
+                      {
+                        path: "whitelist",
+                        element: (
+                          <RequireRole roles={[...ADMIN_ROLES]}>
+                            <WhitelistPage />
+                          </RequireRole>
+                        ),
+                      },
+                      {
+                        path: "tokens",
+                        element: (
+                          <RequireRole roles={[...ADMIN_ROLES]}>
+                            <TokensPage />
+                          </RequireRole>
+                        ),
+                      },
+                      {
+                        path: "settings",
+                        element: (
+                          <RequireRole roles={[...ADMIN_ROLES]}>
+                            <SettingsPage />
+                          </RequireRole>
+                        ),
+                      },
+                      {
+                        path: "import-export",
+                        element: (
+                          <RequireRole roles={[...ADMIN_ROLES]}>
+                            <ImportExportPage />
+                          </RequireRole>
+                        ),
+                      },
+                      {
+                        path: "recycle-bin",
+                        element: (
+                          <RequireRole roles={[...ADMIN_ROLES]}>
+                            <RecycleBinPage />
+                          </RequireRole>
+                        ),
+                      },
+                    ],
                   },
-                  {
-                    path: "whitelist",
-                    element: (
-                      <RequireRole roles={[...ADMIN_ROLES]}>
-                        <WhitelistPage />
-                      </RequireRole>
-                    ),
-                  },
-                  {
-                    path: "tokens",
-                    element: (
-                      <RequireRole roles={[...ADMIN_ROLES]}>
-                        <TokensPage />
-                      </RequireRole>
-                    ),
-                  },
-                  {
-                    path: "settings",
-                    element: (
-                      <RequireRole roles={[...ADMIN_ROLES]}>
-                        <SettingsPage />
-                      </RequireRole>
-                    ),
-                  },
-                  {
-                    path: "import-export",
-                    element: (
-                      <RequireRole roles={[...ADMIN_ROLES]}>
-                        <ImportExportPage />
-                      </RequireRole>
-                    ),
-                  },
-                  {
-                    path: "recycle-bin",
-                    element: (
-                      <RequireRole roles={[...ADMIN_ROLES]}>
-                        <RecycleBinPage />
-                      </RequireRole>
-                    ),
-                  },
+
                 ],
               },
 

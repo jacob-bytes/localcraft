@@ -44,26 +44,34 @@ async def _set_setting(key: str, value: object) -> None:
 # ---------------------------------------------------------------------------
 # 未登录用户：由 portal.allow_anonymous_view 决定
 # ---------------------------------------------------------------------------
-async def test_anonymous_tools_requires_login_by_default(client) -> None:
-    """契约 §6：allow_anonymous_view=false 时返回 401。"""
-    response = await client.get(TOOLS)
-    assert response.status_code == 401
-    assert response.json()["code"] == "UNAUTHENTICATED"
+async def test_anonymous_tools_allowed_by_default(client, seeded) -> None:
+    """**新默认**：未登录即可浏览公开工具（FR-ACL-06 默认 true，迁移 0005）。
+
+    默认值是 1.0.0 之后改的：门户主页不登录即可访问，便于在内网里直接分享链接。
+    """
+    response = await client.get(TOOLS, params=seeded_params())
+    assert response.status_code == 200, response.text
+    body = response.json()
+    # 匿名只能看到 public
+    assert body["total"] == EXPECTED_VISIBLE["viewer"]
+    assert all(item["visibility"] == "public" for item in body["items"])
+    # 匿名不能下载
+    assert all(item["can_download"] is False for item in body["items"])
 
 
-async def test_anonymous_tools_allowed_when_setting_enabled(client) -> None:
-    await _set_setting("portal.allow_anonymous_view", True)
+async def test_anonymous_tools_requires_login_when_setting_disabled(client) -> None:
+    """契约 §6：默认值改掉之后，**「关」这条路径必须依然有效**。
+
+    这条是本轮改动里最需要守的东西 —— 守卫或开关写错的话，"关"会静默失效，
+    等于把所有部署都变成允许匿名访问。
+    """
+    await _set_setting("portal.allow_anonymous_view", False)
     try:
-        response = await client.get(TOOLS, params=seeded_params())
-        assert response.status_code == 200, response.text
-        body = response.json()
-        # 匿名只能看到 public
-        assert body["total"] == EXPECTED_VISIBLE["viewer"]
-        assert all(item["visibility"] == "public" for item in body["items"])
-        # 匿名不能下载
-        assert all(item["can_download"] is False for item in body["items"])
+        response = await client.get(TOOLS)
+        assert response.status_code == 401
+        assert response.json()["code"] == "UNAUTHENTICATED"
     finally:
-        await _set_setting("portal.allow_anonymous_view", False)
+        await _set_setting("portal.allow_anonymous_view", True)
 
 
 # ---------------------------------------------------------------------------
@@ -453,9 +461,18 @@ async def test_tags_returns_display_name(client, seeded) -> None:
     assert by_name["alpha"]["display_name"] == "ALPHA"
 
 
-async def test_tags_require_authentication(client) -> None:
-    response = await client.get(TAGS)
-    assert response.status_code == 401
+async def test_tags_require_login_when_anonymous_disabled(client) -> None:
+    """`/tags` 与 `/tools` 走同一个 `portal_access`：默认放行，关掉后 401。"""
+    allowed = await client.get(TAGS)
+    assert allowed.status_code == 200, allowed.text
+
+    await _set_setting("portal.allow_anonymous_view", False)
+    try:
+        denied = await client.get(TAGS)
+        assert denied.status_code == 401
+        assert denied.json()["code"] == "UNAUTHENTICATED"
+    finally:
+        await _set_setting("portal.allow_anonymous_view", True)
 
 
 async def test_login_helper_password_constant_is_used(client) -> None:

@@ -27,6 +27,7 @@ localcraft 把这件事收敛成一个内网站点：
 | 能力 | 说明 |
 | --- | --- |
 | **四种工具形态** | 文件包（zip / tar.gz / whl / exe）、Agent Skill 包（zip 内含 `SKILL.md`，服务端解压出文件树并渲染预览）、在线网页工具（内网 URL 直跳）、Prompt 模板（纯文本在线预览） |
+| **免登录浏览** | 门户首页与公开工具详情**默认免登录可看**（`portal.allow_anonymous_view`，管理员可关）；下载、上传、审批等仍需登录 —— 未登录只可能看到 `public` |
 | **三级可见性** | `public` 全员 / `restricted` 指定用户或用户组 / `private` 仅自己；超管可开关式查看 `private` 内容 |
 | **四角色 RBAC** | 超级管理员 / 审批管理员 / 普通用户 / 只读访客；管理员建号，**无自助注册**，首次登录强制改密 |
 | **版本管理** | SemVer 字符串手填（不强制格式）；同一工具可反复发新版本，**历史版本最多保留 10 份**，超出按最旧淘汰 |
@@ -110,6 +111,8 @@ bash preview.sh
 
 跑完打开 <http://127.0.0.1:8000>。首次会自动播种 **26 个演示工具 / 6 个账号**（含 8 个边界样本：无封面、超长名称、空文件树等）。
 
+**不用先登录**：门户首页默认免登录可看，下载时才需要登录（右上角有入口）。
+
 ```bash
 bash preview.sh --reset     # 丢弃预览数据重新来
 PORT=8090 bash preview.sh   # 换端口
@@ -185,6 +188,7 @@ LOCALCRAFT_SKIP_SYSTEMD=1 bash install.sh    # 跳过 useradd/chown/systemctl，
 | `ACCESS_TOKEN_MINUTES` / `REFRESH_TOKEN_DAYS` | `30` / `7` | 访问令牌与刷新令牌有效期 |
 | `COOKIE_SECURE` | `false` | 上 TLS 时置 `true`；直连明文 HTTP 保持 `false`，否则刷新 cookie 不会被带上 |
 | `API_DOCS_ENABLED` | `false` | 生产默认关闭 `/docs` |
+| `portal.allow_anonymous_view` | `true` | 是否允许未登录浏览门户。**在数据库 `system_settings` 里**，不是环境变量 |
 | `LOGIN_MAX_FAILURES` / `LOCKOUT_MINUTES` | `5` / `15` | 登录失败锁定策略 |
 | `DB_BUSY_TIMEOUT` | `5000` | SQLite 忙等待**毫秒**数 |
 | `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` | `5` / `5` | 连接池；仅 PostgreSQL 生效 |

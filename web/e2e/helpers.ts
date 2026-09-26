@@ -64,7 +64,12 @@ export async function login(
   credentials: Credentials = ADMIN,
   options: { goto?: boolean; expectPortal?: boolean } = {},
 ): Promise<void> {
-  if (options.goto ?? true) await page.goto("/");
+  /*
+   * 直接去 `/login`，**不要**再用 `goto("/")` 靠重定向。
+   * 门户默认允许匿名浏览（`portal.allow_anonymous_view`，迁移 0005），
+   * 访问 `/` 会直接渲染门户而不再跳登录页。
+   */
+  if (options.goto ?? true) await page.goto("/login");
   await expect(page.getByTestId("login-page")).toBeVisible();
   await page.getByLabel("用户名", { exact: true }).fill(credentials.username);
   await page.getByLabel("密码", { exact: true }).fill(credentials.password);

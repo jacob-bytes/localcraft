@@ -766,7 +766,7 @@ test.describe("M4 · 与后端 M5 对齐（mock 侧）", () => {
 test.describe("M3 · 角色与主题（#23 #24）", () => {
   test("approver 看不到超管专属菜单与页面", async ({ page }) => {
     const errors = watchPageErrors(page);
-    await page.goto("/");
+    await page.goto("/login");
     await page.getByLabel("用户名", { exact: true }).fill("wangwu");
     await page.getByLabel("密码", { exact: true }).fill("Author@12345");
     await page.getByRole("button", { name: "登录", exact: true }).click();

@@ -433,8 +433,34 @@ function tokenExpired() {
   return errorResponse(401, "TOKEN_EXPIRED", "登录状态已过期，请重新登录");
 }
 
-function isApprover(user: MockUser): boolean {
-  return user.roles.includes("approver") || user.roles.includes("superadmin");
+/**
+ * 门户是否允许匿名浏览。
+ *
+ * 与真实后端 `portal.allow_anonymous_view` 的默认值保持一致（迁移 0005 起为 true）。
+ * 关掉它时 mock 也必须回到「匿名 401」，否则 e2e 测不出「关」这条路径。
+ */
+const MOCK_ALLOW_ANONYMOUS_VIEW = true;
+
+/**
+ * 门户读接口的身份解析：匿名返回 `null`，而不是直接 401。
+ *
+ * 对应后端 `app/core/deps.py` 的 `portal_access` —— 匿名时看开关决定放行还是
+ * `UNAUTHENTICATED`。返回 `deny` 表示应当直接把该响应返回给调用方。
+ */
+function portalRead(request: Request): { user: MockUser | null; deny?: Response } {
+  const user = authenticate(request);
+  if (!user && !MOCK_ALLOW_ANONYMOUS_VIEW) {
+    return { user: null, deny: tokenExpired() };
+  }
+  return { user };
+}
+
+function isApprover(user: MockUser | null): boolean {
+  // 接受 null：门户读接口现在允许匿名，权限判定要能处理「没有身份」的情况
+  return (
+    user !== null &&
+    (user.roles.includes("approver") || user.roles.includes("superadmin"))
+  );
 }
 
 function pageOf(request: Request): { page: number; pageSize: number } {
@@ -522,12 +548,14 @@ function rejectedVersionOf(record: MockToolRecord): MockVersion | undefined {
   return [...record.versions].reverse().find((version) => version.status === "rejected");
 }
 
-function isOwner(record: MockToolRecord, user: MockUser): boolean {
-  return ownerOf(record).id === user.id;
+function isOwner(record: MockToolRecord, user: MockUser | null): boolean {
+  return user !== null && ownerOf(record).id === user.id;
 }
 
 /** `true` when the tool is visible to this user (public / owner / approver / ACL). */
-function canView(record: MockToolRecord, user: MockUser): boolean {
+function canView(record: MockToolRecord, user: MockUser | null): boolean {
+  // 匿名只可能看到 public —— 与后端 VisibilityContext.clause() 的 is_anonymous 分支一致
+  if (user === null) return record.acl_visibility === "public";
   if (isOwner(record, user) || isApprover(user)) return true;
   if (record.acl_visibility === "public") return true;
   if (record.acl_visibility === "private") return false;
@@ -536,7 +564,9 @@ function canView(record: MockToolRecord, user: MockUser): boolean {
   );
 }
 
-function canDownload(record: MockToolRecord, user: MockUser): boolean {
+function canDownload(record: MockToolRecord, user: MockUser | null): boolean {
+  // 匿名永远不能下载（契约 §6：即使开了匿名浏览也不行）
+  if (user === null) return false;
   // FR-ACL-05：viewer 角色即使在 public 工具上也不能下载，只能查看详情。
   if (user.roles.includes("viewer")) return false;
   if (isOwner(record, user) || isApprover(user)) return true;
@@ -548,13 +578,15 @@ function canDownload(record: MockToolRecord, user: MockUser): boolean {
   );
 }
 
-function canEdit(record: MockToolRecord, user: MockUser): boolean {
+function canEdit(record: MockToolRecord, user: MockUser | null): boolean {
+  // 匿名不是任何工具的作者
+  if (user === null) return false;
   if (isApprover(user)) return true;
   if (!isOwner(record, user)) return false;
   return record.status !== "pending" && record.status !== "pending_update";
 }
 
-function permissionsFor(record: MockToolRecord, user: MockUser): ToolPermissions {
+function permissionsFor(record: MockToolRecord, user: MockUser | null): ToolPermissions {
   const own = isOwner(record, user);
   return {
     can_edit: canEdit(record, user),
@@ -567,7 +599,7 @@ function permissionsFor(record: MockToolRecord, user: MockUser): ToolPermissions
   };
 }
 
-function toToolListItem(record: MockToolRecord, user: MockUser): ToolListItem {
+function toToolListItem(record: MockToolRecord, user: MockUser | null): ToolListItem {
   const base = toolSeedToListItem(record.seed);
   const pending = pendingVersionOf(record);
   return {
@@ -577,7 +609,8 @@ function toToolListItem(record: MockToolRecord, user: MockUser): ToolListItem {
     cover_url: coverUrlFor(record),
     current_version: currentVersionOf(record)?.version ?? null,
     file_size: currentVersionOf(record)?.file_size ?? null,
-    has_pending_version: (isOwner(record, user) || isApprover(user)) && pending !== undefined,
+    has_pending_version:
+      user !== null && (isOwner(record, user) || isApprover(user)) && pending !== undefined,
     can_download: canDownload(record, user),
     published_at: record.seed.published_at || null,
     updated_at: record.seed.updated_at || null,
@@ -709,7 +742,7 @@ function renderMarkdown(md: string): string {
   return html.join("\n");
 }
 
-function toToolDetail(record: MockToolRecord, user: MockUser): ToolDetail {
+function toToolDetail(record: MockToolRecord, user: MockUser | null): ToolDetail {
   const current = currentVersionOf(record);
   const pending = pendingVersionOf(record);
   return {
@@ -1819,7 +1852,7 @@ export const handlers = [
       site_name: "工具与 Skill 平台",
       announcement_md: "**本周五 20:00** 进行例行维护，期间门户只读。",
       auth_provider: "local",
-      allow_anonymous_view: false,
+      allow_anonymous_view: true,
       default_sort: "hot",
       page_size: 24,
       app_version: "1.0.0",
@@ -1827,7 +1860,7 @@ export const handlers = [
       features: {
         webapp_health_check: false,
         skill_preview: true,
-        anonymous_view: false,
+        anonymous_view: true,
         change_password: true,
       },
     };
@@ -2024,8 +2057,9 @@ export const handlers = [
   /* ---- portal list ---- */
   http.get(`${API}/tools`, async ({ request }) => {
     await delay(SIMULATED_LATENCY_MS);
-    const user = authenticate(request);
-    if (!user) return tokenExpired();
+    // 门户读接口：匿名按 MOCK_ALLOW_ANONYMOUS_VIEW 放行（对应后端 portal_access）
+    const { user, deny } = portalRead(request);
+    if (deny) return deny;
 
     const params = new URL(request.url).searchParams;
     const q = params.get("q") ?? "";
@@ -2070,15 +2104,33 @@ export const handlers = [
   /* ---- portal detail (CONTRACT §6.1) ---- */
   http.get(`${API}/tools/:slug`, async ({ request, params }) => {
     await delay(SIMULATED_LATENCY_MS);
-    const user = authenticate(request);
-    if (!user) return tokenExpired();
+    // 门户读接口：匿名按 MOCK_ALLOW_ANONYMOUS_VIEW 放行（对应后端 portal_access）
+    const { user, deny } = portalRead(request);
+    if (deny) return deny;
     const slug = String(params.slug);
 
     // `/tools/:slug/versions` and friends are more specific handlers, but MSW
     // matches in declaration order, so those are declared *before* this one.
     const record = findToolBySlug(slug);
     if (!record || record.deleted_at) return notFound("工具不存在或已被删除");
-    if (record.status !== "approved" && !isOwner(record, user) && !isApprover(user)) {
+
+    /*
+     * 状态维度，对应后端 `detail_scope_clause()`：
+     *   所有人（**含匿名**）：`approved` / `pending_update`
+     *   额外：owner / 审批人可见其余状态
+     *
+     * 原先这里只放行 `approved`，于是门户列表里可见的 `pending_update` 工具
+     * 点进去却 404 —— 与后端「列表里看得到 = 详情能打开」的口径矛盾。
+     * 匿名浏览打开后，这条不一致立刻表现为「点卡片进 404 页」。
+     *
+     * 已知的剩余简化：后端对 owner 也**不**通过门户详情暴露 `draft`/`rejected`
+     * （owner 走 `/me/tools/{id}`），mock 仍允许 owner 看到。这是改动之前就有的
+     * 偏差，与本条无关，暂不处理。
+     */
+    const visibleToAll =
+      record.status === "approved" || record.status === "pending_update";
+    const privileged = user !== null && (isOwner(record, user) || isApprover(user));
+    if (!visibleToAll && !privileged) {
       return notFound("工具不存在或已被删除");
     }
     if (!canView(record, user)) return notFound("工具不存在或已被删除");
@@ -2087,8 +2139,9 @@ export const handlers = [
 
   http.get(`${API}/tools/:slug/versions`, async ({ request, params }) => {
     await delay(80);
-    const user = authenticate(request);
-    if (!user) return tokenExpired();
+    // 门户读接口：匿名按 MOCK_ALLOW_ANONYMOUS_VIEW 放行（对应后端 portal_access）
+    const { user, deny } = portalRead(request);
+    if (deny) return deny;
     const record = findToolBySlug(String(params.slug));
     if (!record || record.deleted_at || !canView(record, user)) return notFound("工具不存在或已被删除");
     const versions = [...record.versions]
@@ -2099,8 +2152,9 @@ export const handlers = [
 
   http.get(`${API}/tools/:slug/versions/:version/skill-preview`, async ({ request, params }) => {
     await delay(80);
-    const user = authenticate(request);
-    if (!user) return tokenExpired();
+    // 门户读接口：匿名按 MOCK_ALLOW_ANONYMOUS_VIEW 放行（对应后端 portal_access）
+    const { user, deny } = portalRead(request);
+    if (deny) return deny;
     const record = findToolBySlug(String(params.slug));
     if (!record || record.deleted_at || !canView(record, user)) return notFound("工具不存在或已被删除");
     if (record.seed.tool_type !== "skill") {
@@ -2130,8 +2184,9 @@ export const handlers = [
 
   http.get(`${API}/tools/:slug/stats`, async ({ request, params }) => {
     await delay(60);
-    const user = authenticate(request);
-    if (!user) return tokenExpired();
+    // 门户读接口：匿名按 MOCK_ALLOW_ANONYMOUS_VIEW 放行（对应后端 portal_access）
+    const { user, deny } = portalRead(request);
+    if (deny) return deny;
     const record = findToolBySlug(String(params.slug));
     if (!record || record.deleted_at || !canView(record, user)) return notFound("工具不存在或已被删除");
     // Deterministic 30-day trend derived from the tool's own counters.
