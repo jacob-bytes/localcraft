@@ -1,0 +1,90 @@
+name: Release
+
+# 推 tag 即发 Release。
+#
+# 为什么要用 Actions 而不是手工点网页：Release 是 REST API 对象，git 协议调不了它。
+# 任何人只要能推 tag（SSH 或者有写权限的 token）就应该能发版，而不该依赖
+# 某个人的浏览器会话或者一枚长期 PAT。
+#
+# 用 runner 内置的 GITHUB_TOKEN，不引入任何 secret。
+
+on:
+  push:
+    tags: ["v*"]
+
+# GITHUB_TOKEN 默认权限是只读的，创建 Release 必须显式提权。
+# 若仓库设置里把 workflow 权限锁成了「只读」，这一句也救不了 —— 详见下文说明。
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: 创建 GitHub Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 需要完整历史，才能把 tag 的注释对象取出来（浅克隆拿不到）
+          fetch-depth: 0
+
+      - name: 幂等检查（已存在同名 Release 就跳过）
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Release ${GITHUB_REF_NAME} 已存在，跳过。"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 从 annotated tag 的注释生成标题与正文
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          set -euo pipefail
+          NOTES="$RUNNER_TEMP/notes.md"
+          git tag -l --format='%(contents)' "${GITHUB_REF_NAME}" > "$NOTES"
+
+          # 标题取第一条非空行；正文是其后的内容，顺带去掉开头的空行。
+          # 这样 `git tag -a v1.0.0 -m "..."` 写的东西就是 Release 的面貌，
+          # 不需要在仓库里再维护一份 release notes。
+          TITLE="$(grep -m1 -v '^[[:space:]]*$' "$NOTES" || true)"
+          if [ -z "$TITLE" ]; then
+            TITLE="localcraft ${GITHUB_REF_NAME}"
+            printf '%s\n' "$TITLE" > "$NOTES"
+          fi
+          tail -n +2 "$NOTES" | sed '/./,$!d' > "$RUNNER_TEMP/body.md"
+
+          # 正文为空时 gh 会报错，用标题兜一下
+          if [ ! -s "$RUNNER_TEMP/body.md" ]; then
+            printf '%s\n' "$TITLE" > "$RUNNER_TEMP/body.md"
+          fi
+
+          printf 'title=%s\n' "$TITLE" > "$RUNNER_TEMP/title.txt"
+          echo "标题: $TITLE"
+          echo "正文行数: $(wc -l < "$RUNNER_TEMP/body.md")"
+
+      - name: 创建 Release
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TITLE="$(grep -m1 -v '^[[:space:]]*$' "$RUNNER_TEMP/notes.md")"
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "$TITLE" \
+            --notes-file "$RUNNER_TEMP/body.md" \
+            --verify-tag \
+            --latest
+          gh release view "${GITHUB_REF_NAME}" --json url,isLatest \
+            --template '已创建: {{.url}}（latest={{.isLatest}}）{{"\n"}}'
+
+      # -----------------------------------------------------------------------
+      # 刻意**不**附离线发布包。
+      #
+      # 本项目的离线 wheelhouse 必须在**与目标机同版本同架构的 openEuler 构建机**
+      # 上产出（README D31），ubuntu runner 上产出的东西不满足这条约束，
+      # 附上来反而会让人以为可以直接拿去装。发布包由构建机产出后手工上传。
+      # -----------------------------------------------------------------------
