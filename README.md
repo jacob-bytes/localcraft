@@ -35,6 +35,31 @@ localcraft 把这件事收敛成一个内网站点：
 | **统计** | 下载量与浏览量走**内存聚合 + 定时批量落库**，不做逐请求自增写入 |
 | **管理 API** | 长效 API Token（`st_` 前缀，SHA256 落库，可吊销、可限 Scope）+ OpenAPI 自动文档 + 批量导入导出 |
 
+## 界面
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/02-portal.png" alt="工具门户"><br><sub><b>工具门户</b> —— 卡片墙 + 分类侧栏 + 全文检索，26 个演示工具</sub></td>
+<td width="50%"><img src="docs/images/04-tool-detail.png" alt="工具详情"><br><sub><b>工具详情</b> —— 版本时间线、Skill 包文件树、下载票据</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/images/05-my-tools.png" alt="我的工具"><br><sub><b>个人主页</b> —— 上传私有工具 / Skill，查看审批状态与历史版本</sub></td>
+<td width="50%"><img src="docs/images/06-approvals.png" alt="审批台"><br><sub><b>审批台</b> —— 全局开关「需审批 / 全放行」+ 用户白名单免审</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/images/07-users.png" alt="用户与权限"><br><sub><b>用户与权限</b> —— 四角色 RBAC、用户组、账号锁定与强制改密</sub></td>
+<td width="50%"><img src="docs/images/08-import-export.png" alt="批量导入导出"><br><sub><b>批量导入导出</b> —— 管理 API 的可视化对应，也可纯脚本调用</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/images/03-portal-dark.png" alt="暗色模式"><br><sub><b>暗色模式</b> —— 亮/暗/跟随系统三态；文本对比度复测浅色与深色各 0/812 不达标</sub></td>
+<td width="50%"><img src="docs/images/01-login.png" alt="登录页"><br><sub><b>登录</b> —— 无自助注册，管理员建号，首次登录强制改密</sub></td>
+</tr>
+</table>
+
+> 截图由 [`web/scripts/capture-screenshots.mjs`](web/scripts/capture-screenshots.mjs) 在真实后端 + 真实种子上生成，
+> 可随时重跑：先 `PORT=8099 bash preview.sh`，再 `cd web && PORT=8099 node scripts/capture-screenshots.mjs`。
+> 脚本会对每张图做自检（正文长度、卡片数、暗色主题是否生效），避免提交空白页或错误页。
+
 ## 技术栈
 
 **后端** Python 3.11 · FastAPI · SQLAlchemy 2.0（async）· Alembic · Pydantic v2 · uvicorn
