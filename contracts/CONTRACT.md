@@ -1932,3 +1932,81 @@ M9 报告「viewer 的用户菜单仍显示『个人中心 / 我的工具』，�
 （查看自己的资料本来就是所有已认证用户该有的能力），同时保留「我的工具」对它的限制。
 配套把 UserMenu 的「我的工具」对 `viewer` 隐藏。**属 web/ 改动，待下一轮一并处理，不单独开轮次**
 （`viewer` 是边缘角色，且不涉数据风险）。
+
+---
+
+## 26. M10 Checkpoint 裁定（PostgreSQL 方言修复）
+
+### 26.1 PostgreSQL 门禁已恢复为阻塞
+
+`.github/workflows/ci.yml` 的 `backend-postgres` 去掉了 `continue-on-error: true`。
+7 条全部修完，两种时区均 `0 failed`。
+
+**至此 PostgreSQL 才真正算「在 CI 上验证过」** —— 在此之前它只是「有个 job，
+失败了也不影响结论」，那与没有这个 job 的差别有限。
+
+### 26.2 ★ `docs/09` §16.4 的归因是错的（监控方文档缺陷，已更正）
+
+我在 §16.4 把那条 `is bound to a different event loop` 归因为
+`counter_service` 的队列 —— **这个归因是错的**，而它来自 M7 agent 的推测，
+我**没有核实就写进了文档**。
+
+真实根因（M10 查明）：报错的是 **SQLAlchemy `AsyncAdaptedQueuePool` 内部的
+`asyncio.Queue`**，成因是 `tests/conftest.py::_reset_engine_pool` 只对 SQLite
+调 `engine.dispose()`，PG 因此从不换池、新池队列绑定到当前 loop。
+`counter_service` 里**根本没有** `asyncio.Queue`。
+
+**已更正 `docs/09` §16.9**，并把更正本身写在那里（而不是悄悄改掉）。
+教训：**把 agent 的推测当成事实写进文档，与我自己犯错没有区别。**
+
+### 26.3 需要裁定的残留问题：导入/恢复路径不过超管守卫
+
+M10 报：`app/services/import_export_service.py::_replace_roles`（CSV 导入 / 恢复，
+`on_conflict=update`）整体替换角色，**不经过 `_cas_guard_last_superadmin`**，
+理论上可把最后一个超管降级。
+
+**监控方核实**：确认该文件里**没有** `LAST_SUPERADMIN` 相关代码，发现成立。
+
+**风险界定（已核实，不夸大）**：
+
+- **不是提权**：导入/恢复本身是超管操作。
+- **后果**是「系统失去最后一个超管 → 无人能进管理台」。
+- **但有恢复手段**：`app/cli.py` 有 `create-superadmin` 子命令（第 134 行），
+  可离线重建超管。因此严重度是**中低**，不是「不可恢复」。
+
+**裁定：本轮不修，登记为已知缺口。** 理由：正确的修法需要先回答一个**产品问题**
+——「从备份恢复时，若备份里只有 1 个超管该不该放行？」。合法的恢复**必须**允许
+低于当前数量。所以不能简单地给这条路径加同一个守卫。
+
+**建议的修法方向（待确认后实施）**：不在过程的每一步加守卫，而是在**导入事务提交前
+做一次终态检查** —— 若结果为「0 个活跃超管」则整体回滚并报错。这样既堵住「把自己
+锁在门外」的脚下雷，又不妨碍合法的恢复。
+**属 backend/ 改动，待下一轮处理。**
+
+### 26.4 `backend/dist/` 是陈旧构建产物（提醒，不修）
+
+`backend/dist/selftool-1.0.0/`（含 `drill/` 与离线 tar.gz）是 **M10 之前的代码快照**，
+里面仍是旧的「静默空转的 `reindex-search`」与「有 write-skew 的超管 CAS」。
+
+- 它**未被 git 跟踪**（`backend/.gitignore` 的 `dist/`），因此不影响仓库与 CI；
+- **但若从该目录取产物部署，则不含本轮任何修复**。发布前必须用
+  `scripts/make-release.sh` 重新构建。
+- 监控方已核实其未被跟踪、且 426 MB（本地构建残留）。
+
+### 26.5 监控方复核记录（独立执行）
+
+| 项 | 声称 | 实测 |
+| --- | --- | --- |
+| SQLite 全量 | 522 passed | **522 passed** ✅ |
+| PG · UTC | 521 passed / 1 skipped / 0 failed | **521 passed, 1 skipped** ✅ |
+| PG · Asia/Shanghai | 同上 | **521 passed, 1 skipped** ✅ |
+| ruff | 全绿 | **All checks passed!** ✅ |
+| `openapi.json` | 逐字节一致 | **md5 `8e9d5a08…` 与 M10 前一致**，79 paths / 99 ops ✅ |
+| P1 并发用例 | 3/3 passed | **连跑 8 次（交替时区、每次重建库）8/8 passed，稳定 0.49s，无 flaky 无死锁** ✅ |
+| P1 用例确实并发 | — | **已读源码确认**：`asyncio.gather(demote(admin_id), demote(second_id))`，两个协程各开独立 session/连接 ✅ |
+| P5 CLI 行为 | PG exit 1 / SQLite exit 0 | **PG `[error] …` exit 1；SQLite `[ ok ] …` exit 0** ✅ |
+| P1 修复前的失败 | — | **监控方在 M10 之前的 CI 日志中亲眼见到该用例在 PG 上失败**，故 before/after 成立 ✅ |
+
+**未复核（不得当作已验）**：openEuler / aarch64 目标硬件（本机仅 macOS aarch64 +
+Homebrew PG 16.14）；`psycopg` 本地 3.3.6 与 CI 的 `psycopg[binary]` 最新版差异；
+P2 的「后台任务重建」路径（无测试覆盖，仅独立脚本）。
