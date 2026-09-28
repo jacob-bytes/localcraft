@@ -2010,3 +2010,121 @@ M10 报：`app/services/import_export_service.py::_replace_roles`（CSV 导入 /
 **未复核（不得当作已验）**：openEuler / aarch64 目标硬件（本机仅 macOS aarch64 +
 Homebrew PG 16.14）；`psycopg` 本地 3.3.6 与 CI 的 `psycopg[binary]` 最新版差异；
 P2 的「后台任务重建」路径（无测试覆盖，仅独立脚本）。
+
+---
+
+## 27. M12 契约冻结（站点定制信息展示）
+
+本节由监控方在 **M12 开工前**冻结。背景：本平台是**通用件**，每个部署方都要
+把它变成「自己的」平台。用户明确选定范围：**副标题 + 修标签页标题 + 结构化页脚**，
+页脚**只出现在门户相关页**。
+
+### 27.1 三条会影响设计的既有事实（已核实，不要重新论证）
+
+1. **设置体系已经存在，不需要新机制**。`system_settings` 是带 `is_public` 标记的
+   KV 表；`GET /api/v1/meta` 只返回 `is_public = true` 的项；管理端设置页
+   （`web/src/components/admin/SettingsForm.tsx`）**完全由后端元信息驱动**
+   —— label 取 `description`、控件取 `value_type`、按前缀自动分组。
+   **因此新增 `portal.*` 设置项，管理端设置页零改动，会自动出现编辑器。**
+2. **新增设置项必须配一个迁移**。`app/repositories/system_settings.py` 的
+   `SETTING_DEFAULTS` 是权威清单，但迁移 `0002` 用的是**冻结快照**
+   （文件里明确写「本文件的数据是冻结快照，不 import 应用代码」）。
+   所以「加进 `SETTING_DEFAULTS`」不会让既有库拿到新行，**必须写迁移**。
+3. **`system_settings.value` 是 JSON 列**。迁移里**不要用裸 SQL 插入** ——
+   PostgreSQL 不接受 text→json（`0005` 的注释与 `docs/09` 都记了这个坑）。
+   用 SQLAlchemy Core：`sa.table("system_settings", sa.column("key", sa.String), …)`
+   且 value 列声明为 `sa.JSON`。
+
+### 27.2 新增 5 个设置项（全部 `portal.*`、全部 `is_public = true`、默认空串）
+
+| key | value_type | 默认值 | description（= 管理端 label） |
+| --- | --- | --- | --- |
+| `portal.site_subtitle` | string | `""` | 站点副标题（显示在门户与登录页，留空则不显示） |
+| `portal.footer_org` | string | `""` | 页脚·运营方 |
+| `portal.footer_contact_email` | string | `""` | 页脚·支持邮箱 |
+| `portal.footer_contact_phone` | string | `""` | 页脚·内线电话 |
+| `portal.footer_notice` | string | `""` | 页脚·备案号 / 版权声明 |
+
+**★ 全部默认空串，这是刻意的**：既有部署不做任何配置时，**视觉上零变化**
+（无副标题、无页脚）。「加个功能结果每个部署都多出一块空白」是不可接受的。
+
+### 27.3 `MetaResponse` 新增 5 个字段（向后兼容的新增，不改既有字段）
+
+```
+site_subtitle        : str   # 空串表示未配置
+footer_org           : str
+footer_contact_email : str
+footer_contact_phone : str
+footer_notice        : str
+```
+
+**版本号不是设置项** —— 页脚显示版本时直接取 `MetaResponse` 已有的 `app_version`。
+
+### 27.4 界面裁定（照做，不要自行发挥）
+
+**副标题**
+
+- 显示位置：**门户页 hero 区（H1 下方一行）** 与 **登录页（站点名下方一行）**。
+- **不放进顶栏** —— 顶栏高 56px，已容纳 logo、搜索、主题、用户菜单；
+  再塞一行副标题会挤压，收益不抵成本。
+- **为空时完全不渲染**（不留空元素、不占位）。
+
+**页脚**
+
+- 出现范围：**仅门户列表页与工具详情页**（用户选定）。
+  **不要**加到登录页、个人中心或管理台。
+- **★ 所有页脚字段都为空时，整个页脚不渲染。**
+- 语义用 `<footer>` 元素 + `aria-label="站点信息"`。
+- 邮箱渲染为 `mailto:`、电话渲染为 `tel:`，但**前端必须防御性处理**：
+  值不像邮箱/电话（含空格、中文、多个 `@` 等）时**退化为纯文本**，
+  不能因为管理员填错一个字符就让页脚渲染出坏链接或崩掉。
+- 版本号：页脚渲染时带上 `app_version`（如 `v1.0.0`）。它不算「页脚字段」——
+  判断「是否渲染页脚」时**只看那 4 个配置字段**，不看版本号。
+
+**标签页标题**
+
+- `document.title` **跟随 `portal.site_name`**；未配置时用既有默认值
+  「工具与 Skill 平台」。
+- **这是修一个已实测的缺陷**：现在 `<title>` 写死在 `index.html`，
+  全仓没有任何设置 `document.title` 的代码。实测改了 `portal.site_name` 后，
+  顶栏变了、**浏览器标签页没变**（监控方用真机预览验证，见 §27.5）。
+- 最低要求：**页面加载后**标题正确。**不要求**改设置后不刷新即时更新
+  （`/meta` 是 react-query 缓存的，刷新后正确即可）。
+
+### 27.5 两个实测约束（设计时必须知道）
+
+1. **★ Markdown 里的站内链接会被剥掉**。Markdown 管线是加固过的
+   （markdown-it `html:false` + DOMPurify 允许清单），但
+   `ALLOWED_URI_REGEXP = /^(?:https?|mailto):/i`。监控方实测：
+
+   | Markdown 写法 | 渲染结果 |
+   | --- | --- |
+   | `https://example.com/docs` | ✅ href 保留 |
+   | **`/tools/xxx`（站内）** | ❌ **href 被剥离**，只剩文字 |
+   | `mailto:ops@…` | ✅ 保留 |
+
+   **这正是页脚采用「结构化字段」而不是自由 Markdown 的原因**：
+   自由 Markdown 既不能做站内跳转，排版也不受控。
+   **本轮不要改 `ALLOWED_URI_REGEXP`** —— 放宽 sanitizer 有安全含义，需单独评估。
+
+2. **标签页标题缺陷的实测证据**（`portal.site_name` 临时改为「某事业部工具中心」）：
+
+   ```
+   顶栏文字      → "某事业部工具中心"     ✅ 跟随
+   logo aria     → "某事业部工具中心 首页" ✅ 跟随
+   浏览器标签页  → "工具与 Skill 平台"    ❌ 未跟随（已还原设置）
+   ```
+
+### 27.6 台账（判据见 §21）
+
+| 裁定 | 目标端 | 判据 | 证据 |
+| --- | --- | --- | --- |
+| 5 个设置项 key / 类型 / 默认空串 / public | 后端 | **A** | §27.2，M12 任务书开工前已含 |
+| 必须写迁移 0007（不能只改 `SETTING_DEFAULTS`） | 后端 | **A** | §27.1 事实 2，同上 |
+| 迁移用 Core + `sa.JSON`，不用裸 SQL | 后端 | **A** | §27.1 事实 3，同上 |
+| `/meta` 新增 5 字段，不动既有字段 | 后端 | **A** | §27.3，同上 |
+| 副标题位置（门户 hero + 登录页，不进顶栏） | 前端 | **A** | §27.4，同上 |
+| 页脚仅在门户相关页；字段全空则整体不渲染 | 前端 | **A** | §27.4，同上 |
+| 邮箱/电话防御性降级为纯文本 | 前端 | **A** | §27.4，同上 |
+| `document.title` 跟随站点名 | 前端 | **A** | §27.4，同上 |
+| 不改 `ALLOWED_URI_REGEXP` | 前端 | **A** | §27.5 约束 1，同上 |
