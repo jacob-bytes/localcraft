@@ -431,4 +431,8 @@ def test_alembic_creates_missing_parent_directory(tmp_path) -> None:
     assert nested_db.is_file(), "迁移后数据库文件应该已创建"
     assert data_dir.is_dir(), "DATA_DIR 应该被自动创建"
     assert _query(nested_db, "SELECT COUNT(*) FROM roles")[0][0] == 4
-    assert _query(nested_db, "SELECT COUNT(*) FROM system_settings")[0][0] == 25
+    # 25（迁移 0002 播种）+ 5（迁移 0007 的 M12 站点定制项）。
+    # 注意口径不是 `len(SETTING_DEFAULTS)` = 31：权威清单里的
+    # `images.signature_ttl_hours` **从来没有被任何迁移播种过**。
+    # 详见 tests/test_m12_portal_settings.py 的说明。
+    assert _query(nested_db, "SELECT COUNT(*) FROM system_settings")[0][0] == 30

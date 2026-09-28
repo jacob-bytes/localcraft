@@ -287,6 +287,13 @@ async def test_meta_exposes_only_public_settings(client) -> None:
         "app_version",
         "api_version",
         "features",
+        # M12（契约 §27.3）：站点定制的 5 个新字段 —— 只新增，既有字段未动。
+        # 逐字冻结在 tests/test_m12_portal_settings.py 里。
+        "site_subtitle",
+        "footer_org",
+        "footer_contact_email",
+        "footer_contact_phone",
+        "footer_notice",
     }
 
 

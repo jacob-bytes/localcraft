@@ -79,6 +79,24 @@ async def get_security_policy(session: AsyncSession) -> SecurityPolicy:
     )
 
 
+def _public_text(public: dict[str, object], key: str) -> str:
+    """`/meta` 的站点定制字段取值：**永远是 `str`**（契约 §27.3）。
+
+    只给 M12 新增的 5 个字段用，既有字段的行为一字未动。
+
+    为什么不直接 `str(public.get(key, ""))`（既有字段的写法）：`/meta` 是**公开**
+    端点，一个畸形值就会让整个门户白屏。两种情况必须挡住：
+
+      - JSON `null` → `str(None)` 会得到字面量 `"None"`，前端会把它当副标题显示；
+      - 非字符串（有人手工改库塞了个数字）→ pydantic v2 **不**做 int→str 强转，
+        会抛 ValidationError 变成 500。
+
+    两种都退化成空串 —— 与 §27.2 的默认值一致（空串 = 未配置 = 不渲染）。
+    """
+    value = public.get(key)
+    return value if isinstance(value, str) else ""
+
+
 async def get_meta(session: AsyncSession) -> MetaResponse:
     """`GET /api/v1/meta`（docs/03 §3.1）。
 
@@ -98,6 +116,14 @@ async def get_meta(session: AsyncSession) -> MetaResponse:
         page_size=int(public.get("portal.page_size", 24)),
         app_version=env_settings.localcraft_version,
         api_version="v1",
+        # M12 站点定制信息（契约 §27.3）：全部走**既有机制**（`is_public = true`
+        # 的设置项），不另写读取逻辑。未配置（行缺失）时回退空串 —— 与 §27.2
+        # 定的默认值一致，保证「既有部署不做任何配置时视觉上零变化」。
+        site_subtitle=_public_text(public, "portal.site_subtitle"),
+        footer_org=_public_text(public, "portal.footer_org"),
+        footer_contact_email=_public_text(public, "portal.footer_contact_email"),
+        footer_contact_phone=_public_text(public, "portal.footer_contact_phone"),
+        footer_notice=_public_text(public, "portal.footer_notice"),
         features=MetaFeatures(
             webapp_health_check=policy,
             skill_preview=True,

@@ -3766,12 +3766,32 @@
           "features": {
             "$ref": "#/components/schemas/MetaFeatures"
           },
+          "footer_contact_email": {
+            "title": "Footer Contact Email",
+            "type": "string"
+          },
+          "footer_contact_phone": {
+            "title": "Footer Contact Phone",
+            "type": "string"
+          },
+          "footer_notice": {
+            "title": "Footer Notice",
+            "type": "string"
+          },
+          "footer_org": {
+            "title": "Footer Org",
+            "type": "string"
+          },
           "page_size": {
             "title": "Page Size",
             "type": "integer"
           },
           "site_name": {
             "title": "Site Name",
+            "type": "string"
+          },
+          "site_subtitle": {
+            "title": "Site Subtitle",
             "type": "string"
           }
         },
@@ -3783,7 +3803,12 @@
           "default_sort",
           "page_size",
           "app_version",
-          "features"
+          "features",
+          "site_subtitle",
+          "footer_org",
+          "footer_contact_email",
+          "footer_contact_phone",
+          "footer_notice"
         ],
         "title": "MetaResponse",
         "type": "object"

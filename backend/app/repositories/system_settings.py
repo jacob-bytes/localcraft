@@ -12,7 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.setting import SystemSetting
 
 #: 设置项默认值（docs/02 §3.19 的设置项清单）。
-#: 迁移 0002 用同一份数据幂等插入，保证任何环境初始状态一致。
+#: 迁移 0002 用**冻结快照**幂等插入（它不 import 应用代码）。
+#: ★ 因此这里**只是权威清单，不是播种源**：新增设置项必须**同时**写一个迁移，
+#:   否则既有库拿不到新行（契约 §27.1 事实 2 —— M12 的 0007 就是这么来的）。
 #: 元组为 `(key, value, value_type, is_public, description)`。
 SETTING_DEFAULTS: tuple[tuple[str, Any, str, bool, str], ...] = (
     ("approval.mode", "require", "string", False, "approval.mode = require / auto_approve_all"),
@@ -59,6 +61,16 @@ SETTING_DEFAULTS: tuple[tuple[str, Any, str, bool, str], ...] = (
     ("security.login_max_failures", 5, "int", False, "连续登录失败锁定阈值"),
     ("security.lockout_minutes", 15, "int", False, "锁定时长（分钟）"),
     ("portal.site_name", "工具与 Skill 平台", "string", True, "站点名称"),
+    # M12（契约 §27.2）：站点定制信息。**全部默认空串是刻意的** ——
+    # 既有部署不做任何配置时视觉上零变化（无副标题、无页脚）。
+    # description 就是管理端的 label（设置页完全由后端元信息驱动，见契约 §27.1 事实 1）。
+    (
+        "portal.site_subtitle",
+        "",
+        "string",
+        True,
+        "站点副标题（显示在门户与登录页，留空则不显示）",
+    ),
     ("portal.announcement_md", "", "string", True, "首页公告（Markdown）"),
     # 默认**允许**匿名浏览：门户主页不登录即可访问，下载等写操作仍需登录
     # （FR-ACL-06）。改默认值走迁移 0005，不动已发布的 0002。
@@ -66,6 +78,12 @@ SETTING_DEFAULTS: tuple[tuple[str, Any, str, bool, str], ...] = (
     ("portal.allow_admin_view_private", True, "bool", False, "超管是否可见他人 private 工具"),
     ("portal.default_sort", "hot", "string", True, "门户默认排序"),
     ("portal.page_size", 24, "int", True, "门户每页条数"),
+    # 页脚 4 项（契约 §27.2）：结构化字段而非自由 Markdown ——
+    # Markdown 管线会剥掉站内链接（§27.5 约束 1），且排版不受控。
+    ("portal.footer_org", "", "string", True, "页脚·运营方"),
+    ("portal.footer_contact_email", "", "string", True, "页脚·支持邮箱"),
+    ("portal.footer_contact_phone", "", "string", True, "页脚·内线电话"),
+    ("portal.footer_notice", "", "string", True, "页脚·备案号 / 版权声明"),
     ("stats.download_log_retention_days", 180, "int", False, "下载明细保留天数"),
     ("stats.view_dedup_minutes", 60, "int", False, "浏览去重窗口（分钟）"),
     ("images.signature_ttl_hours", 168, "int", False, "图片签名 URL 有效期（小时），默认 7 天"),

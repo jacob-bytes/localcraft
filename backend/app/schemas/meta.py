@@ -43,3 +43,19 @@ class MetaResponse(BaseModel):
     app_version: str
     api_version: str = "v1"
     features: MetaFeatures
+
+    # ---- M12 站点定制信息（契约 §27.3）----
+    # **向后兼容的新增**：既有字段一个都没动。
+    # 全部 `str`、**未配置时为空串而不是 `null`** —— §27.2 定的默认值就是空串，
+    # 保持类型稳定，前端可以直接按字符串判空（不必处理 null）。
+    #
+    # 刻意**不给模型层默认值**（与 `api_version` / `MetaFeatures` 的写法不同）：
+    # 这 5 个字段服务端**永远**会填（空串也是值）。不给默认值 = 它们进
+    # openapi 的 `required`，前端 `check:api-types` 生成的是 `field: string`
+    # 而不是 `field?: string` —— 后者会逼前端写一堆 `?? ""` 或 `?.`。
+    # 版本号**不是**设置项：页脚要显示版本时取上面已有的 `app_version`。
+    site_subtitle: str
+    footer_org: str
+    footer_contact_email: str
+    footer_contact_phone: str
+    footer_notice: str
