@@ -2209,6 +2209,64 @@ function csvCell(value: string): string {
 }
 
 /* -------------------------------------------------------------------------- */
+/* 站点定制信息（M12 · mock 侧可编程覆盖）                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * M12 要验的是「**未配置时零渲染**」与「**配置后正确渲染**」两类相反的路径，
+ * 而 mock 的 `/meta` 只有一个静态默认值。所以这里给 `site_name` 与 §27.3 那 5 个
+ * 字段加一层**可编程覆盖**：e2e 在导航前用 `addInitScript` 往 `localStorage`
+ * 写一个 JSON，`/meta` 每次响应时读取它（与 §M8 的 `loadEngagement()` 同一套做法，
+ * 见 `web/e2e/helpers.ts` 的 `setSiteConfig()`）。
+ *
+ * 为什么不做成 `POST /__mock__/site-config` 控制端点：`/meta` 是 react-query
+ * `staleTime: Infinity` 的**首屏请求**，端点式写入必须「先加载页面 → 写配置 → 再
+ * 整页导航」三步，而且第一次加载就已经请求过一次；`addInitScript` 在文档脚本
+ * 之前生效，一次导航即可，也就没有「改完没生效」的时序空隙。
+ *
+ * 只认识的字段会被接受，未知字段 / 非字符串值一律忽略 —— 让 e2e 的笔误表现为
+ * 「mock 没生效」这种显性失败，而不是悄悄塞进一个 wrong-typed 字段。
+ */
+type MockSiteConfig = Pick<
+  Meta,
+  | "site_name"
+  | "site_subtitle"
+  | "footer_org"
+  | "footer_contact_email"
+  | "footer_contact_phone"
+  | "footer_notice"
+>;
+
+const SITE_CONFIG_STORAGE_KEY = "localcraft.msw.site-config";
+
+const SITE_CONFIG_FIELDS: readonly (keyof MockSiteConfig)[] = [
+  "site_name",
+  "site_subtitle",
+  "footer_org",
+  "footer_contact_email",
+  "footer_contact_phone",
+  "footer_notice",
+];
+
+function loadSiteConfig(): Partial<MockSiteConfig> {
+  const configured: Partial<MockSiteConfig> = {};
+  try {
+    const raw = window.localStorage.getItem(SITE_CONFIG_STORAGE_KEY);
+    if (!raw) return configured;
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return configured;
+    const record = parsed as Record<string, unknown>;
+    for (const field of SITE_CONFIG_FIELDS) {
+      const value = record[field];
+      if (typeof value === "string") configured[field] = value;
+    }
+  } catch {
+    /* 未配置 / JSON 损坏 —— 都当作「未配置」，落回默认值 */
+  }
+  return configured;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Handlers                                                                   */
 /* -------------------------------------------------------------------------- */
 
@@ -2281,8 +2339,15 @@ export const handlers = [
   /* ---- meta ---- */
   http.get(`${API}/meta`, async () => {
     await delay(30);
+    const configured = loadSiteConfig();
     const meta: Meta = {
-      site_name: "工具与 Skill 平台",
+      site_name: configured.site_name ?? "工具与 Skill 平台",
+      /* M12（CONTRACT §27.2）：5 个新设置项默认空串，既有部署不配置时视觉零变化。 */
+      site_subtitle: configured.site_subtitle ?? "",
+      footer_org: configured.footer_org ?? "",
+      footer_contact_email: configured.footer_contact_email ?? "",
+      footer_contact_phone: configured.footer_contact_phone ?? "",
+      footer_notice: configured.footer_notice ?? "",
       announcement_md: "**本周五 20:00** 进行例行维护，期间门户只读。",
       auth_provider: "local",
       allow_anonymous_view: true,

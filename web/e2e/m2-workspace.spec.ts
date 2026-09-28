@@ -264,6 +264,20 @@ test.describe("M2 · 个人中心与编辑器", () => {
     await expect(page).toHaveURL(/\/me$/);
     await expect(page.getByTestId("profile-page")).toBeVisible();
 
+    /*
+     * 等上一次选择触发的**关闭动画真正结束**，再重新打开菜单。
+     *
+     * 为什么必须等（监控方实测的 flake，不是猜测）：Radix DropdownMenu 关闭带一小段
+     * 动画。若在这段动画期间点触发器，`onOpenChange` 会被当成「关闭」而不是「打开」，
+     * 菜单最终停在关闭态 —— 于是下面那句 `menuitem 我的工具` 永远解析不到可点元素，
+     * 一直重试到 45s 测试超时。实测症状正是
+     * `element is not stable` → `element was detached from the DOM`，
+     * 而网络请求数与布局高度都稳定（排除了轮询与布局抖动）。
+     *
+     * 复现率：本条 `--repeat-each=10 --workers=1` 下约 3~4 次失败；加上这句等待后 0 次。
+     */
+    await expect(page.getByRole("menu")).toHaveCount(0);
+
     await page.getByTestId("user-menu-trigger").click();
     await page.getByRole("menuitem", { name: "我的工具" }).click();
     await expect(page).toHaveURL(/\/me\/tools$/);

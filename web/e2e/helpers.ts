@@ -127,3 +127,40 @@ export function trackRequests(page: Page, pattern: string | RegExp): { count: ()
 export function urlHasParam(page: Page, key: string, value: string): boolean {
   return new URL(page.url()).searchParams.get(key) === value;
 }
+
+/* -------------------------------------------------------------------------- */
+/* M12 · 站点定制信息（CONTRACT §27）                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 可编程的 `/meta` 覆盖项 —— 与 `src/mocks/handlers.ts` 的 `MockSiteConfig`
+ * 逐字对应（这里刻意不 import 那个模块：它是 dev-only 的 MSW 代码，不该被
+ * Playwright 测试进程加载）。
+ */
+export interface MockSiteConfig {
+  site_name?: string;
+  site_subtitle?: string;
+  footer_org?: string;
+  footer_contact_email?: string;
+  footer_contact_phone?: string;
+  footer_notice?: string;
+}
+
+/** 必须与 `src/mocks/handlers.ts` 的 `SITE_CONFIG_STORAGE_KEY` 一致。 */
+export const MOCK_SITE_CONFIG_KEY = "localcraft.msw.site-config";
+
+/**
+ * 让 mock 的 `/meta` 返回「已配置」的站点信息（M12 的 F1~F3 都靠它构造场景）。
+ *
+ * **必须在任何 `page.goto` 之前调用**：走 `addInitScript` 在文档脚本之前写入
+ * `localStorage`，`/meta` 的 mock 处理器每次响应时读它。多次调用时按注册顺序执行、
+ * 后写覆盖先写 —— 同一个用例里想换一组配置，再写一次然后重新导航即可。
+ */
+export async function setSiteConfig(page: Page, config: MockSiteConfig): Promise<void> {
+  await page.addInitScript(
+    (payload: { key: string; value: string }) => {
+      window.localStorage.setItem(payload.key, payload.value);
+    },
+    { key: MOCK_SITE_CONFIG_KEY, value: JSON.stringify(config) },
+  );
+}

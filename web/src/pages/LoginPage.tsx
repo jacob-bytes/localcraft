@@ -26,7 +26,7 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/useAuth";
-import { siteName, useMeta } from "@/hooks/useMeta";
+import { siteName, siteSubtitle, useMeta } from "@/hooks/useMeta";
 import { formatCountdown } from "@/lib/format";
 import { safeRedirectPath } from "@/lib/navigation";
 
@@ -50,6 +50,7 @@ type LoginValues = z.infer<typeof loginSchema>;
 export default function LoginPage() {
   const { status, user, login } = useAuth();
   const { data: meta } = useMeta();
+  const subtitle = siteSubtitle(meta);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const redirectTo = safeRedirectPath(searchParams.get("redirect"), "/");
@@ -138,6 +139,12 @@ export default function LoginPage() {
             <Boxes aria-hidden="true" className="size-5" />
           </span>
           <CardTitle className="text-xl">{siteName(meta)}</CardTitle>
+          {/* M12 · F1：副标题在站点名下方一行（CONTRACT §27.4）。为空时整行不渲染。 */}
+          {subtitle ? (
+            <p data-testid="site-subtitle" className="text-sm text-muted-foreground">
+              {subtitle}
+            </p>
+          ) : null}
           <CardDescription>使用内网账号登录，浏览与下载工具、Skill 和提示词</CardDescription>
         </CardHeader>
 

@@ -49,7 +49,7 @@ import {
 } from "@/components/ui/sheet";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useDebounce } from "@/hooks/useDebounce";
-import { useMeta } from "@/hooks/useMeta";
+import { siteSubtitle, useMeta } from "@/hooks/useMeta";
 import { TOOL_TYPE_META } from "@/lib/toolMeta";
 import { cn } from "@/lib/utils";
 
@@ -95,6 +95,7 @@ interface AppliedPatch {
 export default function PortalPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { data: meta } = useMeta();
+  const subtitle = siteSubtitle(meta);
 
   /* ---- read state from the URL ---- */
   const q = searchParams.get("q") ?? "";
@@ -279,6 +280,13 @@ export default function PortalPage() {
         <h1 id="portal-hero-title" className="text-2xl font-semibold tracking-tight">
           发现内网工具与 Skill
         </h1>
+        {/* M12 · F1：副标题紧跟 H1（CONTRACT §27.4）。未配置时**不渲染元素**，
+            不是渲染一个空 <p> —— 空元素会留下 margin，等于给既有部署加了一行空隙。 */}
+        {subtitle ? (
+          <p data-testid="site-subtitle" className="mt-1 text-base text-muted-foreground">
+            {subtitle}
+          </p>
+        ) : null}
         <p className="mt-1 text-sm text-muted-foreground">
           搜索工具名称、简介与标签，或按分类、类型、标签筛选。
         </p>

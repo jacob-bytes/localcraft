@@ -174,6 +174,19 @@ export interface MetaFeatures {
 
 export interface Meta {
   site_name: string;
+  /*
+   * M12 站点定制信息（CONTRACT §27.3）。后端与前端并行开工，字段名以契约冻结的
+   * 那一份为准 —— 5 个字段都是**必填的 `string`**，**空串表示未配置**（没有 null）。
+   *
+   * 渲染端一律按 trim 后的空串判断「未配置」：`footer_*` 四个字段全空时整个页脚
+   * 不渲染、`site_subtitle` 为空时连元素都不渲染（§27.2 / §27.4）。
+   * 版本号不是设置项，继续取既有的 `app_version`（§27.3）。
+   */
+  site_subtitle: string;
+  footer_org: string;
+  footer_contact_email: string;
+  footer_contact_phone: string;
+  footer_notice: string;
   announcement_md: string;
   auth_provider: AuthProvider;
   allow_anonymous_view: boolean;

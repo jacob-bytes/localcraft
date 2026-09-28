@@ -127,8 +127,19 @@ export const router = createBrowserRouter([
                   </AllowAnonymous>
                 ),
                 children: [
-                  { index: true, element: <PortalPage /> },
-                  { path: "tools/:slug", element: <ToolDetailPage /> },
+                  /*
+                   * M12 · F2（CONTRACT §27.4）：站点页脚**只**出现在门户列表页与工具
+                   * 详情页。范围写在路由表上（`handle.siteFooter`），由 `AppShell`
+                   * 读取 —— 页脚因此渲染在 `<main>` 之外（`footer` 只有在 `main`
+                   * 之外才映射 `contentinfo` 地标）。个人中心 / 管理台 / 登录页没有
+                   * 这个标记，也就一个 `<footer>` 都不会有。
+                   */
+                  { index: true, element: <PortalPage />, handle: { siteFooter: true } },
+                  {
+                    path: "tools/:slug",
+                    element: <ToolDetailPage />,
+                    handle: { siteFooter: true },
+                  },
                 ],
               },
 
