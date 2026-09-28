@@ -128,17 +128,19 @@ export const router = createBrowserRouter([
                 ),
                 children: [
                   /*
-                   * M12 · F2（CONTRACT §27.4）：站点页脚**只**出现在门户列表页与工具
-                   * 详情页。范围写在路由表上（`handle.siteFooter`），由 `AppShell`
-                   * 读取 —— 页脚因此渲染在 `<main>` 之外（`footer` 只有在 `main`
-                   * 之外才映射 `contentinfo` 地标）。个人中心 / 管理台 / 登录页没有
-                   * 这个标记，也就一个 `<footer>` 都不会有。
+                   * M12 · F2 建立、M13 按 §28.6 修正：页脚元素本身**全站渲染**（版本行
+                   * 始终在），只有 4 个门户配置字段（`footer_org` / 邮箱 / 电话 /
+                   * 备案号）限于门户列表页与工具详情页。范围写在路由表上
+                   * （`handle.portalFooterFields`），由 `AppShell` 读取，页脚因此渲染在
+                   * `<main>` 之外（`footer` 只有在 `main` 之外才映射 `contentinfo` 地标）。
+                   * 个人中心 / 管理台没有这个标记 —— 它们有版本行与标语，但不渲染那 4 个
+                   * 字段；登录页不在 `AppShell` 之下，因此整个页脚都没有。
                    */
-                  { index: true, element: <PortalPage />, handle: { siteFooter: true } },
+                  { index: true, element: <PortalPage />, handle: { portalFooterFields: true } },
                   {
                     path: "tools/:slug",
                     element: <ToolDetailPage />,
-                    handle: { siteFooter: true },
+                    handle: { portalFooterFields: true },
                   },
                 ],
               },

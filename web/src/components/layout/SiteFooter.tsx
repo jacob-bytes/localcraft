@@ -1,29 +1,38 @@
 import { useMeta } from "@/hooks/useMeta";
 
 /**
- * M12 · F2 —— 站点页脚（CONTRACT §27.2 / §27.3 / §27.4）。
+ * M12 · F2 建立、**M13 按 §28.6 重构** —— 站点页脚（CONTRACT §27.4 / §28.6）。
  *
- * 三件事是这个组件存在的理由，改动前先读一遍：
+ * M13 改了什么、为什么（改之前先读这一段）：
  *
- * 1. **范围**：页脚**只出现在门户列表页与工具详情页**（§27.4 用户裁定）。
- *    它因此不挂在某条页面自己的 JSX 里，而是由 `AppShell` 按路由 `handle`
- *    （`siteFooter: true`）判断、并渲染在 `<main>` **之外** —— 这样 `<footer>`
- *    才是真正的 `contentinfo` 地标（ARIA 规定 `footer` 落在 `main` 之内时不映射
- *    地标角色），登录页 / 个人中心 / 管理台则一个 `<footer>` 都没有。
+ * M12 时 §27.4 裁定「页脚**只**出现在门户列表页与工具详情页、四个字段全空则整个页脚
+ * 不渲染」，于是 `AppShell` 里原本的**全局页脚**（`localcraft v… · API …` + 写死的
+ * 「内网工具与 Skill 共享平台」）被删掉了。§28.1 记录了根因：监控方写 §27 时漏看了
+ * 这个既有页脚，「不配置时视觉零变化」与「页脚只在门户相关页」因此自相矛盾。
  *
- * 2. **★ 四个配置字段全空 ⇒ 整个页脚不渲染**（§27.4）。判断只看
- *    `footer_org` / `footer_contact_email` / `footer_contact_phone` /
- *    `footer_notice` —— **版本号不算依据**，否则每个既有部署都会凭 `app_version`
- *    多出一块页脚，违背 §27.2「不配置时视觉零变化」。只含空白（`"   "`）的值按
- *    未配置处理：渲染出来只是一块看不见的空隙。
+ * §28.6 冻结的最终形态是**一个 `<footer>`，内容分两组**：
  *
- * 3. **★ 邮箱 / 电话防御性降级**（§27.4）。管理员填错一个字符，不允许让页脚出现
- *    一个点不开的 `mailto:` / `tel:`，也不允许整个页脚崩掉：值不像邮箱 / 电话时
- *    **退化为纯文本**（内容照旧可见，只是不可点）。
+ * | 内容 | 范围 | 条件 |
+ * | --- | --- | --- |
+ * | `localcraft v{app_version}` · `API {api_version}` | **所有 AppShell 页** | 始终 |
+ * | `portal.footer_tagline`（第 6 个设置项） | **所有 AppShell 页** | 非空时 |
+ * | 4 个 `footer_*` 配置字段 | **仅门户列表页与工具详情页** | 各自非空时 |
+ *
+ * 因此：
+ *
+ * 1. **本组件不再有「整体不渲染」的分支** —— 版本行始终在，页脚元素就始终渲染。
+ *    §27.4 那条「字段全空则整个页脚不渲染」**已废止**。
+ * 2. 4 个配置字段的范围由调用方决定（`AppShell` 读路由 `handle.portalFooterFields`，
+ *    见 `routes.tsx`），所以它们与版本行**同处一个 `<footer>`**，不是第二个页脚元素。
+ * 3. `<footer>` 渲染在 `<main>` **之外**（`AppShell` 负责）：ARIA 规定 `footer`
+ *    落在 `main` 之内时不映射 `contentinfo` 地标。
+ * 4. **邮箱 / 电话防御性降级**（§27.4 仍有效，§28.6 重申）：管理员填错一个字符，
+ *    不允许页脚出现点不开的 `mailto:` / `tel:`，也不允许整个页脚崩掉 ——
+ *    值不像邮箱 / 电话时**退化为纯文本**（内容照旧可见，只是不可点）。
  *
  * 取值全部走结构化字段而不是 Markdown —— §27.5 约束 1：Markdown 的
  * `ALLOWED_URI_REGEXP` 只放行 `https?` 与 `mailto:`，站内链接的 href 会被剥掉，
- * 而且排版不受控。**本轮不要为了页脚去放宽 sanitizer。**
+ * 而且排版不受控。**不要为了页脚去放宽 sanitizer。**
  */
 
 /**
@@ -55,59 +64,93 @@ function configured(value: string | undefined): string {
   return value?.trim() ?? "";
 }
 
-export function SiteFooter() {
+export interface SiteFooterProps {
+  /**
+   * `true` 时额外渲染 4 个 `footer_*` 配置字段（§28.6：仅门户列表页与工具详情页）。
+   *
+   * 版本行与标语**不受这个开关影响** —— 它们在所有 AppShell 页都渲染。
+   */
+  portalFields?: boolean;
+}
+
+export function SiteFooter({ portalFields = false }: SiteFooterProps) {
   const { data: meta } = useMeta();
 
+  /* 系统标识（全站）：§28.6 —— 版本行与标语不看 `portalFields`。 */
+  const appVersion = configured(meta?.app_version);
+  const apiVersion = configured(meta?.api_version);
+  const tagline = configured(meta?.footer_tagline);
+
+  /* 门户信息（仅门户相关页）：§28.6。 */
   const org = configured(meta?.footer_org);
   const email = configured(meta?.footer_contact_email);
   const phone = configured(meta?.footer_contact_phone);
   const notice = configured(meta?.footer_notice);
 
-  /* ★ §27.4：只看这 4 个配置字段，版本号不参与判断。 */
-  if (!org && !email && !phone && !notice) return null;
+  /*
+   * 版本行的两段各自判定：`/meta` 尚未返回（或后端某个版本字段为空）时宁可少一段，
+   * 也不渲染出 `localcraft v · API` 这种残句。`/meta` 返回后两段都在（它们是
+   * `MetaResponse` 的既有必填字段），所以「所有 AppShell 页都有版本行」成立。
+   */
+  const versionLine = [
+    appVersion ? `localcraft v${appVersion}` : "",
+    apiVersion ? `API ${apiVersion}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
-  const version = configured(meta?.app_version);
+  const showOrgGroup = portalFields && (org !== "" || notice !== "");
+  const showContactGroup = portalFields && (email !== "" || phone !== "");
   const emailLooksValid = EMAIL_PATTERN.test(email);
   const phoneLooksValid = PHONE_PATTERN.test(phone);
 
   return (
     <footer aria-label="站点信息" data-testid="site-footer" className="border-t">
-      <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-x-8 gap-y-2 px-4 py-6 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
+      <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-x-8 gap-y-2 px-4 py-6 text-xs text-muted-foreground sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:px-6 lg:px-8">
         <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-4">
-          {org ? <span data-testid="site-footer-org">{org}</span> : null}
-          {notice ? <span data-testid="site-footer-notice">{notice}</span> : null}
+          {versionLine ? (
+            <span data-testid="site-footer-version">{versionLine}</span>
+          ) : null}
+          {tagline ? <span data-testid="site-footer-tagline">{tagline}</span> : null}
         </div>
 
-        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-4">
-          {email ? (
-            <span>
-              支持邮箱{" "}
-              {emailLooksValid ? (
-                <a data-testid="site-footer-email" className={LINK_CLASS} href={`mailto:${email}`}>
-                  {email}
-                </a>
-              ) : (
-                /* 降级：值照旧显示，但**不生成链接**。 */
-                <span data-testid="site-footer-email">{email}</span>
-              )}
-            </span>
-          ) : null}
+        {showOrgGroup ? (
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-4">
+            {org ? <span data-testid="site-footer-org">{org}</span> : null}
+            {notice ? <span data-testid="site-footer-notice">{notice}</span> : null}
+          </div>
+        ) : null}
 
-          {phone ? (
-            <span>
-              内线电话{" "}
-              {phoneLooksValid ? (
-                <a data-testid="site-footer-phone" className={LINK_CLASS} href={`tel:${phone}`}>
-                  {phone}
-                </a>
-              ) : (
-                <span data-testid="site-footer-phone">{phone}</span>
-              )}
-            </span>
-          ) : null}
+        {showContactGroup ? (
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-4">
+            {email ? (
+              <span>
+                支持邮箱{" "}
+                {emailLooksValid ? (
+                  <a data-testid="site-footer-email" className={LINK_CLASS} href={`mailto:${email}`}>
+                    {email}
+                  </a>
+                ) : (
+                  /* 降级：值照旧显示，但**不生成链接**。 */
+                  <span data-testid="site-footer-email">{email}</span>
+                )}
+              </span>
+            ) : null}
 
-          {version ? <span data-testid="site-footer-version">v{version}</span> : null}
-        </div>
+            {phone ? (
+              <span>
+                内线电话{" "}
+                {phoneLooksValid ? (
+                  <a data-testid="site-footer-phone" className={LINK_CLASS} href={`tel:${phone}`}>
+                    {phone}
+                  </a>
+                ) : (
+                  <span data-testid="site-footer-phone">{phone}</span>
+                )}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </footer>
   );

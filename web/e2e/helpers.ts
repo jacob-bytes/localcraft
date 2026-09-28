@@ -129,7 +129,7 @@ export function urlHasParam(page: Page, key: string, value: string): boolean {
 }
 
 /* -------------------------------------------------------------------------- */
-/* M12 · 站点定制信息（CONTRACT §27）                                          */
+/* M12 · 站点定制信息（CONTRACT §27）；M13 按 §28.4 加 footer_tagline           */
 /* -------------------------------------------------------------------------- */
 
 /**
@@ -140,6 +140,8 @@ export function urlHasParam(page: Page, key: string, value: string): boolean {
 export interface MockSiteConfig {
   site_name?: string;
   site_subtitle?: string;
+  /** M13（§28.4）：第 6 个设置项；mock 的默认值是原写死的标语，不是空串。 */
+  footer_tagline?: string;
   footer_org?: string;
   footer_contact_email?: string;
   footer_contact_phone?: string;

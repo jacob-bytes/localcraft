@@ -175,14 +175,20 @@ export interface MetaFeatures {
 export interface Meta {
   site_name: string;
   /*
-   * M12 站点定制信息（CONTRACT §27.3）。后端与前端并行开工，字段名以契约冻结的
-   * 那一份为准 —— 5 个字段都是**必填的 `string`**，**空串表示未配置**（没有 null）。
+   * M12 站点定制信息（CONTRACT §27.3）；M13 按 §28.4 增加 `footer_tagline`。
+   * 后端与前端并行开工，字段名以契约冻结的那一份为准 —— 6 个字段都是**必填的
+   * `string`**，**空串表示未配置**（没有 null）。
    *
-   * 渲染端一律按 trim 后的空串判断「未配置」：`footer_*` 四个字段全空时整个页脚
-   * 不渲染、`site_subtitle` 为空时连元素都不渲染（§27.2 / §27.4）。
-   * 版本号不是设置项，继续取既有的 `app_version`（§27.3）。
+   * 渲染端一律按 trim 后的空串判断「未配置」：`site_subtitle` 与 `footer_tagline`
+   * 为空时连元素都不渲染；`footer_org` / 邮箱 / 电话 / 备案号 各自为空时各自不渲染。
+   *
+   * **页脚不再有「整体不渲染」的判据**（§28.6 废止了 §27.4 的那一条）：版本行
+   * （`app_version` / `api_version`）始终在，所以 `<footer>` 元素在所有 AppShell 页
+   * 始终渲染。`footer_tagline` 是第 6 个设置项，默认值为原写死的标语
+   * 「内网工具与 Skill 共享平台」（§28.3，对 §27.2「默认全空」的定点例外）。
    */
   site_subtitle: string;
+  footer_tagline: string;
   footer_org: string;
   footer_contact_email: string;
   footer_contact_phone: string;

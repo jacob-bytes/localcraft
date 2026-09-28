@@ -5,10 +5,14 @@ import { PageSkeleton } from "@/components/common/PageSkeleton";
 import { SiteFooter } from "@/components/layout/SiteFooter";
 import { TopNav } from "@/components/layout/TopNav";
 
-/** 路由 `handle` 上与本层有关的开关（CONTRACT §27.4 的页脚范围裁定）。 */
+/**
+ * 路由 `handle` 上与本层有关的开关（CONTRACT §28.6 的页脚范围裁定）。
+ *
+ * M13 起这个开关**只**管 4 个门户配置字段 —— 页脚元素本身已恢复为全站渲染。
+ */
 interface AppShellRouteHandle {
-  /** `true` 时这一条路由渲染站点页脚（仅门户列表页与工具详情页）。 */
-  siteFooter?: boolean;
+  /** `true` 时这一条路由额外渲染门户配置字段（仅门户列表页与工具详情页）。 */
+  portalFooterFields?: boolean;
 }
 
 function isAppShellRouteHandle(handle: unknown): handle is AppShellRouteHandle {
@@ -16,27 +20,28 @@ function isAppShellRouteHandle(handle: unknown): handle is AppShellRouteHandle {
 }
 
 /**
- * Application shell: sticky top bar + content area + optional footer
- * (docs/04 §5.1). Route-level code splitting (docs/04 §9) means every page
- * arrives through `React.lazy`, so the outlet is wrapped in Suspense here.
+ * Application shell: sticky top bar + content area + footer (docs/04 §5.1).
+ * Route-level code splitting (docs/04 §9) means every page arrives through
+ * `React.lazy`, so the outlet is wrapped in Suspense here.
  *
- * M12 改动（CONTRACT §27.4）：
+ * 页脚（M12 建立、**M13 按 §28.6 重构**）：
  *
- * - 原先这里有一段**全局页脚**（`localcraft v… · API v1` + 写死的
- *   「内网工具与 Skill 共享平台」）。§27.4 把页脚范围裁定为**仅门户列表页与工具
- *   详情页**，且要求页脚内容来自结构化设置项，所以那段全局页脚被 `SiteFooter`
- *   取代。副作用：个人中心与管理台不再出现这一行版本号（这正是「页脚只在门户
- *   相关页」的字面含义；它的存在本身就会与「/admin 没有页脚」矛盾）。
+ * - M12 曾按 §27.4 把这里原有的**全局页脚**整段删掉，改由路由 `handle` 决定是否
+ *   渲染 `SiteFooter`。§28.1 认定那是一条契约缺陷（写 §27 时漏看了既有页脚），
+ *   §28.6 因此裁定：**版本行 + `footer_tagline` 标语恢复为全站显示**，只有 4 个
+ *   门户配置字段仍限于门户相关页。
+ * - 所以现在 `SiteFooter` **无条件渲染**，路由 `handle.portalFooterFields` 只决定
+ *   要不要多渲染那 4 个字段。`/me`、`/admin` 有版本行与标语，没有门户字段。
  * - 页脚渲染在 `<main>` **之外**：ARIA 规定 `<footer>` 落在 `main` 内时不映射
  *   `contentinfo` 地标，见 `SiteFooter` 的注释。
- * - 是否渲染由路由 `handle.siteFooter` 决定（`routes.tsx` 只在 `/` 与
- *   `/tools/:slug` 上打了这个标记），而不是在 shell 里比对路径字符串 —— 路由表
- *   是唯一的真相来源。
+ * - 范围写在路由表上（`routes.tsx` 只在 `/` 与 `/tools/:slug` 上打了标记），而不是
+ *   在 shell 里比对路径字符串 —— 路由表是唯一的真相来源。
+ * - 登录页不在 `AppShell` 之下，因此它没有页脚（与改动前一致）。
  */
 export function AppShell() {
   const matches = useMatches();
-  const showSiteFooter = matches.some((match) =>
-    isAppShellRouteHandle(match.handle) ? match.handle.siteFooter === true : false,
+  const showPortalFooterFields = matches.some((match) =>
+    isAppShellRouteHandle(match.handle) ? match.handle.portalFooterFields === true : false,
   );
 
   return (
@@ -53,7 +58,7 @@ export function AppShell() {
         </React.Suspense>
       </main>
 
-      {showSiteFooter ? <SiteFooter /> : null}
+      <SiteFooter portalFields={showPortalFooterFields} />
     </div>
   );
 }
