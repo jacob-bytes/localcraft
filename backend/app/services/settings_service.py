@@ -80,9 +80,10 @@ async def get_security_policy(session: AsyncSession) -> SecurityPolicy:
 
 
 def _public_text(public: dict[str, object], key: str) -> str:
-    """`/meta` 的站点定制字段取值：**永远是 `str`**（契约 §27.3）。
+    """`/meta` 的站点定制字段取值：**永远是 `str`**（契约 §27.3 / §28.4）。
 
-    只给 M12 新增的 5 个字段用，既有字段的行为一字未动。
+    M12 新增的 5 个字段与 M13 的 `portal.footer_tagline` 都走这里，
+    既有字段的行为一字未动。
 
     为什么不直接 `str(public.get(key, ""))`（既有字段的写法）：`/meta` 是**公开**
     端点，一个畸形值就会让整个门户白屏。两种情况必须挡住：
@@ -91,10 +92,23 @@ def _public_text(public: dict[str, object], key: str) -> str:
       - 非字符串（有人手工改库塞了个数字）→ pydantic v2 **不**做 int→str 强转，
         会抛 ValidationError 变成 500。
 
-    两种都退化成空串 —— 与 §27.2 的默认值一致（空串 = 未配置 = 不渲染）。
+    两种都退化成该 key 在 `SETTING_DEFAULTS` 里的**代码默认值**（缺失则空串）。
+
+    ★ 行**根本不存在**时（迁移还没跑 / 行被删过）也回退到同一个代码默认值：
+    对 M12 那 5 项默认值就是空串，行为与之前**逐字不变**；对 M13 的
+    `portal.footer_tagline`（§28.3）则是回退到原标语串 —— 这正是 §28.6
+    「未配置的既有部署在页脚上与改动前完全一致」的要求，且让 `/meta` 与
+    `get_effective_str` 的既有兜底口径一致（「缺失行 = 未配置 = 用默认值」）。
     """
+    default = settings_repo.SETTING_DEFAULTS_BY_KEY.get(key)
+    fallback = default[0] if default is not None else ""
+    if not isinstance(fallback, str):
+        fallback = ""
+    # 行缺失（迁移没跑 / 行被删）→ 代码默认值；行在但值是 JSON `null` 或非字符串
+    # （有人手工改库塞了数字）→ 同样退化成代码默认值。对 M12 那 5 项，两者都是
+    # 空串，与改动前逐字一致（§27.3）；对 `portal.footer_tagline` 则是原标语串（§28.3）。
     value = public.get(key)
-    return value if isinstance(value, str) else ""
+    return value if isinstance(value, str) else fallback
 
 
 async def get_meta(session: AsyncSession) -> MetaResponse:
@@ -117,13 +131,17 @@ async def get_meta(session: AsyncSession) -> MetaResponse:
         app_version=env_settings.localcraft_version,
         api_version="v1",
         # M12 站点定制信息（契约 §27.3）：全部走**既有机制**（`is_public = true`
-        # 的设置项），不另写读取逻辑。未配置（行缺失）时回退空串 —— 与 §27.2
+        # 的设置项），不另写读取逻辑。未配置（行缺失）时回退代码默认值 —— 与 §27.2
         # 定的默认值一致，保证「既有部署不做任何配置时视觉上零变化」。
         site_subtitle=_public_text(public, "portal.site_subtitle"),
         footer_org=_public_text(public, "portal.footer_org"),
         footer_contact_email=_public_text(public, "portal.footer_contact_email"),
         footer_contact_phone=_public_text(public, "portal.footer_contact_phone"),
         footer_notice=_public_text(public, "portal.footer_notice"),
+        # M13（契约 §28.4）：页脚标语。同一条既有机制，唯一区别是它的代码默认值
+        # 非空（§28.3 的定点例外）—— 行缺失时读出来就是原标语串（ §28.6 的
+        # 「与改动前完全一致」）。版本号仍不是设置项，前端取上面的 `app_version`。
+        footer_tagline=_public_text(public, "portal.footer_tagline"),
         features=MetaFeatures(
             webapp_health_check=policy,
             skill_preview=True,

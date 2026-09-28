@@ -12,6 +12,12 @@
 - 管理端设置页零改动就会出现编辑器所需的元信息（description / value_type /
   is_public）确实由 `GET /admin/settings` 下发（§27.1 事实 1 的后端侧证据）。
 
+★ **M13（契约 §28）更新**：`0007` 被**并进**了第 6 项 `portal.footer_tagline`
+（§28.5，未新建 `0008`），`/meta` 也多了一个 `footer_tagline`（§28.4）。
+本文件因此只改了两处**整体口径**的断言（顶层字段集合、全新库行数 30 → 31），
+M12 的 5 项断言逐条保留；第 6 项的详细断言在
+`tests/test_m13_footer_tagline.py`（含非空默认值这个定点例外）。
+
 刻意**不**在本文件里断言接口总数 —— 那是 `tests/test_guard.py` 的职责，
 且本轮不新增接口（仍是 99 operations / 79 paths）。
 """
@@ -52,6 +58,11 @@ EXPECTED_SETTINGS: dict[str, tuple[str, str]] = {
 }
 
 #: §27.3 的 5 个 `/meta` 字段 → 对应的设置项 key。
+#:
+#: ★ M13（§28.4）新增了第 6 个字段 `footer_tagline`，但它的设置项与断言
+#: 都在 `tests/test_m13_footer_tagline.py` 里 —— 本文件继续只管 M12 的那 5 项，
+#: 只有「字段集合 / 行数」这两处**整体口径**的断言随 §28 一起更新
+#: （见 `LEGACY_META_FIELDS` 的并集写法与 `_EXPECTED_FRESH_DB_SETTING_ROWS`）。
 NEW_META_FIELDS: dict[str, str] = {
     "site_subtitle": "portal.site_subtitle",
     "footer_org": "portal.footer_org",
@@ -59,6 +70,11 @@ NEW_META_FIELDS: dict[str, str] = {
     "footer_contact_phone": "portal.footer_contact_phone",
     "footer_notice": "portal.footer_notice",
 }
+
+#: M13（§28.4）新增的第 6 个字段 / 设置项。冻结在这里只是为了让本文件的
+#: 「顶层字段集合」与「全新库行数」两条断言口径完整；详细断言在 M13 文件里。
+M13_META_FIELD = "footer_tagline"
+M13_SETTING_KEY = "portal.footer_tagline"
 
 #: **既有** `/meta` 顶层字段（§27.3：只新增，不改既有）。冻结在这里，
 #: 任何「顺手改坏」都会让下面的相等断言变红。
@@ -92,14 +108,15 @@ EXPECTED_REVISIONS: dict[str, str | None] = {
     "0007": "0006",
 }
 
-#: 全新库跑到 head 后的设置项行数：0002 播种 25 项 + 0007 的 5 项。
+#: 全新库跑到 head 后的设置项行数：0002 播种 25 项 + 0007 的 6 项
+#: （§27.2 的 5 项 + §28.3 并进 0007 的 `portal.footer_tagline`）。
 #:
-#: ★ 不等于 `len(SETTING_DEFAULTS)`（31）—— 权威清单里的
+#: ★ 不等于 `len(SETTING_DEFAULTS)`（32）—— 权威清单里的
 #: `images.signature_ttl_hours` **从来没有被任何迁移播种过**（0002 的冻结快照
 #: 里没有它），只靠 `get_effective_int` 的运行时兜底。这是本用例发现的**既有**
-#: 缺陷，不属于 M12 范围，所以这里写成硬编码的 30 而不是等式，避免把既有问题
-#: 伪装成「M12 改坏了」。（已上报，见 M12 交付报告。）
-_EXPECTED_FRESH_DB_SETTING_ROWS = 30
+#: 缺陷，不属于 M12/M13 范围，所以这里写成硬编码的 31 而不是等式，避免把既有
+#: 问题伪装成「本轮改坏了」。（已上报，见 M12 交付报告。）
+_EXPECTED_FRESH_DB_SETTING_ROWS = 31
 
 
 async def _snapshot_new_values() -> dict[str, Any]:
@@ -250,12 +267,16 @@ async def test_meta_reflects_configured_values(client) -> None:
 
 
 async def test_meta_legacy_fields_unchanged(client) -> None:
-    """§27.3：只新增。既有字段的名字、类型、默认值**一个都没动**。"""
+    """§27.3：只新增。既有字段的名字、类型、默认值**一个都没动**。
+
+    M13（§28.4）又新增了 `footer_tagline`，所以预期集合是
+    「既有 9 项 + M12 的 5 项 + M13 的 1 项」—— 仍然没有任何既有字段被改。
+    """
     body = (await client.get(META)).json()
 
-    expected_fields = LEGACY_META_FIELDS | set(NEW_META_FIELDS)
+    expected_fields = LEGACY_META_FIELDS | set(NEW_META_FIELDS) | {M13_META_FIELD}
     assert set(body) == expected_fields, (
-        "顶层字段集合变了 —— 本轮只允许新增那 5 个\n"
+        "顶层字段集合变了 —— 只允许新增那 6 个\n"
         f"  多了: {sorted(set(body) - expected_fields)}\n"
         f"  少了: {sorted(expected_fields - set(body))}"
     )

@@ -61,9 +61,10 @@ SETTING_DEFAULTS: tuple[tuple[str, Any, str, bool, str], ...] = (
     ("security.login_max_failures", 5, "int", False, "连续登录失败锁定阈值"),
     ("security.lockout_minutes", 15, "int", False, "锁定时长（分钟）"),
     ("portal.site_name", "工具与 Skill 平台", "string", True, "站点名称"),
-    # M12（契约 §27.2）：站点定制信息。**全部默认空串是刻意的** ——
-    # 既有部署不做任何配置时视觉上零变化（无副标题、无页脚）。
+    # M12（契约 §27.2）：站点定制信息。**默认空串是刻意的** ——
+    # 既有部署不做任何配置时视觉上零变化（无副标题、无门户页脚字段）。
     # description 就是管理端的 label（设置页完全由后端元信息驱动，见契约 §27.1 事实 1）。
+    # 唯一的例外是下面的 `portal.footer_tagline`（M13 / §28.3，非空默认）。
     (
         "portal.site_subtitle",
         "",
@@ -78,6 +79,18 @@ SETTING_DEFAULTS: tuple[tuple[str, Any, str, bool, str], ...] = (
     ("portal.allow_admin_view_private", True, "bool", False, "超管是否可见他人 private 工具"),
     ("portal.default_sort", "hot", "string", True, "门户默认排序"),
     ("portal.page_size", 24, "int", True, "门户每页条数"),
+    # M13（契约 §28.3）：页脚标语。**默认值刻意不是空串** —— 它是对 §27.2
+    # 「默认全空」的**定点例外**：AppShell 里原本写死的正是这个串，
+    # 默认值取原串才能让「未配置的既有部署」在页脚上与改动前**完全一致**（§28.6）。
+    # 与上面 5 项不同，它显示在**所有** AppShell 页（属「系统标识」，§28.2 分组理由）。
+    # description 就是管理端的 label（§27.1 事实 1）。
+    (
+        "portal.footer_tagline",
+        "内网工具与 Skill 共享平台",
+        "string",
+        True,
+        "页脚标语（显示在所有页面底部，留空则不显示）",
+    ),
     # 页脚 4 项（契约 §27.2）：结构化字段而非自由 Markdown ——
     # Markdown 管线会剥掉站内链接（§27.5 约束 1），且排版不受控。
     ("portal.footer_org", "", "string", True, "页脚·运营方"),

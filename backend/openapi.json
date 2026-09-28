@@ -3782,6 +3782,10 @@
             "title": "Footer Org",
             "type": "string"
           },
+          "footer_tagline": {
+            "title": "Footer Tagline",
+            "type": "string"
+          },
           "page_size": {
             "title": "Page Size",
             "type": "integer"
@@ -3808,7 +3812,8 @@
           "footer_org",
           "footer_contact_email",
           "footer_contact_phone",
-          "footer_notice"
+          "footer_notice",
+          "footer_tagline"
         ],
         "title": "MetaResponse",
         "type": "object"

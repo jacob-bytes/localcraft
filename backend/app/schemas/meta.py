@@ -59,3 +59,12 @@ class MetaResponse(BaseModel):
     footer_contact_email: str
     footer_contact_phone: str
     footer_notice: str
+
+    # ---- M13 站点定制信息（契约 §28.4）----
+    # `portal.footer_tagline`：AppShell 里原本**写死**的标语，§28.3 把它做成
+    # 可配置项。与上面 5 个字段一样：永远是 `str`、不给模型层默认值。
+    #
+    # ★ 语义差别只有一处：它的**默认值不是空串**（§28.3 的定点例外）——
+    # 未配置的库读出来是「内网工具与 Skill 共享平台」，前端据此渲染页脚标语；
+    # 管理员显式留空时才是空串（= 不显示）。判空逻辑在前端，契约 §28.6。
+    footer_tagline: str

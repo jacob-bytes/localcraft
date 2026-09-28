@@ -294,6 +294,9 @@ async def test_meta_exposes_only_public_settings(client) -> None:
         "footer_contact_email",
         "footer_contact_phone",
         "footer_notice",
+        # M13（契约 §28.4）：第 6 个字段 —— 同上，只新增。
+        # 逐字冻结在 tests/test_m13_footer_tagline.py 里。
+        "footer_tagline",
     }
 
 
