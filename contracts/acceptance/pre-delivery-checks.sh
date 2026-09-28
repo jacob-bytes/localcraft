@@ -62,7 +62,11 @@ section "A. 代码与质量门禁"
 # =============================================================================
 
 OPS="$(cd "$BE" && $PY -c "import json;s=json.load(open('openapi.json'));print(sum(len(v) for v in s['paths'].values()))" 2>/dev/null)"
-chk A1 "接口操作数（M5 冻结基线 92；M6 后应为 93）" "$([[ "$OPS" == "92" || "$OPS" == "93" ]] && echo 0 || echo 1)" "实测 $OPS"
+# 接口面逐里程碑的冻结值：M5=92 → M6=93（+GET /directory）→ M8=99（+收藏/点赞/去重/insights 共 6 个）。
+# 这里**故意写死具体数字**：A1 的用途就是「接口面是否漂移」的第一道信号，
+# 所以任何变化都必须有人来改这一行 —— 改成范围判断会让它失去意义。
+# 演进记录见 contracts/CONTRACT.md §20.4③（93）与 §23.4（99）。
+chk A1 "接口操作数（冻结基线 99：M5 92 → M6 93 → M8 99）" "$([[ "$OPS" == "99" ]] && echo 0 || echo 1)" "实测 $OPS"
 
 # 注意：pyproject 的 addopts 已含 "-q"，不要再传 -q（会变成 -qq 而**抑制摘要行**）。
 # 单次运行同时拿到退出码、用例数与覆盖率，避免跑两遍全套。
@@ -136,7 +140,7 @@ chk B3 "openapi.json 含 test_openapi_artifact_is_current 守卫" \
 
 DIR_EP="$(cd "$BE" && $PY -c "
 import json;s=json.load(open('openapi.json'));print('yes' if '/api/v1/directory' in s['paths'] else 'no')")"
-chk B4 "GET /api/v1/directory 已交付（M6 J-1，接口面 93）" "$([[ "$DIR_EP" == "yes" ]] && echo 0 || echo 1)" "$DIR_EP"
+chk B4 "GET /api/v1/directory 已交付（M6 J-1 引入，当时接口面 93 → 现 99）" "$([[ "$DIR_EP" == "yes" ]] && echo 0 || echo 1)" "$DIR_EP"
 
 SLUG="$(grep -c '"slug": slug' "$BE/app/services/group_service.py" 2>/dev/null | head -1)"
 SLUG="${SLUG:-0}"
