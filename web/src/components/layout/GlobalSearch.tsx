@@ -88,22 +88,27 @@ export function GlobalSearch() {
       <Button
         type="button"
         variant="outline"
+        size="icon"
         onClick={() => setOpen(true)}
         data-testid="global-search-trigger"
         /*
-          窄屏（< sm）：纯图标按钮，`w-9` 保证 ≥36px 的触控目标，文字与 ⌘K 提示隐藏。
-          sm 起恢复带文字的搜索框（w-64，lg 升到 w-80）。
-          `sm:shrink` 是防溢出安全阀：窗口刚好在 640 时 logo 站点名与用户菜单
-          的角色文字会同时展开，允许搜索框先收缩（文字 truncate）而不是产生横向滚动。
+          纯图标按钮（**全部宽度**，不再在 sm 以上展开成带文字的搜索框）。
+          
+          为什么改（用户直接提出）：门户页本身已有一个真正的搜索框
+          （`PortalPage` 的 `?q=` 筛选输入框），而顶栏这个是**命令面板触发器**
+          —— 两者共用同一个 API，且面板里那条「在门户中搜索」就是把关键词
+          交给门户搜索框。并排放在一屏里会看起来像两个重复的搜索框，
+          所以顶栏这个只保留图标，视觉上只留一个搜索框。
+          
+          ⌘K、最近访问、快速跳转**功能全部不变**，只是入口变紧凑。
+          `aria-label` 保留可访问名（e2e 与读屏都依赖它）；`title` 给鼠标用户
+          一个悬停提示 —— 否则 ⌘K 会变得无从发现。
         */
-        className="h-9 w-9 shrink-0 justify-center px-0 text-muted-foreground sm:w-64 sm:shrink sm:justify-start sm:gap-2 sm:px-3 lg:w-80"
+        className="text-muted-foreground"
         aria-label="搜索工具（快捷键 Command K）"
+        title="搜索（⌘K）"
       >
         <Search aria-hidden="true" className="size-4" />
-        <span className="hidden truncate sm:inline">搜索工具、Skill、提示词…</span>
-        <kbd className="ml-auto hidden shrink-0 rounded border bg-muted px-1.5 font-mono text-[10px] text-muted-foreground sm:inline-block">
-          ⌘K
-        </kbd>
       </Button>
 
       <CommandDialog
