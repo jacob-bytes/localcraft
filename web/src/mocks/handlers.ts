@@ -1669,15 +1669,31 @@ function escapeXml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => XML_ESCAPES[char] ?? char);
 }
 
+/**
+ * Mock 演示封面的底色（M17 · F1；监控方裁定：一并中性化）。
+ *
+ * 这与 CONTRACT §34.1 的 #3（真机 `seed-demo` 的纯色封面 PNG）是**同一类东西**：
+ * 演示/测试数据里的位图封面，不是占位背景。用户要的「站位的预览图片统一浅色」
+ * 在真机上看不到它的效果（生产只有真封面），但 mock 模式是人工看效果与 e2e 截图
+ * 的入口 —— 保持彩色会让人误判「改了占位却没变化」，所以一并改成中性浅色。
+ *
+ * 规则（与后端 §34.4 的种子封面同旨，不要求逐值相同）：
+ *  - 浅中性（米白 / 浅灰），**各组带轻微差异**（全一样会像加载失败）；
+ *  - **不是纯白**（深色主题下也会被看到），也不是深色 —— 取偏浅的中间调；
+ *  - 各组都落在**同一中性（暖灰）区间内**，不再跨色相（原 indigo/teal/violet/amber）。
+ */
 const COVER_TINTS: Record<string, [string, string]> = {
-  "dev-tools": ["#c7d2fe", "#a5b4fc"],
-  "ops-tools": ["#99f6e4", "#5eead4"],
-  skills: ["#ddd6fe", "#c4b5fd"],
-  prompts: ["#fde68a", "#fcd34d"],
+  "dev-tools": ["#f0eeea", "#e6e3dd"],
+  "ops-tools": ["#eeedea", "#e2e0da"],
+  skills: ["#f2f0ec", "#e8e5e0"],
+  prompts: ["#efede9", "#e4e1da"],
 };
 
+/** 未分类封面的兜底：仍在同一中性区间内。 */
+const COVER_TINT_FALLBACK: [string, string] = ["#f1efeb", "#e7e4de"];
+
 function imageSvg(label: string, categorySlug: string | null, width: number, height: number): string {
-  const [from, to] = COVER_TINTS[categorySlug ?? ""] ?? ["#e2e8f0", "#cbd5e1"];
+  const [from, to] = COVER_TINTS[categorySlug ?? ""] ?? COVER_TINT_FALLBACK;
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(label)}">
   <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
     <stop offset="0%" stop-color="${from}"/><stop offset="100%" stop-color="${to}"/>

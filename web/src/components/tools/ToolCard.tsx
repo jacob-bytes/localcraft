@@ -8,7 +8,7 @@ import { ToolTypeBadge } from "@/components/tools/ToolTypeBadge";
 import { WebappUnhealthyMark } from "@/components/tools/WebappHealthMark";
 import { Badge } from "@/components/ui/badge";
 import { formatCount, formatRelativeTime } from "@/lib/format";
-import { categoryTintClass, TOOL_TYPE_META, VISIBILITY_LABELS } from "@/lib/toolMeta";
+import { TOOL_PLACEHOLDER_CLASS, TOOL_TYPE_META, VISIBILITY_LABELS } from "@/lib/toolMeta";
 import { cn } from "@/lib/utils";
 import { isWebappUnhealthy } from "@/lib/webappHealth";
 
@@ -63,13 +63,17 @@ function ToolTags({ tags, limit = MAX_TAGS }: { tags: string[]; limit?: number }
 /**
  * Cover area. `aspect-[16/9]` keeps the layout stable while the image loads and
  * gives the placeholder the same box, so cards never jump (docs/04 §9).
- * A tool without a cover gets a category-tinted block + type icon — never a
+ * A tool without a cover gets a **neutral** block + type icon — never a
  * broken `<img>` (acceptance #7).
  *
- * M7 · F3（docs/12 §6.2 V1）：占位再设计 —— 按分类的**柔和**渐变 + **大号**
- * 类型图标（size-10 → size-16），图标用较低不透明度的语义令牌 `foreground`，
- * 在浅色（深字）与深色（浅字）两端都留出余量。图标本身 `aria-hidden`，
- * 不承载信息；类型仍由左上角的 `ToolTypeBadge` 文字徽标表达（docs/04 §8.1）。
+ * M7 · F3（docs/12 §6.2 V1）：占位再设计 —— **大号**类型图标（size-10 → size-16），
+ * 图标用较低不透明度的语义令牌 `foreground`，在浅色（深字）与深色（浅字）两端
+ * 都留出余量。图标本身 `aria-hidden`，不承载信息；类型仍由左上角的
+ * `ToolTypeBadge` 文字徽标表达（docs/04 §8.1）。
+ *
+ * M17 · F1（CONTRACT §34.3）：分类彩色渐变改为中性语义令牌 `bg-muted`
+ * （见 `TOOL_PLACEHOLDER_CLASS`）。「有封面」与「无封面」仍然可区分：
+ * 占位恒有居中大号类型图标，真实封面没有。
  */
 function ToolCover({ tool }: { tool: ToolListItem }) {
   const meta = TOOL_TYPE_META[tool.tool_type];
@@ -97,10 +101,7 @@ function ToolCover({ tool }: { tool: ToolListItem }) {
         <div
           data-testid="cover-placeholder"
           aria-hidden="true"
-          className={cn(
-            "flex size-full items-center justify-center bg-gradient-to-br",
-            categoryTintClass(tool.category?.slug),
-          )}
+          className={cn("flex size-full items-center justify-center", TOOL_PLACEHOLDER_CLASS)}
         >
           <Icon className="size-16 text-foreground/55" strokeWidth={1.25} />
         </div>

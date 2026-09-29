@@ -107,7 +107,6 @@ export default function ToolDetailPage() {
             images={detail.images}
             toolName={detail.name}
             toolType={detail.tool_type}
-            categorySlug={detail.category?.slug ?? null}
           />
 
           <header className="space-y-3">

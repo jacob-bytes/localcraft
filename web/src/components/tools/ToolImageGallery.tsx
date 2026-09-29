@@ -2,7 +2,7 @@ import { ChevronLeft, ChevronRight, ImageOff } from "lucide-react";
 import * as React from "react";
 
 import type { ToolImage, ToolType } from "@/api/types";
-import { categoryTintClass, TOOL_TYPE_META } from "@/lib/toolMeta";
+import { TOOL_PLACEHOLDER_CLASS, TOOL_TYPE_META } from "@/lib/toolMeta";
 import { cn } from "@/lib/utils";
 
 /**
@@ -17,7 +17,6 @@ export interface ToolImageGalleryProps {
   images: ToolImage[];
   toolName: string;
   toolType: ToolType;
-  categorySlug: string | null;
 }
 
 function orderImages(images: ToolImage[]): ToolImage[] {
@@ -28,24 +27,20 @@ function orderImages(images: ToolImage[]): ToolImage[] {
   });
 }
 
-/** 无图 / 加载失败时的占位：分类柔和色块 + 类型图标（docs/04 §6.3）。 */
-function GalleryPlaceholder({
-  toolType,
-  categorySlug,
-  className,
-}: {
-  toolType: ToolType;
-  categorySlug: string | null;
-  className?: string;
-}) {
+/**
+ * 无图 / 加载失败时的占位：中性背景 + 类型图标（docs/04 §6.3）。
+ * M17 · F1（CONTRACT §34.3）：不再按分类上色，`categorySlug` 参数随之删除
+ * （同 `TOOL_PLACEHOLDER_CLASS`，零参）。
+ */
+function GalleryPlaceholder({ toolType, className }: { toolType: ToolType; className?: string }) {
   const Icon = TOOL_TYPE_META[toolType].icon;
   return (
     <div
       data-testid="gallery-placeholder"
       aria-hidden="true"
       className={cn(
-        "flex size-full items-center justify-center bg-gradient-to-br",
-        categoryTintClass(categorySlug),
+        "flex size-full items-center justify-center",
+        TOOL_PLACEHOLDER_CLASS,
         className,
       )}
     >
@@ -55,12 +50,7 @@ function GalleryPlaceholder({
   );
 }
 
-export function ToolImageGallery({
-  images,
-  toolName,
-  toolType,
-  categorySlug,
-}: ToolImageGalleryProps) {
+export function ToolImageGallery({ images, toolName, toolType }: ToolImageGalleryProps) {
   const ordered = React.useMemo(() => orderImages(images), [images]);
   const [requestedIndex, setRequestedIndex] = React.useState(0);
   const [failedIds, setFailedIds] = React.useState<readonly number[]>([]);
@@ -94,7 +84,7 @@ export function ToolImageGallery({
             className="cover-media size-full object-contain"
           />
         ) : (
-          <GalleryPlaceholder toolType={toolType} categorySlug={categorySlug} />
+          <GalleryPlaceholder toolType={toolType} />
         )}
 
         {count > 1 ? (

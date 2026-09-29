@@ -48,7 +48,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { formatCount, formatDateTime, formatRelativeTime } from "@/lib/format";
-import { categoryTintClass, VISIBILITY_LABELS } from "@/lib/toolMeta";
+import { TOOL_PLACEHOLDER_CLASS, VISIBILITY_LABELS } from "@/lib/toolMeta";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 10;
@@ -354,10 +354,12 @@ function MyToolRow({
             <div
               aria-hidden="true"
               className={cn(
-                // M7 · F3：这里的分类名是唯一「压在占位渐变上的文字」。渐变降饱和后
-                // （更亮的底）原 /40 的前景达不到 AA，提到 /70（实测见 M7 报告）。
-                "grid size-full place-items-center bg-gradient-to-br text-xs text-foreground/70",
-                categoryTintClass(tool.category?.slug),
+                // M17 · F1（CONTRACT §34.3）：背景改为中性语义令牌（浅色米白/浅灰、
+                // 深色深中性）。这里的分类名是唯一「压在占位上的文字」，仍用
+                // text-foreground/70 —— M17 重新实测（非沿用 M7 数字）：
+                // 浅色 6.32:1、深色 7.26:1，均 ≥ 4.5:1。
+                "grid size-full place-items-center text-xs text-foreground/70",
+                TOOL_PLACEHOLDER_CLASS,
               )}
             >
               {tool.category?.name ?? "无图"}

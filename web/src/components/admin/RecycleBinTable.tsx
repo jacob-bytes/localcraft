@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatDateTime } from "@/lib/format";
-import { TOOL_TYPE_META } from "@/lib/toolMeta";
+import { TOOL_PLACEHOLDER_CLASS, TOOL_TYPE_META } from "@/lib/toolMeta";
 
 /**
  * 回收站表格（docs/04 §6.21）。
@@ -69,10 +69,12 @@ export function RecycleBinTable({
               <TableRow key={tool.id} data-testid="recycle-row">
                 <TableCell>
                   <div className="flex items-center gap-3">
+                    {/* 缩略图盒与门户占位同规则（M17 · F1，CONTRACT §34.3）：
+                        中性语义令牌底色 + 类型图标，不再按类型上色。 */}
                     <span
                       className={
-                        "grid size-10 shrink-0 place-items-center overflow-hidden rounded-md bg-gradient-to-br " +
-                        meta.placeholderClass
+                        "grid size-10 shrink-0 place-items-center overflow-hidden rounded-md " +
+                        TOOL_PLACEHOLDER_CLASS
                       }
                     >
                       {tool.cover_url ? (
