@@ -31,6 +31,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { useAuth } from "@/hooks/useAuth";
+import { PAGE_CONTAINER } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 
 /**
@@ -100,7 +101,7 @@ export function AdminLayout() {
   return (
     <div
       data-testid="admin-layout"
-      className="mx-auto flex w-full max-w-[1400px] flex-col gap-4 px-4 py-6 sm:px-6 lg:flex-row lg:gap-8 lg:px-8"
+      className={`${PAGE_CONTAINER} flex flex-col gap-4 py-6 lg:flex-row lg:gap-8`}
     >
       {/* `lg` 以下折叠为 Sheet（docs/04 §5.2 / §8.2）。 */}
       <div className="lg:hidden">

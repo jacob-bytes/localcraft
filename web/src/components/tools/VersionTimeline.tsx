@@ -26,19 +26,27 @@ interface StatusDisplay {
  * 五种状态必须视觉可区分（docs/04 §6.4 版本历史）：
  * 当前（success）/ 待审（warning）/ 历史（中性）/ 已驳回（destructive）/ 已归档（outline）。
  * `purged` 版本**保留在列表里**（用户需要看到历史），只是禁用下载。
+ *
+ * ★ 状态点的颜色一律走**语义令牌**（`bg-warning` / `bg-success` / `bg-destructive` /
+ * `bg-muted-foreground`），不要写调色板色（`bg-amber-500` / `bg-emerald-500`）。
+ * 两处这样做过，结果是同一件事有两种来源：
+ *   - `pages/me/VersionsPage.tsx` 对**同样的**"待审 / 当前"用 `bg-warning` / `bg-success`；
+ *   - `components/tools/WebappHealthMark.tsx` 的注释也把这条约定写明了。
+ * 调色板色不随主题变（要人工补 `dark:`），语义令牌由 CSS 变量在明暗两态各自取值，
+ * 所以换主题时不需要（也不该）在每个站点再写一遍。
  */
 function statusDisplay(version: VersionSummary): StatusDisplay {
   if (version.status === "purged") {
     return { label: "已归档", variant: "outline", dotClass: "bg-muted-foreground/50" };
   }
   if (version.status === "pending") {
-    return { label: "待审", variant: "warning", dotClass: "bg-amber-500" };
+    return { label: "待审", variant: "warning", dotClass: "bg-warning" };
   }
   if (version.status === "rejected") {
     return { label: "已驳回", variant: "destructive", dotClass: "bg-destructive" };
   }
   if (version.status === "approved" && version.is_current) {
-    return { label: "当前", variant: "success", dotClass: "bg-emerald-500" };
+    return { label: "当前", variant: "success", dotClass: "bg-success" };
   }
   return { label: "历史", variant: "secondary", dotClass: "bg-muted-foreground/60" };
 }

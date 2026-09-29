@@ -59,6 +59,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useDebounce } from "@/hooks/useDebounce";
 import { siteSubtitle, useMeta } from "@/hooks/useMeta";
+import { PAGE_CONTAINER } from "@/lib/layout";
 import { TOOL_TYPE_META } from "@/lib/toolMeta";
 import { cn } from "@/lib/utils";
 
@@ -491,7 +492,7 @@ export default function PortalPage() {
   );
 
   return (
-    <div className="mx-auto w-full max-w-[1400px] px-4 py-6 sm:px-6 lg:px-8">
+    <div className={`${PAGE_CONTAINER} py-6`}>
       {/* ---- Hero search ---- */}
       <section aria-labelledby="portal-hero-title" className="pb-4">
         <h1 id="portal-hero-title" className="text-2xl font-semibold tracking-tight">

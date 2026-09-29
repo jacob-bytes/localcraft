@@ -489,8 +489,14 @@ function MyToolRow({
         </Alert>
       ) : null}
 
+      {/* ★ 这条横幅原先**没有 `variant`**，靠 className 手绘琥珀色凑出警告观感 ——
+          同一个语义（"需要注意但不是错误"）在本项目里已有 `variant="warning"`
+          这一处定义（`components/ui/alert.tsx`，含明暗两态与文字颜色）。
+          手绘的代价不只是重复：它漏掉了深色态的边框与 description 文字色，
+          于是这条横幅与其它警告框**同语义、不同观感**。现在只保留几何覆盖
+          （贴边横幅：去圆角与左右下边框），颜色一律交给 variant。 */}
       {tool.status === "offline" ? (
-        <Alert className="rounded-none border-x-0 border-b-0 border-amber-300/60 bg-amber-50/60 dark:bg-amber-950/20">
+        <Alert variant="warning" className="rounded-none border-x-0 border-b-0">
           <TriangleAlert aria-hidden="true" />
           <AlertTitle>工具已下架</AlertTitle>
           <AlertDescription>

@@ -1,4 +1,5 @@
 import { useMeta } from "@/hooks/useMeta";
+import { PAGE_CONTAINER } from "@/lib/layout";
 
 /**
  * M12 · F2 建立、**M13 按 §28.6 重构** —— 站点页脚（CONTRACT §27.4 / §28.6）。
@@ -106,7 +107,9 @@ export function SiteFooter({ portalFields = false }: SiteFooterProps) {
 
   return (
     <footer aria-label="站点信息" data-testid="site-footer" className="border-t">
-      <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-x-8 gap-y-2 px-4 py-6 text-xs text-muted-foreground sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:px-6 lg:px-8">
+      <div
+        className={`${PAGE_CONTAINER} flex flex-col gap-x-8 gap-y-2 py-6 text-xs text-muted-foreground sm:flex-row sm:flex-wrap sm:items-center sm:justify-between`}
+      >
         <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-4">
           {versionLine ? (
             <span data-testid="site-footer-version">{versionLine}</span>

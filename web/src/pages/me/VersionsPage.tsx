@@ -252,12 +252,10 @@ export default function VersionsPage() {
         className="mb-4"
       />
 
-      <Alert
-        className={cn(
-          "mb-4",
-          nearLimit && "border-amber-300/60 bg-amber-50/60 dark:bg-amber-950/20",
-        )}
-      >
+      {/* 接近保留上限时是警告、平时只是提示 —— 用 `variant` 表达这件事，
+          不要再手写 `bg-amber-50/60 dark:bg-amber-950/20`（那会与
+          `components/ui/alert.tsx` 的 warning 变体各说各话）。 */}
+      <Alert variant={nearLimit ? "warning" : "default"} className="mb-4">
         {nearLimit ? <TriangleAlert aria-hidden="true" /> : <Download aria-hidden="true" />}
         <AlertTitle>
           历史版本保留 {HISTORY_LIMIT} 份，当前 {historyCount} 份

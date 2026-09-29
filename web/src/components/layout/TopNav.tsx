@@ -8,6 +8,7 @@ import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { UserMenu } from "@/components/layout/UserMenu";
 import { useAuth } from "@/hooks/useAuth";
 import { siteName, useMeta } from "@/hooks/useMeta";
+import { PAGE_CONTAINER } from "@/lib/layout";
 
 /**
  * Sticky top bar (docs/04 §5.1). No global left sidebar — the portal's
@@ -28,7 +29,7 @@ export function TopNav() {
     <header
       data-testid="top-nav"
       className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-      <div className="mx-auto flex h-14 w-full max-w-[1400px] items-center gap-3 px-4 sm:px-6 lg:px-8">
+      <div className={`${PAGE_CONTAINER} flex h-14 items-center gap-3`}>
         <Link
           to="/"
           className="flex shrink-0 items-center gap-2 rounded-md py-1 font-semibold"

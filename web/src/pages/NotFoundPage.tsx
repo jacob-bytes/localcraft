@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 
 import { EmptyState } from "@/components/common/EmptyState";
 import { Button } from "@/components/ui/button";
+import { PAGE_CONTAINER } from "@/lib/layout";
 
 /**
  * 404 (docs/04 §6.22). Deliberately terse: "页面不存在或你没有访问权限".
@@ -11,7 +12,7 @@ import { Button } from "@/components/ui/button";
  */
 export default function NotFoundPage() {
   return (
-    <div className="mx-auto w-full max-w-[1400px] px-4 py-16 sm:px-6 lg:px-8">
+    <div className={`${PAGE_CONTAINER} py-16`}>
       <p
         aria-hidden="true"
         className="text-center text-6xl font-semibold tracking-tight text-muted-foreground/40"

@@ -12,6 +12,7 @@ import { PageSkeleton } from "@/components/common/PageSkeleton";
 import { Pagination } from "@/components/common/Pagination";
 import { ToolGrid } from "@/components/tools/ToolGrid";
 import { Button } from "@/components/ui/button";
+import { PAGE_CONTAINER } from "@/lib/layout";
 
 /**
  * `/me/favorites` —— 「我的收藏」（任务书 F7.3，CONTRACT §23.4）。
@@ -62,7 +63,7 @@ export default function MyFavoritesPage() {
   return (
     <div
       data-testid="my-favorites-page"
-      className="mx-auto w-full max-w-[1400px] space-y-5 px-4 py-6 sm:px-6 lg:px-8"
+      className={`${PAGE_CONTAINER} space-y-5 py-6`}
     >
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">我的收藏</h1>

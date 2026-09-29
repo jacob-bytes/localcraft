@@ -29,11 +29,12 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatCount, formatDateTime, formatRelativeTime } from "@/lib/format";
+import { PAGE_CONTAINER } from "@/lib/layout";
 import { recordRecentTool } from "@/lib/recentTools";
 import { VISIBILITY_LABELS } from "@/lib/toolMeta";
 import NotFoundPage from "@/pages/NotFoundPage";
 
-const CONTAINER = "mx-auto w-full max-w-[1400px] px-4 py-6 sm:px-6 lg:px-8";
+const CONTAINER = `${PAGE_CONTAINER} py-6`;
 
 /**
  * `/tools/:slug` — 工具详情（docs/04 §6.4）。

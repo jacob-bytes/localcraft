@@ -3,11 +3,12 @@ import { Link } from "react-router-dom";
 
 import { EmptyState } from "@/components/common/EmptyState";
 import { Button } from "@/components/ui/button";
+import { PAGE_CONTAINER } from "@/lib/layout";
 
 /** Rendered by `RequireRole` when the current role is insufficient (docs/04 §4). */
 export function ForbiddenPage() {
   return (
-    <div className="mx-auto w-full max-w-[1400px] px-4 py-16 sm:px-6 lg:px-8">
+    <div className={`${PAGE_CONTAINER} py-16`}>
       <EmptyState
         icon={ShieldX}
         title="没有访问权限"
