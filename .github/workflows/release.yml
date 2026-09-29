@@ -91,9 +91,20 @@ jobs:
             fail "无法解析 tag ref：type=${OBJ_TYPE}。原始响应：$(printf '%s' "$REF" | head -c 500)"
           fi
 
-          TITLE="$(grep -m1 -v '^[[:space:]]*$' "$NOTES" || true)"
-          [ -n "$TITLE" ] || TITLE="localcraft ${TAG}"
-          tail -n +2 "$NOTES" | sed '/./,$!d' > "$RUNNER_TEMP/body.md"
+          # --- 标题与正文（约定：标题短、内容全在正文）------------------------
+          # 标题**固定**为 `localcraft <tag>`，不从注释里猜。
+          #
+          # 早先的做法是把注释的**首个非空行**当标题，于是标题会变成
+          # 「localcraft v1.1.0 —— 站点定制、社区化功能与 PostgreSQL 支持」这种
+          # 一长串 —— 在 Releases 列表里根本扫不过来。改成固定格式后，
+          # 标题只负责「是哪个版本」，详细更新内容一律放正文。
+          #
+          # 所以写 tag 注释时**不要在首行重复标题**，直接从内容写起即可。
+          TITLE="localcraft ${TAG}"
+
+          # 正文 = 整段 tag 注释（去掉开头的空行）。
+          # 注意不再 `tail -n +2` 丢掉首行 —— 那是在「首行即标题」的旧约定下才成立的。
+          sed '/./,$!d' "$NOTES" > "$RUNNER_TEMP/body.md"
           [ -s "$RUNNER_TEMP/body.md" ] || printf '%s\n' "$TITLE" > "$RUNNER_TEMP/body.md"
           echo "标题=${TITLE}；正文 $(wc -l < "$RUNNER_TEMP/body.md" | tr -d ' ') 行"
 
