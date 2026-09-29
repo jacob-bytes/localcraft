@@ -182,6 +182,35 @@ async def test_seed_builders_produce_real_artifacts() -> None:
     assert image.size == (64, 36)
 
 
+def test_seed_cover_png_is_light_neutral_with_variation() -> None:
+    """M17（契约 §34.4）：种子封面必须是**浅中性**、**带轻微差异**的真 PNG。
+
+    判据与契约三条一一对应：
+    1. 浅中性 —— 三通道都落在浅灰/米白区间，且彼此接近（不再是深紫/绿/洋红纯色块）；
+    2. 带轻微差异 —— 21 张封面不能全同色，否则看起来像「图片加载失败」；
+    3. 真 PNG —— 尺寸/格式不变（落盘 + 缩略图 + 签名 URL 这条链路还要能跑）。
+    """
+    from PIL import Image
+
+    from app.cli import _build_seed_png
+
+    tones = []
+    for seed in range(1, 27):
+        rgb = Image.open(io.BytesIO(_build_seed_png(seed))).convert("RGB")
+        assert rgb.size == (64, 36), "尺寸不能变"
+        r, g, b = rgb.getpixel((0, 0))
+        assert min(r, g, b) >= 190, (seed, r, g, b)
+        assert max(r, g, b) <= 235, "不能是纯白：深色主题下会刺眼"
+        assert max(r, g, b) - min(r, g, b) <= 12, f"必须是中性色，seed={seed} 得到 {r, g, b}"
+        tones.append((r, g, b))
+    assert len(set(tones)) >= 4, "全部同色会被读成图片加载失败"
+
+    # 缩略图（seed + 500）与封面必须同档位，否则缩略图会跟封面串色
+    cover = Image.open(io.BytesIO(_build_seed_png(7))).convert("RGB").getpixel((0, 0))
+    thumb = Image.open(io.BytesIO(_build_seed_png(507))).convert("RGB").getpixel((0, 0))
+    assert cover == thumb
+
+
 def test_seed_constants_are_consistent() -> None:
     """A2/A4：viewer、三个作者、26 个工具（8 边界 + 18 普通），slug 不重复。"""
     from app.cli import (
