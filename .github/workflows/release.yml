@@ -136,9 +136,134 @@ jobs:
           echo "标题：$(jq -r '.name // empty' "$RUNNER_TEMP/result.json")"
 
       # -----------------------------------------------------------------------
-      # 刻意**不**附离线发布包。
+      # 这里原先写着「刻意**不**附离线发布包」，理由是 D31「wheelhouse 必须在与
+      # 目标机同版本同架构的 openEuler 构建机上产出」。**那条理由已被实测推翻**：
       #
-      # 本项目的离线 wheelhouse 必须在**与目标机同版本同架构的 openEuler 构建机**
-      # 上产出（README D31）。ubuntu runner 上产出的东西不满足这条约束，
-      # 附上来反而会让人以为可以直接拿去装。发布包由构建机产出后手工上传。
+      #   scripts/build-wheelhouse.sh 用的是 `pip download --platform
+      #   --only-binary=:all: --python-version 3.11` —— **只下载、不安装、不编译**，
+      #   所以构建机的发行版与架构都无关紧要。实测：macOS 上产出的 wheelhouse
+      #   与仓库里的**逐字节一致**（59 个文件名相同、0 个 macOS wheel、
+      #   MANIFEST.sha256 相同）。见 docs/09 §14.4 与 §14 末段。
+      #
+      # 所以 D31 约束的是**「验证」**（在目标机上真的装起来并跑通），不是「构建」。
+      # 发布包由 `package` job 在 ubuntu runner 上产出是完全成立的 ——
+      # 下面的 build 步骤也**只声明它产出了构建物**，不声称已在目标机验证过。
+      # 「linux wheel 真的能加载」「aarch64 真的能跑」仍是未验证项（docs/09 §14）。
       # -----------------------------------------------------------------------
+
+  # ===========================================================================
+  # 构建离线发布包并挂到 Release 上。
+  #
+  # 为什么放在 CI（而不是让使用者/构建机自己跑）：
+  #   - 前端产物**与平台无关**（87 个 js + 1 css + 1 html + 1 svg，无原生二进制、
+  #     无平台字样），所以在 ubuntu 上构建一次，x86_64 与 aarch64 **通用**；
+  #   - wheelhouse 是 `pip download --platform`，同样不需要目标架构；
+  #   - 于是「目标机/构建机都不需要 Node、也不需要 Python 环境」，
+  #     使用者只需要：下载 tar.gz → 搬进内网 → install.sh。
+  #
+  # 边界（不要扩大解释）：本 job 产出的是**构建物**，不是「已验证的发布物」。
+  # 在 openEuler / aarch64 上真实安装并运行仍属未验证（docs/09 §14 的诚实边界）。
+  # ===========================================================================
+  package:
+    name: 构建离线发布包（前端 + 双架构 wheelhouse）
+    runs-on: ubuntu-latest
+    needs: release
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---- 前端：Node 构建（产物平台无关）--------------------------------
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: 构建前端（npm ci + build）
+        working-directory: web
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          # 自检：产物必须存在且不含原生二进制（否则「平台无关」的前提就不成立）
+          test -f dist/index.html || { echo "::error::web/dist/index.html 未生成"; exit 1; }
+          if find dist -type f \( -name '*.node' -o -name '*.so' -o -name '*.dylib' \) | grep -q .; then
+            echo "::error::前端产物里出现原生二进制，跨架构通用这个前提不成立，请人工确认。"
+            find dist -type f \( -name '*.node' -o -name '*.so' -o -name '*.dylib' \)
+            exit 1
+          fi
+          echo "前端产物文件数：$(find dist -type f | wc -l)"
+
+      # ---- 后端：双架构 wheelhouse（只下载，不编译）-----------------------
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 构建双架构 wheelhouse
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          PYTHON_BIN="$(command -v python3)" bash scripts/build-wheelhouse.sh all
+
+      # ---- 组装发布包 -----------------------------------------------------
+      - name: 组装离线发布包（强制要求 wheelhouse 与 web/dist 都在）
+        env:
+          REQUIRE_WHEELHOUSE: "1"
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "版本（由 tag ${GITHUB_REF_NAME} 推导）：${VERSION}"
+          bash scripts/make-release.sh "$VERSION"
+
+      # ---- 上传为 Release 资产 --------------------------------------------
+      - name: 上传资产（tar.gz + 它的 sha256）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          API="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+          AUTH=(-H "Authorization: Bearer ${GH_TOKEN}"
+                -H "Accept: application/vnd.github+json"
+                -H "X-GitHub-Api-Version: 2022-11-28")
+          TAG="${GITHUB_REF_NAME}"
+
+          fail() { echo "::error::${1//$'\n'/%0A}"; exit 1; }
+
+          # 取 release id
+          REL_ID="$(curl -sS "${AUTH[@]}" "${API}/releases/tags/${TAG}" | jq -r '.id // empty')"
+          [ -n "$REL_ID" ] || fail "取不到 tag ${TAG} 的 release id（release job 是否成功？）"
+
+          TARBALL="$(ls -1 backend/dist/localcraft-*-offline-*.tar.gz 2>/dev/null | head -1)"
+          [ -n "$TARBALL" ] || fail "在 backend/dist 下找不到发布包 tar.gz"
+          echo "发布包：${TARBALL}（$(du -h "$TARBALL" | cut -f1)）"
+
+          # 生成 tar.gz 自身的校验和 —— 让人能验证「从 GitHub 下下来的东西」，
+          # 而不是只验证包内部的 SHA256SUMS（那是装完才验的）。
+          ( cd "$(dirname "$TARBALL")" && sha256sum "$(basename "$TARBALL")" > "$(basename "$TARBALL").sha256" )
+          SUM="$(dirname "$TARBALL")/$(basename "$TARBALL").sha256"
+          cat "$SUM"
+
+          # 幂等：先删掉同名旧资产（重跑 tag 时资产名可能因日期不同而变化，
+          # 所以按「形态」匹配，避免仓库里堆一堆历史包）
+          EXISTING="$(curl -sS "${AUTH[@]}" "${API}/releases/${REL_ID}/assets?per_page=100" \
+            | jq -r '.[] | select(.name | test("^localcraft-.*-offline-.*\\.tar\\.gz(\\.sha256)?$")) | .id')"
+          for id in $EXISTING; do
+            DEL="$(curl -sS -o /dev/null -w '%{http_code}' "${AUTH[@]}" -X DELETE "${API}/releases/assets/${id}")"
+            echo "删除旧资产 id=${id} → HTTP ${DEL}"
+          done
+
+          # 上传（assets 端点走 uploads.github.com，不是 api.github.com）
+          UP="https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${REL_ID}/assets"
+          for f in "$TARBALL" "$SUM"; do
+            name="$(basename "$f")"
+            SIZE="$(wc -c < "$f" | tr -d ' ')"
+            CODE="$(curl -sS -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer ${GH_TOKEN}" -H "Content-Type: application/octet-stream" \
+              -X POST "${UP}?name=${name}" --data-binary @"$f")"
+            [ "$CODE" = "201" ] || fail "上传 ${name} 返回 ${CODE}（期望 201），大小 ${SIZE} 字节"
+            echo "✅ 已上传 ${name}（${SIZE} 字节）"
+          done
+
+          # 回读确认（避免「以为传了其实没有」）
+          curl -sS "${AUTH[@]}" "${API}/releases/${REL_ID}/assets?per_page=100" \
+            | jq -r '.[] | "  资产：\(.name)  \(.size) 字节  下载数 \(.download_count)"'
