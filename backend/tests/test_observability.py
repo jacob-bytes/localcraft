@@ -15,6 +15,8 @@
 
 实测构成（单进程 SQLite，`page_size=24`，`before_cursor_execute` 逐条打印出来数的）：
 
+**改前（M7 当时）**
+
     匿名 `GET /api/v1/tools`（首页，含 facets），进程内的**第一次**请求 —— 20 条
          1  `system_settings` = portal.allow_anonymous_view   （portal_access 依赖）
          4  `system_settings` = security.*                    （get_security_policy）
@@ -26,25 +28,42 @@
          2  `user_roles`（关系的 selectin 加载）
          2  facets 聚合 + categories
         ────
-        20
+        20（**第二次**起 19：`get_ttl_hours` 有 60 秒进程内缓存，
+        测试里用 `_warm_up()` 把状态推到稳态再测）
 
-    同端点**第二次**起稳定在 19 条：`get_ttl_hours` 有 60 秒进程内缓存，
-    那条 `images.signature_ttl_hours` 不再发。测试里用 `_warm_up()` 把状态
-    推到稳态再测，理由见该函数的 docstring。
+**改后（M18 收尾的「合并设置读取」）**——`system_settings` 点查由 12 条降到 3 条：
 
-    匿名 `GET /api/v1/tools/{slug}`（详情）同样 19 条。
-    匿名 `GET /api/v1/tools?page=2`（不算 facets）13 条。
+  1. `deps.get_visibility_context` 原先调 `get_security_policy()` **只为拿
+     `allow_admin_view_private` 一个布尔**（11 条语句换 1 个字段），
+     改为只读那一个键（`settings_service.is_admin_private_view_allowed`）；
+  2. `get_security_policy` 自身从 11 次点查改为 **1 条 `IN` 查询**
+     （`system_settings.get_effective_many`），三层兜底逐字保持不变。
+     它已不在本端点路径上，但登录 / 刷新路径仍在调它，同样受益。
+
+实测（同一套 `_warm_up` + `_facets_uncached` harness，改前 / 改后各跑一次）：
+
+| 端点 | 改前 | 改后 |
+| --- | --- | --- |
+| 门户列表首页（含 facets，稳态） | 19 | **9** |
+| 门户列表第 2 页（不算 facets） | 14 | **4** |
+| 工具详情 | 20 | **10** |
+
+三条路径**各少 10 条** —— 正是「11 条点查 → 1 条批量」的净差。
+
+为什么值得做：`docs/11` §2.5 的 O4 实验把「CPU 随并发放大」的放大器定位到
+**`aiosqlite` 的专用工作线程那一跳**（每条语句跨一次），少发语句 = 少跳。
+本文件只钉住**语句数**这个可观测的量；**CPU 收益本轮未实测**。
 
 `docs/11` §2.2 O5 写的是「门户列表当前已知是 4 条查询」—— 那 4 条指的是
 **业务查询**（total / list / facets / categories），不含设置点查。
 两者不矛盾，但口径必须说清（本文件断言的是含设置点查的全量，因此上限比 4 大）。
 
-另外 `system_settings` 的点查里有重复（`portal.allow_anonymous_view` 一次请求
-读了两遍），这是**既有实现**，本轮不动它 —— 但它说明「合并设置读取」
-是一条真实存在的优化空间，值得记进 `docs/11`（监控方裁定）。
+原先这里写着「合并设置读取是一条真实存在的优化空间，值得记进 `docs/11`
+（监控方裁定）」—— 该裁定已在本轮兑现，`docs/11` §2.1 新增 **O13**。
 
-**本轮不改 `settings_service`**：它的模块 docstring 明确写了「设置项运行时
-修改后立即生效（FR-CFG-01），因此不做进程内缓存」，那是功能取舍不是疏忽。
+**仍然不做进程内缓存**：`settings_service` 的取舍是「设置项运行时修改后立即生效
+（FR-CFG-01）」，所以每次请求都读表。本轮省的是**语句数**（11 → 1），
+不是「少读请求」—— 语义上仍然是每请求都读到最新值。
 """
 
 from __future__ import annotations
@@ -67,20 +86,25 @@ from app.db.session import engine
 # 上限常量 —— 集中在这里，改动时必须显式面对「我为什么放宽」
 # ---------------------------------------------------------------------------
 #: 门户列表**首页**（含 facets）的语句数上限。
-#: 实测 19（进程级缓存已热，见 `_warm_up`）。取 25 = 19 + 6。
-#: 为什么留 6 而不是 0：这几条查询里有一批是
-#: `get_security_policy` / `get_ttl_hours` 的点查，数量随「设置读取点」增减；
-#: 留 6 的余量可以让「多加一次设置读取」这种无害改动不报警，
-#: 而**任何 N+1**（随条目数或结果行数增长的查询）都会立刻越过 25。
-PORTAL_LIST_FIRST_PAGE_MAX_STATEMENTS = 25
+#: 实测 **9**（进程级缓存已热，见 `_warm_up`）。取 12 = 9 + 3。
+#: 为什么留 3 而不是 0：这几条查询里仍有设置点查（`portal_access` 读
+#: `allow_anonymous_view`、可见性上下文读 `allow_admin_view_private`），
+#: 数量随「设置读取点」增减；留 3 的余量让「多加一次设置读取」这类无害改动不报警，
+#: 而**任何 N+1**（随条目数或结果行数增长的查询）都会立刻越过 12。
+#:
+#: 历史上这里是 25（实测 19 + 6）。M18 收尾把 11 次设置点查并成 1 条 `IN` 之后
+#: 实测降到 9，上限随之下调 —— **上限不跟着实测走就会变成一条越来越松的守卫**：
+#: 留着 25 的话，等于给未来加回 16 条语句留了免费额度，那正是它要防的事。
+PORTAL_LIST_FIRST_PAGE_MAX_STATEMENTS = 12
 
-#: 门户列表翻页（`page >= 2`，不算 facets）。实测 13。上限 19 = 13 + 6。
+#: 门户列表翻页（`page >= 2`，不算 facets）。实测 **4**。上限 7 = 4 + 3。
 #: 选上限而不是精确等号的理由同上；这条的主要作用是钉住
 #: 「facets 只在第一页算」这一条既有优化不被悄悄改回去。
-PORTAL_LIST_LATER_PAGE_MAX_STATEMENTS = 19
+#: （历史上是 19：实测 14 + 5。）
+PORTAL_LIST_LATER_PAGE_MAX_STATEMENTS = 7
 
-#: 工具详情上限。实测 19。上限 25 = 19 + 6。
-TOOL_DETAIL_MAX_STATEMENTS = 25
+#: 工具详情上限。实测 **10**。上限 13 = 10 + 3。（历史上是 25：实测 20 + 5。）
+TOOL_DETAIL_MAX_STATEMENTS = 13
 
 #: 不碰数据库的探测端点必须是 0 条语句。
 #: 用**精确等号**而不是上限：`/healthz` 的契约就是「只回答进程活着，不碰数据库」

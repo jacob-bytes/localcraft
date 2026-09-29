@@ -45,37 +45,45 @@ async def get_security_policy(session: AsyncSession) -> SecurityPolicy:
 
     缺失的行回退到 `app.repositories.system_settings.SETTING_DEFAULTS`，
     再回退到环境变量 —— 三层兜底保证「迁移还没跑」时服务仍可用。
+
+    ★ 实现上走 **`get_effective_many`（一条 `IN` 查询）**，不是 11 次点查。
+    改之前是 11 个并排的 `get_effective_*`，也就是 11 条独立语句 ——
+    在匿名 `GET /api/v1/tools` 上占整请求语句数的六成（`tests/test_observability.py`
+    把这个构成逐条列了出来）。这些键在**语义上是一个整体**（同表、同批、同一时刻），
+    拆成 11 次只是写法副作用；而 `aiosqlite` 每条语句都要跨一次专用工作线程
+    （`docs/11` §2.5 定位的放大器），所以这是实打实的成本，不是风格问题。
+
+    ⚠️ 每个键的 `default` 必须**原样**带过来（有的是环境变量、有的是字面量）：
+    第三层兜底用的是调用方的 default，统一兜一个值会改变「迁移还没跑」时的行为。
     """
+    values = await settings_repo.get_effective_many(
+        session,
+        (
+            ("security.access_token_minutes", "int", env_settings.access_token_minutes),
+            ("security.refresh_token_days", "int", env_settings.refresh_token_days),
+            ("security.login_max_failures", "int", env_settings.login_max_failures),
+            ("security.lockout_minutes", "int", env_settings.lockout_minutes),
+            ("portal.allow_anonymous_view", "bool", False),
+            ("portal.allow_admin_view_private", "bool", True),
+            ("portal.site_name", "str", "工具与 Skill 平台"),
+            ("portal.announcement_md", "str", ""),
+            ("portal.default_sort", "str", "hot"),
+            ("portal.page_size", "int", 24),
+            ("api.docs_enabled", "bool", env_settings.api_docs_enabled),
+        ),
+    )
     return SecurityPolicy(
-        access_token_minutes=await settings_repo.get_effective_int(
-            session, "security.access_token_minutes", env_settings.access_token_minutes
-        ),
-        refresh_token_days=await settings_repo.get_effective_int(
-            session, "security.refresh_token_days", env_settings.refresh_token_days
-        ),
-        login_max_failures=await settings_repo.get_effective_int(
-            session, "security.login_max_failures", env_settings.login_max_failures
-        ),
-        lockout_minutes=await settings_repo.get_effective_int(
-            session, "security.lockout_minutes", env_settings.lockout_minutes
-        ),
-        allow_anonymous_view=await settings_repo.get_effective_bool(
-            session, "portal.allow_anonymous_view", False
-        ),
-        allow_admin_view_private=await settings_repo.get_effective_bool(
-            session, "portal.allow_admin_view_private", True
-        ),
-        site_name=await settings_repo.get_effective_str(
-            session, "portal.site_name", "工具与 Skill 平台"
-        ),
-        announcement_md=await settings_repo.get_effective_str(
-            session, "portal.announcement_md", ""
-        ),
-        default_sort=await settings_repo.get_effective_str(session, "portal.default_sort", "hot"),
-        page_size=await settings_repo.get_effective_int(session, "portal.page_size", 24),
-        api_docs_enabled=await settings_repo.get_effective_bool(
-            session, "api.docs_enabled", env_settings.api_docs_enabled
-        ),
+        access_token_minutes=values["security.access_token_minutes"],
+        refresh_token_days=values["security.refresh_token_days"],
+        login_max_failures=values["security.login_max_failures"],
+        lockout_minutes=values["security.lockout_minutes"],
+        allow_anonymous_view=values["portal.allow_anonymous_view"],
+        allow_admin_view_private=values["portal.allow_admin_view_private"],
+        site_name=values["portal.site_name"],
+        announcement_md=values["portal.announcement_md"],
+        default_sort=values["portal.default_sort"],
+        page_size=values["portal.page_size"],
+        api_docs_enabled=values["api.docs_enabled"],
     )
 
 
@@ -154,6 +162,20 @@ async def get_meta(session: AsyncSession) -> MetaResponse:
 async def is_anonymous_view_allowed(session: AsyncSession) -> bool:
     """`GET /api/v1/tools` 对未登录用户是 401 还是返回公开数据（契约 §6）。"""
     return await settings_repo.get_effective_bool(session, "portal.allow_anonymous_view", False)
+
+
+async def is_admin_private_view_allowed(session: AsyncSession) -> bool:
+    """`portal.allow_admin_view_private`：超管是否可见他人 `private` 工具（FR-ACL-04）。
+
+    ★ 存在的理由就是**为了只读这一个键**：调用点（`deps.get_visibility_context`）
+    原先走 `get_security_policy()` —— 为了拿这一个布尔，把 11 个设置项全查了一遍，
+    即 11 条语句换 1 个字段。而 `aiosqlite` 每条语句跨一次专用线程
+    （`docs/11` §2.5 定位的放大器），这类「多查」在热路径上是直接的成本。
+    默认值 `True` 与 `get_security_policy` 里那一处**必须保持一致**。
+    """
+    return await settings_repo.get_effective_bool(
+        session, "portal.allow_admin_view_private", True
+    )
 
 
 # ===========================================================================

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -195,6 +196,53 @@ async def get_effective_str(session: AsyncSession, key: str, default: str = "") 
         fallback = SETTING_DEFAULTS_BY_KEY.get(key)
         return str(fallback[0]) if fallback else default
     return str(row.value)
+
+
+async def get_effective_many(
+    session: AsyncSession,
+    requests: Sequence[tuple[str, str, Any]],
+) -> dict[str, Any]:
+    """一次读齐多个设置项（**一条 `IN` 查询**），三层兜底与逐个 `get_effective_*` 完全一致。
+
+    参数 `requests` 是 `(key, kind, caller_default)` 三元组序列，`kind ∈ {"bool","int","str"}`。
+
+    ## 为什么需要它：省的不只是时间，是**语句数**
+
+    `docs/11` §2.5 的 O4 实验把「CPU 随并发放大」的放大器定位到 **`aiosqlite` 的专用
+    工作线程那一跳** —— 每一条语句都要跨一次线程，所以**少发一条语句 = 少一次跳**。
+    而改之前 `get_security_policy` 为了读 11 个设置项发了 **11 条独立点查**，
+    在匿名 `GET /api/v1/tools` 上占整请求语句数的六成（守卫测试
+    `tests/test_observability.py` 把这个构成逐条列了出来）。
+
+    这些点查在**语义上本来就是一个整体**（同一张表、同一批键、同一时刻），
+    拆成 11 次只是实现方式的副作用，没有任何理由。
+
+    ## 兜底层次（与单个版本逐字一致，漏一层就会让「迁移还没跑」的库行为改变）
+
+    1. 表里有这一行 → 用行值；
+    2. 没有 → `SETTING_DEFAULTS_BY_KEY` 里的代码默认值；
+    3. 连默认值都没有（键不在权威清单里）→ 调用方给的 `default`。
+
+    注意第 3 层用的是**调用方**的 default（例如 `env_settings.access_token_minutes`），
+    这也是为什么每个键都要把自己的 default 一起传进来 —— 不能在这里统一兜一个值。
+    """
+    keys = [key for key, _kind, _default in requests]
+    rows = await get_many(session, keys)
+
+    resolved: dict[str, Any] = {}
+    for key, kind, default in requests:
+        if key in rows:
+            raw = rows[key]
+        else:
+            fallback = SETTING_DEFAULTS_BY_KEY.get(key)
+            raw = fallback[0] if fallback else default
+        if kind == "bool":
+            resolved[key] = bool(raw)
+        elif kind == "int":
+            resolved[key] = int(raw)
+        else:
+            resolved[key] = str(raw)
+    return resolved
 
 
 # ===========================================================================

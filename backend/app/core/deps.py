@@ -448,12 +448,16 @@ async def get_visibility_context(
     from app.repositories.tools import VisibilityContext
 
     principal = await resolve_principal(request, session)
-    policy = await settings_service.get_security_policy(session)
+    # ★ 只读需要的那**一个**键。原先这里调 `settings_service.get_security_policy()`，
+    # 为了拿 `allow_admin_view_private` 一个布尔，把 11 个设置项全查了一遍 ——
+    # 11 条语句换 1 个字段，而每条语句在 aiosqlite 下都要跨一次专用工作线程
+    # （docs/11 §2.5 定位的放大器）。见 `is_admin_private_view_allowed` 的 docstring。
+    allow_admin_view_private = await settings_service.is_admin_private_view_allowed(session)
     return await VisibilityContext.build(
         session,
         user_id=principal.user_id if principal else None,
         roles=principal.roles if principal else (),
-        allow_admin_view_private=policy.allow_admin_view_private,
+        allow_admin_view_private=allow_admin_view_private,
     )
 
 
