@@ -2452,3 +2452,116 @@ webapp_checked_at    : datetime | null
 结果；从 `localcraft-maintenance.service` 沙箱（`ProtectSystem=strict`）能否直连各
 内网 webapp；systemd 每小时跑 `run_all` 时探活最坏耗时（200/8×5s ≈ 125s，判断安全
 但未实测）；真实 nginx `--proxy-headers` 链路下「豁免的只有真正本机来源」。
+
+---
+
+## 31. M15 契约冻结（PostgreSQL 全文检索）
+
+用户裁定：不做 LDAP/SSO（内网组内私有部署，走不通），先补 PG 全文检索。
+
+### 31.1 现状（已核实，不要重新论证）
+
+**好消息：分词与抽象都已经写好了，本轮是「照着接口补一个实现」。**
+
+| 已有的 | 说明 |
+| --- | --- |
+| `search/base.py::is_cjk` / `tokenize` / `tokenize_query` | **中文按单字切分**（`内网工具` → `内 网 工 具`），英文数字保持整词。**这套切分对 FTS5 与 PG 的 `to_tsvector` 同样适用** |
+| `SearchBackend` Protocol | `name` / `available` / `supports_reindex` / `upsert` / `delete` / `matching_tool_ids` / `reindex_all` |
+| `SqliteFts5Backend` | SQLite 的 FTS5 实现（虚表 `tool_search_index`） |
+| `LikeSearchBackend` | 回退实现：`matching_tool_ids` 返回 `None`，**由仓储改用 LIKE 直接查 `tools`** |
+| `get_search_backend()` | `is_sqlite → FTS5`，**其他方言一律回退 LIKE**（PG 现在走的就是它） |
+
+**因此 PG 缺的只有「一个 backend + 一个迁移」，不是一套新设计。**
+
+> **关于「仓储是唯一允许写 SQL 的地方」**：`LikeSearchBackend` 的 docstring 里有这句。
+> 它约束的是**业务查询**；`SqliteFts5Backend` 本身就在写 MATCH 语句。
+> 检索后端是这条约定的既定例外（它们是基础设施，不是业务查询）。**PG 后端可以直接写 SQL。**
+
+### 31.2 PG 后端设计（冻结）
+
+新增 `backend/app/search/postgres_fts.py::PostgresFtsBackend`。
+
+**① 存储：`tools` 表上的一列 `search_vector tsvector` + GIN 索引**
+
+**★ 这一列不得加进 ORM 模型。** 理由（已核实）：仓储到处用 `select(Tool)`，
+而 SQLAlchemy 会按模型生成完整列清单 —— 把 `search_vector` 写进模型，**门户列表
+查询每次都会多拉一个体积可观的 tsvector**。所以它**只在迁移里存在**，
+由后端用原生 SQL 读写。
+
+（与 SQLite 的 `tool_search_index` 虚表**刻意不对称**：FTS5 必须用独立的虚表，
+PG 用列 + GIN 更好——不需要 JOIN。这处不对称要在 docstring 里写明，免得后人以为是漏做。）
+
+**② 文本检索配置用 `simple`，不要用 `english`**
+
+SQLite 侧 FTS5 用的是 `unicode61`（**不做词干还原**）。若 PG 用 `english`，
+两种方言对同一个查询会给出**不同结果**。用 `simple` 保持行为一致。
+
+**③ 查询构造**
+
+用 `tokenize_query(query)` 拿到 token 列表 → 空格连接 → `plainto_tsquery('simple', …)`。
+`plainto_tsquery` 把空格分隔的词之间视为 **AND**，与 SQLite 侧的 `" AND "` 拼接语义一致。
+
+**④ 不引入排序**
+
+`matching_tool_ids` 只返回 `set[int]`，排序由主查询（热门/最新/名称）决定 ——
+与 SQLite 侧完全一致。**不要**引入 `ts_rank`，那会让两种方言的结果顺序不一致。
+
+**⑤ ★ 索引文本必须截断**
+
+`SearchDocument.to_index_text()` 会把 `description`（Markdown，可能很长）拼进去。
+PG 的 `tsvector` 有**硬性大小上限**，超了会直接报错（不是截断）。
+**必须在上限之内截断**，并说明截断长度与依据。
+
+**⑥ 列缺失时优雅降级（与 SQLite 对称）**
+
+迁移没跑到时列不存在 → `available=False` → `matching_tool_ids` 返回 `None`
+→ 仓储自动走既有 LIKE 回退。**服务不得因此起不来**（SQLite 侧就是这个行为）。
+
+### 31.3 迁移 `0009`（PG 专属，冻结）
+
+`0008` **已提交并推送**，按既定规则不得再改 → 新建 `0009`，`down_revision = "0008"`。
+
+- **方言守卫**：非 PostgreSQL 直接 `return`（照 `0003` 对 SQLite 的写法）
+- `ALTER TABLE tools ADD COLUMN search_vector tsvector`
+- `CREATE INDEX ix_tools_search_vector ON tools USING GIN (search_vector)`
+- **回填既有行**（迁移里就把现有工具索引好，否则升级后搜不到旧数据）
+- `downgrade` 删索引 + 删列
+- 幂等：重复 upgrade 不炸（列/索引存在性检查）
+
+### 31.4 `reindex-search` 在 PG 上恢复可用（冻结）
+
+M10 因为 PG 没有索引，把 `supports_reindex` 设为 `False`，让 CLI 明确报错退出。
+现在 PG 有了真索引 → `supports_reindex = True`（列存在时）→ **CLI 正常重建**。
+
+**M10 加的那条测试要跟着改**（`test_reindex_search_cli_never_reports_success_without_an_index`
+之类的断言）：它原本钉住「PG 上没有索引 → 必须非 0 退出」。现在要改为
+**钉住「列不存在时（回退后端）必须非 0 退出」**，而不是删除断言 ——
+那条不变量依然成立，只是触发条件变了。
+
+### 31.5 验证要求（这一轮的重点）
+
+1. **★ 先验分词假设再写实现**：在真 PG 上直接跑
+   `SELECT to_tsvector('simple', '内 网 工 具');` 与
+   `SELECT to_tsvector('simple','内 网 工 具') @@ plainto_tsquery('simple','工 具');`
+   —— 确认「单字切分后能匹配」。**把原始输出贴进报告。**
+   如果这个假设不成立，整个方案要重来，所以**先做这一步**。
+2. **★ 方言一致性**（最强的检查）：造一批工具，同一个查询在 **SQLite 与 PG 上
+   返回的 id 集合必须相同**。不一致就是设计有问题，不许含糊过去。
+3. 长描述不报错（构造一个超长 `description`，确认 `upsert` 不抛异常）。
+4. 列缺失时降级：把列删掉后搜索仍可用（走 LIKE）、服务不崩。
+5. `reindex-search` 在 PG 上成功重建、条数正确。
+6. 迁移 `0009` 的 downgrade → upgrade 与重复 upgrade 真实输出（PG 上）。
+
+### 31.6 台账（判据见 §21）
+
+| 裁定 | 目标端 | 判据 | 证据 |
+| --- | --- | --- | --- |
+| `search_vector` 列**不进 ORM 模型** | 后端 | **A** | §31.2①，M15 任务书开工前已含 |
+| 用 `simple` 而非 `english` 配置 | 后端 | **A** | §31.2②，同上 |
+| 不引入 `ts_rank`，排序交给主查询 | 后端 | **A** | §31.2④，同上 |
+| 索引文本必须截断 | 后端 | **A** | §31.2⑤，同上 |
+| 列缺失时降级走 LIKE，服务不崩 | 后端 | **A** | §31.2⑥，同上 |
+| 迁移 `0009` PG 专属 + 回填 + 幂等 | 后端 | **A** | §31.3，同上 |
+| PG 上 `reindex-search` 恢复可用；M10 的断言改为钉「回退后端必须非 0 退出」 | 后端 | **A** | §31.4，同上 |
+| **先验分词假设再写实现** | 后端 | **A** | §31.5①，同上 |
+| SQLite 与 PG 同一查询返回同一 id 集合 | 后端 | **A** | §31.5②，同上 |
