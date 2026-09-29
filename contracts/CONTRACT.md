@@ -2216,3 +2216,155 @@ footer_tagline : str
 | 版本行 + 标语恢复为全站显示 | 前端 | **A** | §28.6，同上 |
 | 4 个配置字段仍只在门户相关页 | 前端 | **A** | §28.6，同上 |
 | §27.4「字段全空则整个页脚不渲染」废止 | 前端 | **A** | §28.6，同上 |
+
+---
+
+## 29. M14 契约冻结（把三个"半成品"做实 + 收尾已确认缺陷）
+
+监控方体检后用户选定「第一批 + 第二批」共 6 项。**三件是"东西已存在但没接通"**，
+两件是已确认缺陷的收尾，一件是守卫补盲。
+
+### 29.1 三项的现状（已核实，不要重新论证）
+
+| 项 | 已存在的部分 | 缺的部分 |
+| --- | --- | --- |
+| 在线工具探活 | 设置项 `webapp.health_check_enabled`、`/meta` 的 `features.webapp_health_check`、列 `webapp_health_url` / `webapp_health_status` / `webapp_checked_at` | **没有任何探活实现**；预览库 26 行的 `webapp_health_status` **全为 NULL**；前端不展示 |
+| 应用层限流 | 错误码 `RATE_LIMITED`（已映射 429） | **全仓没有一处抛出它** —— 即完全没有限流 |
+| `images.signature_ttl_hours` | `SETTING_DEFAULTS` 里有、运行时兜底生效 | **从未被任何迁移播种** → 管理端看不到、`PUT` 报未知设置项 |
+
+### 29.2 探活：实现方式（冻结）
+
+**入口**：新增 maintenance 任务 **`webapp-health`**，接进 `app.cli maintenance --task`
+与 `run_all`。**不新增 systemd 单元** —— 复用既有 `localcraft-maintenance.timer`。
+
+**只检测这些工具**：`deleted_at IS NULL` 且 `tool_type == 'webapp'` 且
+`webapp_health_url` 非空。
+
+**受设置项控制**：`webapp.health_check_enabled` 为 `false` 时该任务**直接跳过**
+（终于让这个开关有意义）。设为 `true` 才真正探测。
+
+**探测规则**（冻结，别自行放宽）：
+
+| 项 | 值 |
+| --- | --- |
+| 方法 | `HEAD`；返回 405/501 时回退 `GET` |
+| 超时 | 5 秒（连接 + 读取） |
+| 并发 | 8 |
+| 每次运行上限 | 200 个工具（防止一次跑太久） |
+| **重定向** | **不跟随**。3xx 视为 **可达（ok）**，但不继续请求 Location |
+| `ok` | 2xx 或 3xx |
+| `timeout` | 超时 |
+| `fail` | 连接错误、DNS 失败、4xx、5xx |
+
+**不跟随重定向是刻意的**：`webapp_health_url` 是管理员填的，但跟随重定向会让
+探测变成「以服务端身份访问任意主机」的跳板。内网风险低，但这条不花成本。
+
+**写入**：`webapp_health_status`（`ok`/`fail`/`timeout`）、`webapp_checked_at` = 本次检测时间。
+`NULL` 表示**从未检测过**，与 `fail` 是两回事。
+
+### 29.3 探活：暴露给前端的字段（冻结）
+
+**`ToolListItem` 新增 1 个字段**：
+
+```
+webapp_unhealthy : bool = False
+```
+
+派生字段：仅当 `tool_type == 'webapp'` 且 `webapp_health_status in ('fail','timeout')`
+时为 `true`。**从未检测过（NULL）不算不健康** —— 否则刚部署时会满屏告警。
+
+**`ToolDetail` 新增 2 个字段**：
+
+```
+webapp_health_status : str | null     # 'ok' | 'fail' | 'timeout' | null(未检测)
+webapp_checked_at    : datetime | null
+```
+
+> 列表只给派生的布尔、详情给原始值 —— 列表页 24 条不需要背两个完整字段，
+> 而卡片只需要知道「要不要打一个"可能已失效"的标记」。
+
+### 29.4 限流（冻结）
+
+**实现**：进程内滑动窗口计数，键为 `(scope, client_ip)`。
+`get_client_info()` 已有，直接复用；**不要新写取 IP 的逻辑**。
+
+**★ loopback 豁免**：来源为 `127.0.0.1` / `::1` / `localhost` / `testclient`
+的请求**不计入限流**。理由与 `/metrics` 同源（§24.1）：uvicorn 的
+`--proxy-headers --forwarded-allow-ips=127.0.0.1` 会把反代来源还原成真实客户端 IP，
+所以豁免的只有「真正从本机发起」的请求（健康检查、运维脚本、本机 ops）。
+**部署若是直连 `http://ip:port`（D39），所有真实客户端都带自己的 IP，限流照常生效。**
+
+**响应**：`429` + `code = RATE_LIMITED`（既有错误码，终于被用上）+
+**`Retry-After` 响应头**（秒）。
+
+**新增 4 个设置项**（接进既有设置机制，管理端自动出现编辑器）：
+
+| key | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `security.rate_limit_enabled` | bool | `true` | 限流总开关 |
+| `security.rate_limit_per_minute` | int | `300` | 每 IP 每分钟的 **API 总配额** |
+| `security.rate_limit_login_per_minute` | int | `10` | 每 IP 每分钟的**登录**配额 |
+| `security.rate_limit_upload_per_minute` | int | `30` | 每 IP 每分钟的**上传**配额 |
+
+**★ 测试怎么覆盖（这一点必须做对）**：因为 loopback 被豁免，**测试客户端打不到限流**。
+所以**必须直接测限流器本身**（用一个非 loopback 的伪 IP 调它），
+**不要**试图通过 TestClient 发几百次请求来触发 —— 那既慢又不可靠。
+
+### 29.5 迁移 `0008`（冻结）
+
+`0007` **已随 v1.1.0 发布**，所以**不得再改它**，新迁移为 `0008`，`down_revision = "0007"`。
+
+内容（共 5 行）：
+- `images.signature_ttl_hours`（补播种，默认 168，int，非 public）—— 收尾已确认缺陷
+- §29.4 的 4 个限流设置项
+
+沿用既有要求：幂等 upgrade、可跑 downgrade、**Core + `sa.JSON`（不要裸 SQL）**。
+
+### 29.6 导入/恢复的终态检查（冻结）
+
+`import_export_service._replace_roles` 整体替换角色且不过超管守卫（§26.3 已记录）。
+**不逐步加守卫**，改为**在导入事务提交前做一次终态检查**：
+
+> 若检查结果为「本次导入后**活跃超管数为 0**」→ **整体回滚**并报错。
+
+理由（§26.3 已论证）：合法的「从备份恢复」**必须**允许超管数低于当前值
+（比如备份里就只有 1 个超管），所以不能套用「不能少于当前」的守卫；
+但「恢复完一个超管都没有」一定是错的，那是把自己锁在门外。
+
+### 29.7 守卫补盲（冻结）
+
+`backend/tests/test_shell_portability.py` 现在只扫 `.sh`（`_SHELL_SUFFIXES = {".sh"}`），
+**`.github/workflows/*.yml` 里的 shell 片段不在范围内**。
+
+**扩展为同时扫描 `.github/workflows/` 下的 `*.yml` / `*.yaml`**（按文本扫）。
+**已知取舍**：这会把 YAML 的注释与中文说明也纳入扫描，可能产生「其实不是 shell」
+的命中。**这是可接受的** —— 本守卫的修法（把 `$VAR` 写成 `${VAR}`）在任何上下文里
+都无害，而漏检的代价是一个会在 bash 3.2 上崩掉的脚本。若确有误报，改文案或加花括号即可。
+
+### 29.8 门户首页区块（冻结）
+
+在门户列表页的**公告下方、工具栏上方**加两个横向区块：
+
+| 区块 | 数据源 | 显示条件 |
+| --- | --- | --- |
+| **继续使用** | `localStorage` 的最近访问（`recentTools`，已有，M7 建的） | 有记录时；最多 6 个 |
+| **我的收藏** | `GET /api/v1/me/favorites`（已有接口） | **仅登录用户**；有收藏时；最多 6 个 |
+
+- **任一为空则整块不渲染**（不放空标题、不留空白）。
+- 「继续使用」**只读既有 localStorage，不新增存储**；匿名也可显示（它本就是本地数据）。
+- 工具详情页**不加**这两个区块。
+- 卡片复用既有组件，不要新造一套。
+
+### 29.9 台账（判据见 §21）
+
+| 裁定 | 目标端 | 判据 | 证据 |
+| --- | --- | --- | --- |
+| 探活走 `maintenance --task webapp-health`，不新增 systemd 单元 | 后端 | **A** | §29.2，M14 任务书开工前已含 |
+| 探测规则（HEAD→GET、5s、并发 8、上限 200、**不跟随重定向**） | 后端 | **A** | §29.2，同上 |
+| `ToolListItem.webapp_unhealthy` / `ToolDetail` 两个原始字段 | 两端 | **A** | §29.3，同上 |
+| 限流按 IP、**loopback 豁免**、429 + `Retry-After` | 后端 | **A** | §29.4，同上 |
+| 限流必须有**直接测限流器**的用例（不靠 TestClient 刷请求） | 后端 | **A** | §29.4，同上 |
+| 迁移 `0008`：补 `images.signature_ttl_hours` + 4 个限流设置 | 后端 | **A** | §29.5，同上 |
+| 导入终态检查：超管数为 0 则整体回滚 | 后端 | **A** | §29.6，同上 |
+| 守卫扩展覆盖 workflow YAML | 后端 | **A** | §29.7，同上 |
+| 门户两个区块，空则不渲染 | 前端 | **A** | §29.8，同上 |
