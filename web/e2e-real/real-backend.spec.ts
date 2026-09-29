@@ -1100,13 +1100,16 @@ test.describe("真实后端联调（mock 之外的路径）", () => {
   });
 
   /* ------------------------------------------------------------------ M14 */
-  test("P. M14 默认部署零变化（真机）：门户两个区块都不渲染，且匿名不发 /me/favorites", async ({
+  test("P. M14 默认部署零变化（真机）：连 tab 栏都不渲染，且匿名不发 /me/favorites", async ({
     page,
   }) => {
     /*
      * 真机版的「默认部署零变化」：全新浏览器上下文（没有最近访问、没有收藏）+
-     * 真实后端种子。门户里**不得**出现这两个区块的任何元素 —— 与 mock 套件的
-     * 用例 1 是同一条断言，只是换成了真实数据路径。
+     * 真实后端种子。M16（§32.2）起这条不变量被**加强**为「只有一个 tab 时整条
+     * tab 栏都不渲染」—— 所以这里钉的不再只是「两个区块不渲染」，而是
+     * 「`role="tablist"` / `role="tabpanel"` 一个都没有」（连 Radix 的 Tabs 外壳
+     * 都不该出现），面板自然更不存在。与 mock 套件的用例 1 是同一条断言，
+     * 只是换成了真实数据路径。
      */
     const favoritesRequests: string[] = [];
     page.on("request", (request) => {
@@ -1117,8 +1120,12 @@ test.describe("真实后端联调（mock 之外的路径）", () => {
     await page.goto("/");
     await expectPortalReady(page);
 
-    await expect(page.getByTestId("portal-continue-using")).toHaveCount(0);
-    await expect(page.getByTestId("portal-favorites-highlight")).toHaveCount(0);
+    await expect(page.getByRole("tablist")).toHaveCount(0);
+    await expect(page.getByRole("tab")).toHaveCount(0);
+    await expect(page.getByRole("tabpanel")).toHaveCount(0);
+    await expect(page.locator('[data-testid="portal-tabs"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="portal-recent-grid"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="portal-favorites-grid"]')).toHaveCount(0);
     expect(favoritesRequests, "匿名不得请求 /me/favorites（白打 401）").toEqual([]);
   });
 

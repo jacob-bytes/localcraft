@@ -1,81 +1,78 @@
 import { useQueries, useQuery, type QueryFunctionContext } from "@tanstack/react-query";
 import * as React from "react";
+import { Link } from "react-router-dom";
 
 import { favoritesQueryKey, fetchFavorites } from "@/api/engagement";
 import { DEFAULT_PAGE_SIZE, fetchToolDetail, toolDetailQueryKey } from "@/api/tools";
 import type { ToolDetail, ToolListItem } from "@/api/types";
-import { ToolCard } from "@/components/tools/ToolCard";
+import { PageSkeleton } from "@/components/common/PageSkeleton";
+import { ToolGrid } from "@/components/tools/ToolGrid";
 import { useAuth } from "@/hooks/useAuth";
 import { canEngage } from "@/lib/permissions";
 import { readRecentTools, type RecentToolEntry } from "@/lib/recentTools";
-import { cn } from "@/lib/utils";
 import { readWebappHealthStatus } from "@/lib/webappHealth";
 
 /**
- * M14 · F1（CONTRACT §29.8）：门户首页的两个「亮点」区块 —— 公告下方、工具栏上方。
+ * M16 · F1（CONTRACT §32.2）：门户的「继续使用」/「我的收藏」**两个 tab 面板**。
  *
- * 存在的理由（用户洞察）：这两份数据**早就有了**，但页面上一个字都看不到 ——
- * 「最近访问」只喂给 ⌘K 面板（`lib/recentTools`），「我的收藏」只有专门页面。
- * 而日常使用者 90% 的动作是「打开门户 → 找那个我常用的工具」。
+ * 这里取代了 M14 的 §29.8 横向区块（`PortalHighlights` / `ContinueUsingSection` /
+ * `FavoritesSection`）。为什么改，§32.1 写得很清楚：那块用了**全尺寸 `ToolCard`**，
+ * 高 363px、把主网格往下推 430px —— 「复用组件」是对的，错在**尺寸层级**。
+ * 所以这次不是推翻 M14 做对的事，只是把它从「堆在门户顶部」换成「平行的一个视图」：
  *
- * 三条硬约束，全部落在这个文件里：
+ *   - 宽容解析（详情 404 / 已下线就静默不出现）、匿名不发 `/me/favorites`、
+ *     「未检测 ≠ 失败」—— 全部原样保留；
+ *   - 上限不再是 6：tab 是一个**完整视图**，没有理由截断（§32.2）。
  *
- * 1. **任一为空则整块不渲染**（不放空标题、不留空白间距）。默认部署（没收藏、
- *    也没访问过）页面必须与加这个功能之前**逐字一致** —— 所以每个区块是
- *    「自己 return null」，而不是渲染一个空壳；也没有共同的外层容器，
- *    否则那层容器自己的 margin 就是凭空多出来的空白。
- * 2. **「继续使用」只读既有 `localStorage`，不新增存储键**（`readRecentTools`），
- *    且**匿名也显示** —— 它本来就是本地数据，与服务端无关。
- * 3. **「我的收藏」仅登录用户取数**：匿名连请求都不发（`enabled`），
- *    不白打一个必 401 的请求。
- *
- * 卡片**复用既有 `ToolCard`**（§29.8 末条），没有第二套卡片组件。
+ * 职责边界（**重要**）：本文件**不做 tab 栏**。tab 栏由 `PortalPage` 用
+ * `components/ui/tabs`（Radix）渲染 —— 只有它知道「一共几个 tab、默认选哪个、
+ * 选中的是不是有内容」。这里只负责「给定这个 tab 有内容，面板长什么样」，
+ * 并把「有没有内容」用 hook 暴露出去（`useRecentToolEntries` / `useFavoritesHighlight`），
+ * 因为 Radix 的 `TabsContent` 只在激活时挂载，计数不能等面板挂载才知道。
  */
 
-/** 两个区块各自最多（§29.8 / F1 表格：「最多 6 个」）。 */
-export const HIGHLIGHT_TOOLS_LIMIT = 6;
+/** 门户 tab 的三个取值（§32.2）。默认 `all`。 */
+export type PortalTab = "all" | "recent" | "favorites";
 
-/** 横向列表里每张卡的宽度。`shrink-0` 是「不产生页级横向滚动」的关键。 */
-const CARD_ITEM_CLASS = "w-64 shrink-0 snap-start sm:w-72";
+const PORTAL_TAB_SET: ReadonlySet<string> = new Set(["all", "recent", "favorites"]);
 
 /**
- * 区块外壳：可访问的标题语义 + 一个**自身可横向滚动**的列表。
- *
- * 窄屏下卡片不换行、不压缩，溢出被 `<ul>` 的 `overflow-x-auto` 吃掉，
- * **不会**把页面撑宽（`overscroll-x-contain` 顺带阻止滚动链传到页面）。
+ * `?tab=` 的解析：缺失或非法一律回落 `all`（默认 tab）。
+ * URL 是唯一状态源（与门户既有的 q/category/type/tag/sort/page 一致）。
  */
-function HighlightSection({
-  id,
-  title,
-  testId,
-  children,
-}: {
-  id: string;
-  title: string;
-  testId: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section aria-labelledby={id} data-testid={testId} className="mb-4">
-      <h2 id={id} className="text-sm font-semibold tracking-tight">
-        {title}
-      </h2>
-      <ul className="mt-2 flex snap-x gap-4 overflow-x-auto overscroll-x-contain pb-1">
-        {children}
-      </ul>
-    </section>
-  );
+export function readPortalTab(value: string | null): PortalTab {
+  return value !== null && PORTAL_TAB_SET.has(value) ? (value as PortalTab) : "all";
 }
 
-function HighlightItem({ children }: { children: React.ReactNode }) {
-  return <li className={cn("flex", CARD_ITEM_CLASS)}>{children}</li>;
+/**
+ * 「我的收藏」tab 只取**第一页**（§32.2 冻结）。`DEFAULT_PAGE_SIZE` = 24，
+ * 同时是与 `/me/favorites` 页**完全相同**的 pageSize —— 两个界面共用同一份缓存。
+ */
+const FAVORITES_TAB_PAGE_SIZE = DEFAULT_PAGE_SIZE;
+
+/* -------------------------------------------------------------------------- */
+/* 「继续使用」：本地最近访问（M7 · F6，最多 8 条）                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 挂载时读一次 `localStorage` 的最近访问。
+ *
+ * 为什么提成 hook：tab 的**存在性**（有没有本地记录 → 要不要出现这个 tab）
+ * 必须在面板挂载之前就知道，所以读取这一层要在 `PortalPage`。
+ *
+ * 「只读既有键、不新增存储」是 M7 的硬约束，这里原样沿用 `readRecentTools`。
+ */
+export function useRecentToolEntries(): RecentToolEntry[] {
+  // 门户页进入详情时会卸载，退回来就是一次重新挂载（重新读）。
+  const [entries] = React.useState<RecentToolEntry[]>(readRecentTools);
+  return entries;
 }
 
 /**
  * `ToolDetail` → `ToolListItem`。
  *
  * 为什么需要它：`recentTools` 只存 `{slug, name, at}`（§29.8 明确不许改存储形状），
- * 而 `ToolCard` 吃的是完整的 `ToolListItem`。列表接口没有「按 slug 批量取」的能力
+ * 而卡片吃的是完整的 `ToolListItem`。列表接口没有「按 slug 批量取」的能力
  * （`openapi.json` 里 `/tools` 只有 q/category/tag/type/owner/sort 参数），
  * 所以这里用详情接口补全字段。
  *
@@ -116,21 +113,19 @@ function detailToListItem(detail: ToolDetail): ToolListItem {
 }
 
 /**
- * 「继续使用」：`localStorage` 里的最近访问（M7 建的，最多 8 条，这里取前 6）。
+ * 「继续使用」面板：`localStorage` 里的**全部**本地记录（`recentTools` 上限 8 条，
+ * 不再像 §29.8 那样只取前 6 —— §32.2 冻结为「一个完整视图，不截断」）。
  *
- * **匿名同样显示** —— 这是本地数据，登录与否不影响（F1 硬要求 2）。
+ * **匿名同样显示** —— 这是本地数据，登录与否不影响。
  *
  * 取数说明：`ToolDetailPage` 用的是**同一个 queryKey**（`toolDetailQueryKey`），
- * 且 `staleTime` 与详情页一致（5 分钟）。所以主场景 —— 「刚看完那个工具，退回门户」
- * —— 数据已经在 react-query 缓存里，**一个请求都不发**；只有上一次会话留下的旧条目
- * 才需要补一次详情请求（每个 slug 最多 1 次，4xx 不重试，见 `lib/queryClient`）。
+ * 且 `staleTime` 与详情页一致（5 分钟）。所以主场景 —— 「刚看完那个工具，退回门户，
+ * 再点『继续使用』」—— 数据已经在 react-query 缓存里，**一个请求都不发**。
+ *
+ * 面板只在 tab 激活时挂载（Radix 默认 `forceMount` 关闭），所以**非激活的 tab 不会
+ * 白白去打这些详情请求**；切过去时命中缓存则同样不打。
  */
-export function ContinueUsingSection() {
-  // 挂载时读一次：门户页在进入详情时会卸载，退回来就是一次重新挂载（重新读）。
-  const [entries] = React.useState<RecentToolEntry[]>(() =>
-    readRecentTools().slice(0, HIGHLIGHT_TOOLS_LIMIT),
-  );
-
+export function RecentToolsPanel({ entries }: { entries: RecentToolEntry[] }) {
   const queries = useQueries({
     queries: entries.map((entry) => ({
       queryKey: toolDetailQueryKey(entry.slug),
@@ -146,65 +141,81 @@ export function ContinueUsingSection() {
     .filter((detail): detail is ToolDetail => Boolean(detail))
     .map(detailToListItem);
 
-  if (tools.length === 0) return null;
+  if (tools.length === 0) {
+    // 还在补详情：给骨架屏，不要先闪一句「不可用」。
+    if (queries.some((query) => query.isPending)) {
+      return <PageSkeleton variant="cards" count={Math.min(entries.length, 4)} />;
+    }
+    return (
+      <p className="text-sm text-muted-foreground" data-testid="portal-recent-empty">
+        这些本地记录对应的工具当前都不可用。
+      </p>
+    );
+  }
 
-  return (
-    <HighlightSection id="portal-continue-title" title="继续使用" testId="portal-continue-using">
-      {tools.map((tool) => (
-        <HighlightItem key={tool.slug}>
-          <ToolCard tool={tool} />
-        </HighlightItem>
-      ))}
-    </HighlightSection>
-  );
+  return <ToolGrid tools={tools} testId="portal-recent-grid" />;
 }
 
+/* -------------------------------------------------------------------------- */
+/* 「我的收藏」：GET /me/favorites 第一页                                       */
+/* -------------------------------------------------------------------------- */
+
 /**
- * 「我的收藏」：`GET /me/favorites`（既有接口，§23.4）。
+ * 我的收藏第一页（§32.2）。**在 `PortalPage` 与面板里各调一次**：
+ * 两个调用共用同一个 queryKey，所以只有一个请求、一份缓存。
  *
  * `enabled` 在「未认证 **或没有收藏能力**」时**关掉查询** —— 匿名（以及会话还没
- * 恢复完的 `unknown`）连请求都不发，不白打一个必然 401 的请求（F1 硬要求 3）。
+ * 恢复完的 `unknown`）连请求都不发，不白打一个必然 401 的请求（M14 的 F1 硬要求，
+ * M16 原样保留）。
  *
- * 监控方裁定（M14 集成期）：门用 `canEngage(user)`，**不是** `status === "authenticated"`。
+ * 监控方裁定（M14 集成期 §30.2）：门用 `canEngage(user)`，**不是** `status === "authenticated"`。
  * §29.8 的字面是「仅登录用户」，但 §25.1 已裁定 `viewer` 不能收藏 ——
  * 它的收藏夹**必然恒空**，为它发这一次请求纯属浪费；用 `canEngage` 与收藏控件的
  * 可见性门保持一致（同一份角色判定，不会两处漂移）。
- *
- * queryKey / pageSize 与 `/me/favorites` 页面**完全一致**（`favoritesQueryKey(1, 24)`），
- * 所以这两个界面共享同一份缓存：从门户点进「我的收藏」不会再拉一次。
- * 只渲染前 6 张（§29.8）。
  */
-export function FavoritesSection() {
+export function useFavoritesHighlight() {
   const { status, user } = useAuth();
   const enabled = status === "authenticated" && canEngage(user);
 
-  const favoritesQuery = useQuery({
-    queryKey: favoritesQueryKey(1, DEFAULT_PAGE_SIZE),
-    queryFn: ({ signal }) => fetchFavorites(1, DEFAULT_PAGE_SIZE, signal),
+  const query = useQuery({
+    queryKey: favoritesQueryKey(1, FAVORITES_TAB_PAGE_SIZE),
+    queryFn: ({ signal }) => fetchFavorites(1, FAVORITES_TAB_PAGE_SIZE, signal),
     staleTime: 60_000,
     enabled,
   });
 
-  const items = (favoritesQuery.data?.items ?? []).slice(0, HIGHLIGHT_TOOLS_LIMIT);
-  if (!enabled || items.length === 0) return null;
-
-  return (
-    <HighlightSection id="portal-favorites-title" title="我的收藏" testId="portal-favorites-highlight">
-      {items.map((tool) => (
-        <HighlightItem key={tool.id}>
-          <ToolCard tool={tool} />
-        </HighlightItem>
-      ))}
-    </HighlightSection>
-  );
+  return { enabled, query };
 }
 
-/** 两个区块。任一为空时它自己不渲染，外层不留任何壳。 */
-export function PortalHighlights() {
+/**
+ * 「我的收藏」面板：第一页 24 条（`FAVORITES_TAB_PAGE_SIZE`）。
+ *
+ * `total > 24` 时给一条「查看全部 N 个 →」指向既有的 `/me/favorites` 页
+ * —— **不在 tab 内再造一套分页**（§32.2 明确冻结）。那里有完整分页，
+ * 而且与这里共用第一页的缓存（同 queryKey）。
+ */
+export function FavoritesPanel() {
+  const { query } = useFavoritesHighlight();
+
+  if (query.isPending) {
+    return <PageSkeleton variant="cards" count={8} />;
+  }
+
+  const items = query.data?.items ?? [];
+  const total = query.data?.total ?? 0;
+
   return (
-    <>
-      <ContinueUsingSection />
-      <FavoritesSection />
-    </>
+    <div className="space-y-4">
+      <ToolGrid tools={items} testId="portal-favorites-grid" />
+      {total > FAVORITES_TAB_PAGE_SIZE ? (
+        <Link
+          to="/me/favorites"
+          data-testid="portal-favorites-see-all"
+          className="inline-flex rounded text-sm text-primary underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+        >
+          查看全部 {total} 个 →
+        </Link>
+      ) : null}
+    </div>
   );
 }

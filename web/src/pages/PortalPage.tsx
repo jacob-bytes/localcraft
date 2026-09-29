@@ -29,7 +29,14 @@ import { Markdown } from "@/components/common/Markdown";
 import { PageSkeleton } from "@/components/common/PageSkeleton";
 import { Pagination } from "@/components/common/Pagination";
 import { PortalSideNav } from "@/components/layout/PortalSideNav";
-import { PortalHighlights } from "@/components/portal/PortalHighlights";
+import {
+  FavoritesPanel,
+  readPortalTab,
+  RecentToolsPanel,
+  useFavoritesHighlight,
+  useRecentToolEntries,
+  type PortalTab,
+} from "@/components/portal/PortalHighlights";
 import { ToolFilters } from "@/components/tools/ToolFilters";
 import { ToolGrid } from "@/components/tools/ToolGrid";
 import { Button } from "@/components/ui/button";
@@ -48,6 +55,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useDebounce } from "@/hooks/useDebounce";
 import { siteSubtitle, useMeta } from "@/hooks/useMeta";
@@ -274,6 +282,214 @@ export default function PortalPage() {
     total,
   } as const;
 
+  /* ---- M16 · F1（CONTRACT §32.2）：门户展示结构改为 tab ---- */
+
+  /*
+   * 三个 tab 的**候选**，只列有内容的（§32.2）：
+   *   - 「继续使用」：本地有最近访问记录才出现，计数 = 本地记录条数；
+   *   - 「我的收藏」：登录（且可收藏）**且**收藏夹非空才出现，计数 = `total`。
+   * 两者都在这里判定，而不是在面板里 —— Radix 的 TabsContent 只在激活时挂载，
+   * 「这个 tab 该不该出现」不能等面板挂载才知道。
+   */
+  const recentEntries = useRecentToolEntries();
+  const favorites = useFavoritesHighlight();
+  const favoritesTotal = favorites.query.data?.total ?? 0;
+  const hasRecentTab = recentEntries.length > 0;
+  const hasFavoritesTab = favorites.enabled && favoritesTotal > 0;
+
+  const tabs: { value: PortalTab; label: string; count: number | undefined }[] = [
+    { value: "all", label: "全部工具", count: total },
+    ...(hasRecentTab
+      ? [{ value: "recent" as PortalTab, label: "继续使用", count: recentEntries.length }]
+      : []),
+    ...(hasFavoritesTab
+      ? [{ value: "favorites" as PortalTab, label: "我的收藏", count: favoritesTotal }]
+      : []),
+  ];
+
+  /*
+   * `?tab=` 是唯一状态源（与 q/category/type/tag/sort/page 同一套做法：可分享、
+   * F5 保持、e2e 能直接访问）。取不到 / 非法 / **当前不可用**（例如清空收藏后再
+   * 打开一个旧的 `?tab=favorites` 链接）→ 一律回落「全部工具」，
+   * 不渲染空面板；也不回写 URL（URL 只在用户**点 tab** 时变）。
+   */
+  const requestedTab = readPortalTab(searchParams.get("tab"));
+  const activeTab = tabs.some((entry) => entry.value === requestedTab) ? requestedTab : "all";
+
+  /*
+   * ★ 只有一个 tab 时**整条 tab 栏都不渲染**（§32.2 冻结）。
+   * 默认部署（无最近访问、无收藏）因此与改动前**逐字一致**：下面直接渲染
+   * `allToolsContent`，连 Radix 的 Tabs 外壳都不会出现（没有空壳容器、
+   * 没有「一行只有一个 tab」的控件、没有指向不存在触发器的 tabpanel）。
+   */
+  const showTabs = tabs.length > 1;
+
+  const changeTab = (next: string) => {
+    /*
+     * 默认值不进 URL（`all` 就是默认 tab）—— 与既有的 page/page_size 归位是同一套
+     * 约定：`?tab=all` 照样被接受（readPortalTab），只是不作为规范形式写回去。
+     */
+    const value = readPortalTab(next);
+    updateParams({ tab: value === "all" ? null : value });
+  };
+
+  /*
+   * 「全部工具」这一屏：筛选栏 + 工具栏 + 结果 + 分页，**与改动前逐字相同**。
+   * 单 tab 时它被直接渲染，多 tab 时它是 `<TabsContent value="all">` 的内容 ——
+   * 工具栏与分页因此只在「全部工具」下存在（§32.2）。
+   */
+  const allToolsContent = (
+    <div className="lg:grid lg:grid-cols-[16rem_minmax(0,1fr)] lg:gap-6">
+      {/* ---- Left rail (lg+) ---- */}
+      <aside aria-label="筛选条件" className="hidden lg:block">
+        <div className="sticky top-20 rounded-xl border bg-card p-2">
+          {/* M8 · F7.4：「我的收藏」入口（匿名不渲染；M9/§25.1 起 `viewer`
+              同样不渲染 —— 它收藏不了任何东西。判定都在 PortalSideNav 里）。 */}
+          <PortalSideNav />
+          <ToolFilters {...filterProps} />
+        </div>
+      </aside>
+
+      <div className="min-w-0">
+        {/* ---- Toolbar ---- */}
+        <div className="flex flex-wrap items-center gap-2 pb-3">
+          <p className="text-sm text-muted-foreground" aria-live="polite">
+            {total === undefined ? "加载中…" : `共 ${total} 个工具`}
+          </p>
+
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <Sheet open={filtersOpen} onOpenChange={setFiltersOpen}>
+              <SheetTrigger asChild>
+                <Button type="button" variant="outline" size="sm" className="lg:hidden">
+                  <SlidersHorizontal aria-hidden="true" className="size-4" />
+                  筛选
+                  {hasFilters ? (
+                    <span className="ml-1 rounded-full bg-primary px-1.5 text-xs text-primary-foreground">
+                      {[category !== null, types.length > 0, tags.length > 0, q.trim() !== ""]
+                        .filter(Boolean)
+                        .length}
+                    </span>
+                  ) : null}
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="left" className="w-[19rem] overflow-y-auto">
+                <SheetHeader>
+                  <SheetTitle>筛选</SheetTitle>
+                </SheetHeader>
+                <div className="px-4 pb-8">
+                  <PortalSideNav />
+                  <ToolFilters {...filterProps} />
+                </div>
+              </SheetContent>
+            </Sheet>
+
+            <Select
+              value={sort}
+              onValueChange={(value) => updateParams({ sort: value }, { resetPage: true })}
+            >
+              <SelectTrigger size="sm" className="w-[8.5rem]" aria-label="排序方式">
+                <SelectValue placeholder="排序" />
+              </SelectTrigger>
+              <SelectContent>
+                {SORT_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <ToggleGroup
+              type="single"
+              value={view}
+              onValueChange={changeView}
+              variant="outline"
+              size="sm"
+              aria-label="视图切换"
+            >
+              <ToggleGroupItem value="grid" aria-label="卡片视图">
+                <LayoutGrid aria-hidden="true" className="size-4" />
+              </ToggleGroupItem>
+              <ToggleGroupItem value="list" aria-label="列表视图">
+                <List aria-hidden="true" className="size-4" />
+              </ToggleGroupItem>
+            </ToggleGroup>
+
+            <Select
+              value={String(pageSize)}
+              onValueChange={(value) =>
+                updateParams({ page_size: value }, { resetPage: true })
+              }
+            >
+              <SelectTrigger size="sm" className="w-[7.5rem]" aria-label="每页条数">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PAGE_SIZE_OPTIONS.map((option) => (
+                  <SelectItem key={option} value={String(option)}>
+                    每页 {option}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        {/* ---- Results ---- */}
+        {toolsQuery.isError ? (
+          <ErrorState
+            message={
+              toolsQuery.error instanceof Error ? toolsQuery.error.message : "请稍后重试"
+            }
+            onRetry={() => {
+              void toolsQuery.refetch();
+            }}
+          />
+        ) : isFirstLoad ? (
+          <PageSkeleton variant={view === "grid" ? "cards" : "list"} count={view === "grid" ? 8 : 10} />
+        ) : items.length === 0 ? (
+          hasFilters ? (
+            <EmptyState
+              illustration={<NoResultsArt />}
+              title="没有找到匹配的工具"
+              description="试试减少筛选条件，或换一个关键词。"
+              action={
+                <Button type="button" variant="outline" onClick={clearAll}>
+                  清除筛选条件
+                </Button>
+              }
+            />
+          ) : (
+            <EmptyState
+              illustration={<NoToolsArt />}
+              title="平台上还没有工具"
+              description="等第一个工具上架后，这里就会热闹起来。"
+            />
+          )
+        ) : (
+          <div
+            className={cn(
+              "transition-opacity",
+              toolsQuery.isFetching && "opacity-60",
+            )}
+            aria-busy={toolsQuery.isFetching}
+          >
+            <ToolGrid tools={items} variant={view} />
+          </div>
+        )}
+
+        {/* Pagination stays visible on out-of-range pages (docs/04 §6.3) */}
+        <div className="pt-6">
+          <Pagination
+            page={page}
+            pages={pages}
+            onPageChange={(next) => updateParams({ page: String(next) })}
+          />
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="mx-auto w-full max-w-[1400px] px-4 py-6 sm:px-6 lg:px-8">
       {/* ---- Hero search ---- */}
@@ -321,162 +537,44 @@ export default function PortalPage() {
 
       <Announcement markdown={meta?.announcement_md ?? null} />
 
-      {/*
-        M14 · F1（CONTRACT §29.8）：公告下方、工具栏上方的两个区块。
-        两个区块分别在「自己有数据」时才渲染 —— 全空时这里**一个元素都不产生**，
-        默认部署的页面与加这个功能之前逐字一致（没有空标题，也没有多出来的 margin）。
-      */}
-      <PortalHighlights />
+      {showTabs ? (
+        <Tabs value={activeTab} onValueChange={changeTab} className="gap-4">
+          {/*
+            tab 栏用既有的 components/ui/tabs（Radix）—— role/aria/方向键导航都是它
+            自带的，手写一排按钮会漏掉键盘可达性（§32.2「无障碍（冻结）」）。
+          */}
+          <TabsList
+            aria-label="门户视图"
+            data-testid="portal-tabs"
+            className="max-w-full overflow-x-auto"
+          >
+            {tabs.map((entry) => (
+              <TabsTrigger key={entry.value} value={entry.value}>
+                {entry.label}
+                {entry.count === undefined ? null : (
+                  <span className="text-xs tabular-nums">({entry.count})</span>
+                )}
+              </TabsTrigger>
+            ))}
+          </TabsList>
 
-      <div className="lg:grid lg:grid-cols-[16rem_minmax(0,1fr)] lg:gap-6">
-        {/* ---- Left rail (lg+) ---- */}
-        <aside aria-label="筛选条件" className="hidden lg:block">
-          <div className="sticky top-20 rounded-xl border bg-card p-2">
-            {/* M8 · F7.4：「我的收藏」入口（匿名不渲染；M9/§25.1 起 `viewer`
-                同样不渲染 —— 它收藏不了任何东西。判定都在 PortalSideNav 里）。 */}
-            <PortalSideNav />
-            <ToolFilters {...filterProps} />
-          </div>
-        </aside>
+          <TabsContent value="all">{allToolsContent}</TabsContent>
 
-        <div className="min-w-0">
-          {/* ---- Toolbar ---- */}
-          <div className="flex flex-wrap items-center gap-2 pb-3">
-            <p className="text-sm text-muted-foreground" aria-live="polite">
-              {total === undefined ? "加载中…" : `共 ${total} 个工具`}
-            </p>
+          {hasRecentTab ? (
+            <TabsContent value="recent">
+              <RecentToolsPanel entries={recentEntries} />
+            </TabsContent>
+          ) : null}
 
-            <div className="ml-auto flex flex-wrap items-center gap-2">
-              <Sheet open={filtersOpen} onOpenChange={setFiltersOpen}>
-                <SheetTrigger asChild>
-                  <Button type="button" variant="outline" size="sm" className="lg:hidden">
-                    <SlidersHorizontal aria-hidden="true" className="size-4" />
-                    筛选
-                    {hasFilters ? (
-                      <span className="ml-1 rounded-full bg-primary px-1.5 text-xs text-primary-foreground">
-                        {[category !== null, types.length > 0, tags.length > 0, q.trim() !== ""]
-                          .filter(Boolean)
-                          .length}
-                      </span>
-                    ) : null}
-                  </Button>
-                </SheetTrigger>
-                <SheetContent side="left" className="w-[19rem] overflow-y-auto">
-                  <SheetHeader>
-                    <SheetTitle>筛选</SheetTitle>
-                  </SheetHeader>
-                  <div className="px-4 pb-8">
-                    <PortalSideNav />
-                    <ToolFilters {...filterProps} />
-                  </div>
-                </SheetContent>
-              </Sheet>
-
-              <Select
-                value={sort}
-                onValueChange={(value) => updateParams({ sort: value }, { resetPage: true })}
-              >
-                <SelectTrigger size="sm" className="w-[8.5rem]" aria-label="排序方式">
-                  <SelectValue placeholder="排序" />
-                </SelectTrigger>
-                <SelectContent>
-                  {SORT_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              <ToggleGroup
-                type="single"
-                value={view}
-                onValueChange={changeView}
-                variant="outline"
-                size="sm"
-                aria-label="视图切换"
-              >
-                <ToggleGroupItem value="grid" aria-label="卡片视图">
-                  <LayoutGrid aria-hidden="true" className="size-4" />
-                </ToggleGroupItem>
-                <ToggleGroupItem value="list" aria-label="列表视图">
-                  <List aria-hidden="true" className="size-4" />
-                </ToggleGroupItem>
-              </ToggleGroup>
-
-              <Select
-                value={String(pageSize)}
-                onValueChange={(value) =>
-                  updateParams({ page_size: value }, { resetPage: true })
-                }
-              >
-                <SelectTrigger size="sm" className="w-[7.5rem]" aria-label="每页条数">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {PAGE_SIZE_OPTIONS.map((option) => (
-                    <SelectItem key={option} value={String(option)}>
-                      每页 {option}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          {/* ---- Results ---- */}
-          {toolsQuery.isError ? (
-            <ErrorState
-              message={
-                toolsQuery.error instanceof Error ? toolsQuery.error.message : "请稍后重试"
-              }
-              onRetry={() => {
-                void toolsQuery.refetch();
-              }}
-            />
-          ) : isFirstLoad ? (
-            <PageSkeleton variant={view === "grid" ? "cards" : "list"} count={view === "grid" ? 8 : 10} />
-          ) : items.length === 0 ? (
-            hasFilters ? (
-              <EmptyState
-                illustration={<NoResultsArt />}
-                title="没有找到匹配的工具"
-                description="试试减少筛选条件，或换一个关键词。"
-                action={
-                  <Button type="button" variant="outline" onClick={clearAll}>
-                    清除筛选条件
-                  </Button>
-                }
-              />
-            ) : (
-              <EmptyState
-                illustration={<NoToolsArt />}
-                title="平台上还没有工具"
-                description="等第一个工具上架后，这里就会热闹起来。"
-              />
-            )
-          ) : (
-            <div
-              className={cn(
-                "transition-opacity",
-                toolsQuery.isFetching && "opacity-60",
-              )}
-              aria-busy={toolsQuery.isFetching}
-            >
-              <ToolGrid tools={items} variant={view} />
-            </div>
-          )}
-
-          {/* Pagination stays visible on out-of-range pages (docs/04 §6.3) */}
-          <div className="pt-6">
-            <Pagination
-              page={page}
-              pages={pages}
-              onPageChange={(next) => updateParams({ page: String(next) })}
-            />
-          </div>
-        </div>
-      </div>
+          {hasFavoritesTab ? (
+            <TabsContent value="favorites">
+              <FavoritesPanel />
+            </TabsContent>
+          ) : null}
+        </Tabs>
+      ) : (
+        allToolsContent
+      )}
     </div>
   );
 }

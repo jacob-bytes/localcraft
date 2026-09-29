@@ -173,7 +173,7 @@ export async function setSiteConfig(page: Page, config: MockSiteConfig): Promise
 }
 
 /* -------------------------------------------------------------------------- */
-/* M14 · 门户两个区块（CONTRACT §29.8）+ 探活展示（§29.3）                      */
+/* M14 · 门户两个区块（CONTRACT §29.8 → M16 §32 改为 tab）+ 探活展示（§29.3）  */
 /* -------------------------------------------------------------------------- */
 
 /** 必须与 `src/lib/recentTools.ts` 的 `RECENT_TOOLS_STORAGE_KEY` 一致。 */
@@ -204,6 +204,45 @@ export async function setRecentTools(
     { key: RECENT_TOOLS_KEY, value: JSON.stringify(entries) },
   );
 }
+
+/**
+ * M16：mock 的收藏/点赞状态键（**必须**与 `src/mocks/handlers.ts` 的
+ * `ENGAGEMENT_STORAGE_KEY` 逐字一致）。
+ *
+ * 为什么需要直接种它：`GET /me/favorites` 要验的是「**total > 24** 时只给第一页
+ * + 一条『查看全部 N 个 →』」，而种子用户里收藏最多的一个也只有 1 条（zhangsan）。
+ * MSW 跑在 **Service Worker** 里，`page.route` 拦不到它（Playwright 文档写得很
+ * 清楚：SW 处理的请求对 `page.route` 不可见），所以不能靠「伪造一个响应」。
+ * 走**与 mock 自己完全相同的存储键**种数据，测的就还是真实代码路径 ——
+ * mock 的 handler 真的去读它、真的分页、真的算 `total`。
+ */
+export const MOCK_ENGAGEMENT_KEY = "localcraft.msw.engagement";
+
+/** 给某个 mock 用户预置收藏（键是用户 id 的字符串，值是工具 id 列表）。 */
+export async function setMockFavorites(
+  page: Page,
+  userId: number,
+  toolIds: number[],
+): Promise<void> {
+  await page.addInitScript(
+    (payload: { key: string; value: string }) => {
+      window.localStorage.setItem(payload.key, payload.value);
+    },
+    {
+      key: MOCK_ENGAGEMENT_KEY,
+      value: JSON.stringify({ favorites: { [String(userId)]: toolIds }, likes: {} }),
+    },
+  );
+}
+
+/**
+ * 种子里**全部** 26 个工具的 id（boundary 1~8 + generated 101~118）。
+ * 用它喂 `setMockFavorites` 就能造出 `total > 24` 的收藏夹。
+ */
+export const MOCK_TOOL_IDS: number[] = [
+  ...Array.from({ length: 8 }, (_, index) => index + 1),
+  ...Array.from({ length: 18 }, (_, index) => index + 101),
+];
 
 export interface ContrastReading {
   dark: boolean;
