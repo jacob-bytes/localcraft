@@ -1029,13 +1029,33 @@ def reindex_search() -> None:
 
     M2 起工具写操作会实时同步索引；本命令用于**索引漂移后的修复**。
 
-    **PostgreSQL 下本命令不可用**（M10 查实）：迁移 0003 建的是 SQLite FTS5
-    虚表且带方言守卫，PG 上根本没有 `tool_search_index` 表，检索走 LIKE 回退
-    （直接查 `tools` 表）。此时没有索引可重建，命令会明确报错并以非 0 退出 ——
-    M10 之前它是「静默空转却报成功」：打印
-    `[ ok ] 已用 like_fallback 重建 0 条索引` 并退出 0，运维会以为索引建好了。
+    **可用的方言**：SQLite（FTS5 虚表 `tool_search_index`）与
+    PostgreSQL（`tools.search_vector` 列 + GIN 索引，M15 / 契约 §31）。
+
+    **不可用时必须非 0 退出**（M10 的不变量，M15 把触发条件扩到两种）：
+
+      - 后端是 LIKE 回退（`supports_reindex is False`）—— 没有索引可重建；
+      - 或后端自称支持重建、但**列/虚表其实不存在**（迁移没跑到）——
+        M15 起 PG 也会走到这里：它先乐观地允许进入重建，真正探测到
+        `tools.search_vector` 缺失后降级，命令复查 `supports_reindex`
+        发现已为 False，于是明确报错退出。
+
+    为什么这一点必须钉住：M10 之前本命令在 PG 上「静默空转却报成功」——
+    打印 `[ ok ] 已用 like_fallback 重建 0 条索引` 并退出 0，运维会以为
+    索引已经建好。0 条与「重建成功但索引本来就是空的」在返回值上无法区分，
+    所以只能靠这个能力位。
     """
     _run(_reindex_search())
+
+
+def _no_reindex_message(backend_name: str) -> str:
+    """「没有可重建索引」时的统一报错文案。"""
+    return (
+        f"当前检索后端（{backend_name}）没有可重建的全文索引，本次未做任何改动。\n"
+        "        SQLite 之外的方言若仍是 LIKE 回退，检索直接查 tools 表，无需也无法重建索引；\n"
+        "        PostgreSQL 上出现本提示，说明迁移 0009 没有跑到、tools.search_vector 列不存在。\n"
+        "        请先执行 `alembic upgrade head`（会建列 + 建 GIN 索引 + 回填既有工具），再重试。"
+    )
 
 
 async def _reindex_search() -> None:
@@ -1045,17 +1065,24 @@ async def _reindex_search() -> None:
         # 明确报错（exit 1）而不是打印一行绿色 [ ok ]：
         # 「什么都没做」必须与「做了、但索引本来就是空的」区分开，
         # 否则运维拿不到任何信号（这是 M10 查实的真实缺陷）。
-        _fail(
-            f"当前检索后端（{backend.name}）没有可重建的全文索引，本次未做任何改动。\n"
-            "        PostgreSQL 部署下不存在 FTS 虚表，检索由 LIKE 回退直接查 tools 表，"
-            "无需也无法重建索引；\n"
-            "        若确实需要全文检索，请改用 SQLite 部署，或等待 PG tsvector 方案落地"
-            "（属产品决策，尚未实现）。"
-        )
+        _fail(_no_reindex_message(backend.name))
+
+    failure: str | None = None
+    count = 0
     async with SessionLocal() as session:
         count = await backend.reindex_all(session)
-        await session.commit()
+        if backend.supports_reindex:
+            await session.commit()
+        else:
+            # M15：PG 后端的 supports_reindex 是**乐观初值**（同步属性拿不到
+            # session，没法在构造时探测），真正的列存在性探测发生在
+            # reindex_all() 内部。探测为否时后端降级、count 必然是 0 ——
+            # 若继续走成功分支，就是 M10 那个「静默空转报成功」原样复发。
+            await session.rollback()
+            failure = _no_reindex_message(backend.name)
     await _dispose()
+    if failure is not None:
+        _fail(failure)
     _ok(f"已用 {backend.name} 重建 {count} 条索引")
 
 

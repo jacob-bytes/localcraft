@@ -319,18 +319,18 @@ async def test_disabled_user_jwt_is_rejected(client) -> None:
 # 全文索引重建
 # ---------------------------------------------------------------------------
 async def test_reindex_search_rebuilds_index(session, seeded) -> None:
-    """按方言断言「重建索引」这件事的两个真实语义（M10）。
+    """按方言断言「重建索引」这件事的两个真实语义（M10，M15 更新）。
 
-    - **SQLite（FTS5）**：有 `tool_search_index` 虚表 → 重建必须产出条目，
-      且重建后仍能通过 MATCH 召回。
-    - **PostgreSQL**：迁移 0003 有方言守卫，**根本没有这张表**，检索后端是
-      LIKE 回退 —— 没有索引可重建，`reindex_all()` 只能返回 0。
+    - **有持久索引的方言**（SQLite FTS5 虚表 / PostgreSQL 的
+      `tools.search_vector` + GIN，M15 / 契约 §31）：重建必须产出条目，
+      且重建后仍能通过检索后端召回。
+    - **LIKE 回退**（其他方言）：没有索引可重建，`reindex_all()` 只能返回 0。
       这不是「重建失败」，而是「本方言不提供持久全文索引」。
 
-    为什么 PG 分支不是简单 skip（M10 的处置理由）：PG 上真正需要被钉住的行为是
-    「后端必须**自曝**没有可重建的索引」——`supports_reindex is False`。
-    这正是 CLI 不再把「什么都没做」报成成功的依据；如果哪天有人给 PG 接上
-    tsvector 或让 LIKE 回退谎报支持重建，这条断言会立刻失败。
+    M15 改动：PG 从 M10 时的「没有索引 → 走 else 分支」变成**走 if 分支**
+    （迁移 0009 给了它真索引）。else 分支现在只在真正没有索引可重建的方言/
+    降级态上生效，它钉住的性质（后端必须**自曝**没有可重建的索引）保持不变：
+    如果哪天有人让 LIKE 回退谎报支持重建，这条断言会立刻失败。
     """
     from app.search import get_search_backend
 
@@ -344,7 +344,7 @@ async def test_reindex_search_rebuilds_index(session, seeded) -> None:
         ids = await backend.matching_tool_ids(session, "public-approved")
         assert ids is None or isinstance(ids, set)
     else:
-        # PostgreSQL：LIKE 回退，没有索引表
+        # LIKE 回退，没有索引表
         assert backend.name == "like_fallback"
         assert await backend.reindex_all(session) == 0
         # LIKE 回退对任何查询都回答「我处理不了」，由 tools 仓储兜底
@@ -370,9 +370,11 @@ async def test_like_fallback_backend_returns_none(session) -> None:
         "只对 SQLite FTS5 有意义：本用例把 `tool_search_index` 虚表改名来制造"
         "「索引表缺失」。PostgreSQL 上迁移 0003 有方言守卫、**不存在**这张表，"
         "改名的前提不成立（报 UndefinedTable）。"
-        "PG 上的等价行为（没有 FTS 表 → 检索降级为 LIKE）由"
-        "`test_reindex_search_rebuilds_index` 的 else 分支与"
-        "`test_like_fallback_backend_returns_none` 覆盖。"
+        "PG 上的等价行为（索引缺失 → 检索降级为 LIKE、CLI 非 0 退出）由"
+        "`tests/test_m15_postgres_fts.py` 的 "
+        "`test_search_column_missing_degrades_to_like_and_service_stays_up` 与"
+        "`test_pg_backend_upsert_is_a_noop_when_column_is_missing` 覆盖"
+        "（M15：PG 的等价物是 `tools.search_vector` 列，不是虚表）。"
     ),
 )
 async def test_fts_backend_degrades_when_table_missing(session) -> None:
@@ -395,25 +397,39 @@ async def test_fts_backend_degrades_when_table_missing(session) -> None:
         await session.commit()
 
 
-async def test_reindex_search_cli_never_reports_success_without_an_index(seeded) -> None:
-    """P5 回归（M10）：`reindex-search` 在「没有索引可重建」的方言上必须明确失败。
+async def test_reindex_search_cli_never_reports_success_without_an_index(
+    seeded, monkeypatch
+) -> None:
+    """P5 回归（M10，M15 改写触发条件）：没有索引可重建时 `reindex-search` 必须非 0 退出。
 
-    修复前的实际行为（本机 PG 16 实测）：命令打印
+    修复前的实际行为（M10 在本机 PG 16 实测）：命令打印
     `[ ok ] 已用 like_fallback 重建 0 条索引` 并**退出 0** —— 库里有 9 个工具、
-    `tool_search_index` 根本不存在，运维却会以为索引已经建好。
+    根本没有索引，运维却会以为索引已经建好。
     这条测试把「静默空转却报成功」钉死：没有索引就必须非 0 退出。
+
+    **M15 为什么要改写而不是删掉**（契约 §31.4）：原版把「没有索引」等同于
+    「方言是 PostgreSQL」。M15 给 PG 接上了真索引（迁移 0009），于是原版在
+    PG 上会走去成功分支、**边界条件不再被任何用例覆盖**。现在改为
+    **直接把回退后端塞进 CLI**：不变量一字不变（没有索引就不能报成功），
+    只是触发条件从「是 PG」变成「后端自曝 `supports_reindex is False`」，
+    且两种方言下都真的走到失败分支。
+
+    「PG 上列不存在（迁移 0009 没跑到）」这个 M15 新增的触发条件由
+    `tests/test_m15_postgres_fts.py` 的
+    `test_reindex_search_cli_fails_when_pg_search_column_is_missing` 覆盖。
     """
     import typer
 
-    from app.cli import _reindex_search
-    from app.search import get_search_backend
+    import app.cli as cli
+    from app.search.sqlite_fts import LikeSearchBackend
 
-    if get_search_backend().supports_reindex:
-        await _reindex_search()  # SQLite：正常成功路径，不应抛异常
-        return
+    # 1) 真后端：有索引的方言（SQLite FTS5 / PG tsvector）必须正常重建成功
+    await cli._reindex_search()
 
+    # 2) 回退后端：必须非 0 退出，而不是打印 [ ok ] 重建 0 条
+    monkeypatch.setattr(cli, "get_search_backend", LikeSearchBackend)
     with pytest.raises(typer.Exit) as excinfo:
-        await _reindex_search()
+        await cli._reindex_search()
     assert excinfo.value.exit_code != 0, "没有可重建索引时不能以 0 退出（否则等于谎报成功）"
 
 

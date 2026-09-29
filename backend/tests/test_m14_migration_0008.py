@@ -70,6 +70,8 @@ EXPECTED_REVISIONS: dict[str, str | None] = {
     "0006": "0005",
     "0007": "0006",
     "0008": "0007",
+    # M15：PostgreSQL 全文检索（tools.search_vector + GIN，契约 §31.3）
+    "0009": "0008",
 }
 
 #: 全新库跑到 head 的设置项行数：0002 的 25 + 0007 的 6 + 0008 的 5。
