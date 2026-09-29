@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     localcraft_host: str = "127.0.0.1"
     localcraft_port: int = 8000
     localcraft_debug: bool = False
-    localcraft_version: str = "1.0.0"
+    localcraft_version: str = "1.2.0"
     # 曾经有一个 localcraft_public_base_url，用来"生成下载链接与 OpenAPI 里的 server"。
     # 实测**没有任何读取点**：图片签名 URL 与下载票据 URL 都是相对路径
     # （`/api/v1/images/…`、`/api/v1/tools/{slug}/download?…`），OpenAPI 也没有 servers 段。

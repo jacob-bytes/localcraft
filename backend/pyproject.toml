@@ -1,6 +1,6 @@
 [project]
 name = "localcraft-backend"
-version = "1.0.0"
+version = "1.2.0"
 description = "localcraft — 内网工具 / Skill 共享平台后端"
 requires-python = ">=3.11"
 dependencies = [
