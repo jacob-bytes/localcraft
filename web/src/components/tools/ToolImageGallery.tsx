@@ -12,6 +12,12 @@ import { cn } from "@/lib/utils";
  * 图片 URL 一律来自后端 payload（CONTRACT §14.3 的签名能力 URL），前端不得自行
  * 拼接 `/api/v1/images/...`。签名 URL 仍可能失效（TTL 过期、可见性收紧），所以
  * 用 `onError` 降级成中性占位块 —— 与 ToolCard 封面一致，永不出现破图。
+ *
+ * M18 · F1（CONTRACT §35.3①②）：**没有可显示的图片时整个图廊返回 `null`** ——
+ * 不渲染外壳、不留空白盒子、不留 `border`，标题因此自然上移。判定见下面的
+ * `allFailed`：必须是「每一张图都失败」，不是「当前这张失败」。
+ * ★ 收起只发生在**详情页图廊**；卡片墙（`ToolCard` / `MyToolsPage` /
+ * `RecycleBinTable`）的缩略图占位照旧（§35.2 范围限定）。
  */
 export interface ToolImageGalleryProps {
   images: ToolImage[];
@@ -28,7 +34,10 @@ function orderImages(images: ToolImage[]): ToolImage[] {
 }
 
 /**
- * 无图 / 加载失败时的占位：中性背景 + 类型图标（docs/04 §6.3）。
+ * 当前这张图加载失败、但**还有别的图没失败**时的占位：中性背景 + 类型图标
+ * （docs/04 §6.3；M7 建的回退行为，§34.3 要求保留）。
+ * M18 · F1（CONTRACT §35.3②）：**全部**图片都失败时不再用这个占位，整个图廊收起，
+ * 所以这个组件只会出现在「部分失败」的主视图里。
  * M17 · F1（CONTRACT §34.3）：不再按分类上色，`categorySlug` 参数随之删除
  * （同 `TOOL_PLACEHOLDER_CLASS`，零参）。
  */
@@ -70,8 +79,26 @@ export function ToolImageGallery({ images, toolName, toolType }: ToolImageGaller
     setRequestedIndex((previous) => (previous + delta + count) % count);
   };
 
+  /*
+   * M18 · F1（CONTRACT §35.3①②）：没有可显示的图片 → 整个图廊不渲染任何东西。
+   *
+   * 两种「没有可显示的图片」：
+   *   1. 后端没下发任何图（`count === 0`）；
+   *   2. **每一张**图都进了失败态（`allFailed`）。
+   *
+   * ★ 为什么是「全部失败」而不是「当前这张失败」：`onError` 只在浏览器真正判定
+   * 加载失败时才触发，加载中（含挂起的请求）`failedIds` 为空，图廊照常渲染 —— 所以
+   * 不会出现「先收起、加载完再冒出来」。反过来，只要还有一张图没失败，图廊就留在
+   * 页面上（当前这张失败时主视图回退成中性占位块，§34.3 保留的行为）。
+   *
+   * 这里返回 `null` 是**真收起**：不是 `hidden`、不是 `display:none`、不是 0 高度，
+   * 页面上根本不存在图廊的元素，父级 `space-y-6` 也不会为它留出间距。
+   */
+  const allFailed = count > 0 && ordered.every((image) => failedIds.includes(image.id));
+  if (count === 0 || allFailed) return null;
+
   return (
-    <div className="space-y-2">
+    <div data-testid="tool-image-gallery" className="space-y-2">
       <div className="relative aspect-[16/9] w-full overflow-hidden rounded-xl border bg-muted">
         {current && !currentFailed ? (
           <img

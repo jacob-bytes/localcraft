@@ -724,8 +724,29 @@ SEED_COVER_PALETTE: tuple[tuple[int, int, int], ...] = (
 )
 
 
+#: 标记色相对底色的「暗一两档」偏移量（契约 §35.4①）。
+#:
+#: **只做同减，不做任何通道加权** —— 各通道减同一个数，色相就不可能出现：
+#: 底色是 (228,226,221) 时标记就是 (214,212,207)，通道差仍是 7，仍是中性。
+#: 取 14 而不是更小/更大：14/255 ≈ 5.5% 的明度差，放大到详情页大图区能看出是有内容的，
+#: 但缩略图铺在卡片墙上又不会抢眼（用户要的是「淡淡的内容」，不是图案）。
+SEED_COVER_MARK_OFFSET = 14
+
+#: 种子封面的成品尺寸（契约 §35.4③）。
+#:
+#: 全尺寸 1280×720（16:9，与详情页大图区同比例）：M17 时是 320×180，纯色看不出问题，
+#: 但画上标记后被详情页放大近 4 倍会明显糊。纯色 + 简单几何的 PNG 即便 1280×720 也很小。
+#: 缩略图 160×90 **保持不动**（契约 §34.4 / §35.4③）：卡片墙只用到这个尺寸，
+#: 跟着放大会白白增大落盘体积。
+#:
+#: 定义成常量是因为 `ToolImage.width/height` 要跟 PNG 的实际尺寸一致 ——
+#: 两处各写一遍数字，改一处忘一处就会让详情页的尺寸元数据说谎。
+SEED_COVER_SIZE: tuple[int, int] = (1280, 720)
+SEED_THUMB_SIZE: tuple[int, int] = (160, 90)
+
+
 def _build_seed_png(seed: int, *, width: int = 64, height: int = 36) -> bytes:
-    """生成一张真实的小 PNG（浅中性纯色），用于种子封面。
+    """生成一张真实的 PNG（浅中性底 + 淡中性几何标记），用于种子封面。
 
     同样必须真落盘：`/api/v1/images/{id}` 会检查文件是否存在，
     只写数据库路径的话，所有种子封面都会 404 —— 而前端会把它当成破图。
@@ -734,12 +755,57 @@ def _build_seed_png(seed: int, *, width: int = 64, height: int = 36) -> bytes:
     颜色**不是**装饰，是图片管线的载荷：这几个文件的用途是打通
     落盘 → 缩略图 → 签名 URL 的整条链路，所以仍然生成真实 PNG，
     没有改成 base64、没有去掉落盘、也没有让多个工具复用同一个文件。
+
+    标记（契约 §35.4）：M17 把底色改成浅中性后，**纯色**封面被详情页拉伸到
+    16:9 大图区就成了「一块像是没加载出来的灰」——所以现在画一个很淡的几何标记，
+    让它读起来像「一张图」：
+
+    1. **只有中性色**：标记 = 底色各通道同减 `SEED_COVER_MARK_OFFSET`，
+       不引入色相（不画彩色，也不再回到 M17 那套深紫/绿/洋红）。
+    2. **只有原生几何**：圆角矩形轮廓 + 圆心轮廓，用 `ImageDraw` 直接画，
+       不画文字、不加载图标字体（那会引入依赖与二进制资源，且 PIL 渲染质量差）。
+    3. **超采样**：画在 2 倍画布上再 LANCZOS 降采样。1 倍画圆/圆角的斜边锯齿，
+       会随详情页的近 4 倍放大一起被放大 —— 那正是这一轮要消灭的「糊」。
+       标记尺寸全部按短边取比例，所以缩略图（160×90）上也是同一套构图。
     """
-    from PIL import Image
+    import io
+
+    from PIL import Image, ImageDraw
 
     color = SEED_COVER_PALETTE[seed % len(SEED_COVER_PALETTE)]
-    image = Image.new("RGB", (width, height), color)
-    import io
+    mark = tuple(channel - SEED_COVER_MARK_OFFSET for channel in color)
+
+    scale = 2
+    canvas_width, canvas_height = width * scale, height * scale
+    image = Image.new("RGB", (canvas_width, canvas_height), color)
+    draw = ImageDraw.Draw(image)
+
+    short = min(canvas_width, canvas_height)
+    margin = round(short * 0.14)
+    stroke = max(2, round(short * 0.018))
+    radius = round(short * 0.10)
+    draw.rounded_rectangle(
+        (margin, margin, canvas_width - 1 - margin, canvas_height - 1 - margin),
+        radius=radius,
+        outline=mark,
+        width=stroke,
+    )
+    # 单独一道圆角矩形（没有内容）容易被读成「骨架屏 / 边框」，加一个内切圆之后
+    # 整体才像那个通用的「图片占位」图形：一个框里有一个圆。
+    center_x, center_y = canvas_width / 2, canvas_height / 2
+    circle_radius = short * 0.17
+    draw.ellipse(
+        (
+            center_x - circle_radius,
+            center_y - circle_radius,
+            center_x + circle_radius,
+            center_y + circle_radius,
+        ),
+        outline=mark,
+        width=stroke,
+    )
+
+    image = image.resize((width, height), Image.Resampling.LANCZOS)
 
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
@@ -939,8 +1005,17 @@ async def _seed_demo() -> None:
 
             if spec["cover"]:
                 # 真实 PNG（原图 + 缩略图都落盘），否则 /api/v1/images/{id} 会 404
-                cover_bytes = _build_seed_png(index, width=320, height=180)
-                thumb_bytes = _build_seed_png(index + 500, width=160, height=90)
+                # 契约 §35.4③：全尺寸从 320×180 提到 1280×720 —— 详情页把封面
+                # 拉伸到约 1200×520，标记在 320×180 上放大近 4 倍会明显糊。
+                cover_bytes = _build_seed_png(
+                    index, width=SEED_COVER_SIZE[0], height=SEED_COVER_SIZE[1]
+                )
+                # 缩略图**不跟着放大**（契约 §35.4③）：卡片墙只用到 160×90，
+                # 放大只会白白增大落盘体积。seed + 500 与色板长度 5 的关系不变，
+                # 封面与缩略图仍落在同一档位。
+                thumb_bytes = _build_seed_png(
+                    index + 500, width=SEED_THUMB_SIZE[0], height=SEED_THUMB_SIZE[1]
+                )
                 cover_file = await get_storage().write_bytes_atomic(
                     cover_bytes, directory=f"images/{tool.id}", file_name="cover.png"
                 )
@@ -956,8 +1031,8 @@ async def _seed_demo() -> None:
                     file_name="cover.png",
                     mime_type="image/png",
                     file_size=cover_file.size,
-                    width=320,
-                    height=180,
+                    width=SEED_COVER_SIZE[0],
+                    height=SEED_COVER_SIZE[1],
                     sha256=cover_file.sha256,
                     sort_order=0,
                     alt_text=f"{spec['name']} 封面",

@@ -211,6 +211,78 @@ def test_seed_cover_png_is_light_neutral_with_variation() -> None:
     assert cover == thumb
 
 
+def test_seed_cover_has_neutral_mark_and_correct_sizes() -> None:
+    """M18（契约 §35.4）：种子封面在浅中性底上有一个**淡中性几何标记**，且尺寸分层。
+
+    判据与契约四条一一对应：
+    1. **标记存在** —— 不再是一块纯色（M17 的副作用：纯色被详情页拉伸成「没加载出来」的灰）；
+    2. **不是彩色** —— 全图**任意**像素的三通道极差都不超过底色的极差，
+       即标记只是「底色各通道同减」，没有引入任何色相；
+    3. **全尺寸 1280×720**、**缩略图仍是 160×90**（不跟着放大，避免白增体积）；
+    4. 封面与缩略图仍**同档位**（`seed + 500` 与色板长度 5 的关系没被破坏）。
+    """
+    from PIL import Image
+
+    from app.cli import (
+        SEED_COVER_MARK_OFFSET,
+        SEED_COVER_PALETTE,
+        SEED_COVER_SIZE,
+        SEED_THUMB_SIZE,
+        _build_seed_png,
+    )
+
+    assert SEED_COVER_SIZE == (1280, 720)
+    assert SEED_THUMB_SIZE == (160, 90)
+    palette_spread = max(max(c) - min(c) for c in SEED_COVER_PALETTE)
+
+    for seed in range(1, 27):
+        full = Image.open(
+            io.BytesIO(
+                _build_seed_png(seed, width=SEED_COVER_SIZE[0], height=SEED_COVER_SIZE[1])
+            )
+        ).convert("RGB")
+        assert full.size == SEED_COVER_SIZE
+
+        colors = full.getcolors(maxcolors=1 << 20)
+        assert colors is not None, "像素数超过 getcolors 上限（不该发生）"
+        base = full.getpixel((0, 0))
+        expected_mark = tuple(channel - SEED_COVER_MARK_OFFSET for channel in base)
+
+        # ① 标记存在：不是纯色，且真的画出了「底色暗一档」那个颜色（不是只有抗锯齿噪声）
+        assert len(colors) > 1, f"seed={seed} 仍是一块纯色（M17 的灰块问题会复现）"
+        # 注意 `getcolors()` 的每项是 `(出现次数, 像素)`，不是 `(像素, 次数)`。
+        mark_count = {pixel: count for count, pixel in colors}.get(expected_mark, 0)
+        assert mark_count > 500, f"seed={seed} 几乎没有标记像素（{expected_mark} 只出现 {mark_count} 次）"
+
+        # ② 不是彩色：每个像素相对底色的三通道偏移必须一致（= 没有引入色相），
+        #    且极差不超过底色的极差（浅中性族不变），明度落在浅色区间。
+        for _count, (r, g, b) in colors:
+            offsets = [base[i] - channel for i, channel in enumerate((r, g, b))]
+            assert max(offsets) - min(offsets) <= 2, (
+                f"seed={seed} 像素 {(r, g, b)} 相对底色 {base} 的通道偏移 {offsets} 不一致 —— 引入了色相"
+            )
+            assert min(offsets) >= -2 and max(offsets) <= SEED_COVER_MARK_OFFSET + 2, (
+                f"seed={seed} 像素 {(r, g, b)} 的明度偏移 {offsets} 超出「暗一两档」区间"
+            )
+            assert max(r, g, b) - min(r, g, b) <= palette_spread, (
+                f"seed={seed} 出现带色相的像素 {(r, g, b)}"
+            )
+            assert min(r, g, b) >= 180, f"seed={seed} 出现过暗/过饱和像素 {(r, g, b)}"
+            assert max(r, g, b) <= 235, f"seed={seed} 出现近白像素 {(r, g, b)}"
+
+        # ③ 缩略图不跟着放大
+        thumb = Image.open(
+            io.BytesIO(
+                _build_seed_png(seed + 500, width=SEED_THUMB_SIZE[0], height=SEED_THUMB_SIZE[1])
+            )
+        ).convert("RGB")
+        assert thumb.size == SEED_THUMB_SIZE
+        thumb_colors = thumb.getcolors(maxcolors=1 << 20)
+        assert thumb_colors is not None and len(thumb_colors) > 1, "缩略图也要有标记"
+        # ④ 同档位：底角像素必须是同一档底色（`seed + 500` 与色板长度 5 的关系没破）
+        assert thumb.getpixel((0, 0)) == base
+
+
 def test_seed_constants_are_consistent() -> None:
     """A2/A4：viewer、三个作者、26 个工具（8 边界 + 18 普通），slug 不重复。"""
     from app.cli import (

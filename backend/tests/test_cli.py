@@ -206,6 +206,51 @@ def test_seed_demo_populates_search_index(cli_db) -> None:
     assert _query(db_path, "SELECT COUNT(*) FROM tool_search_index")[0][0] == 26
 
 
+def test_seed_demo_cover_files_match_metadata_and_keep_one_tone(cli_db) -> None:
+    """M18（契约 §35.4③）：落盘的全尺寸封面要是 1280×720，缩略图仍是 160×90，
+    且 DB 里记的 `width/height` 与**文件真实解码出来的尺寸**一致。
+
+    为什么要连文件一起解：`ToolImage.width/height` 是详情页/接口的元数据，
+    它跟文件实际尺寸一旦分叉（例如只改了 DB 常量、忘了改画布），
+    前端会按错误的宽高比排版 —— 这类「元数据说谎」只有解文件才抓得住。
+    同时验证封面与缩略图仍**同档位**（`seed + 500` 与色板长度 5 的关系没被破坏）。
+    """
+    import io
+
+    from PIL import Image
+
+    from app.cli import SEED_COVER_SIZE, SEED_THUMB_SIZE
+
+    db_path, env = cli_db
+    # `cli_db` 只负责建库；播种在 `test_seed_demo_creates_contract_fixture` 里。
+    # 这里自己跑一次，避免测试之间产生**执行顺序依赖**（seed-demo 是幂等的）。
+    assert _run(["app.cli", "seed-demo"], env).returncode == 0
+    rows = _query(
+        db_path,
+        "SELECT id, storage_path, thumb_path, width, height FROM tool_images "
+        "WHERE kind='cover'",
+    )
+    assert len(rows) >= 2, "种子至少要有 2 张封面"
+
+    data_dir = Path(env["DATA_DIR"])
+    for image_id, storage_path, thumb_path, width, height in rows:
+        assert (width, height) == SEED_COVER_SIZE, (image_id, width, height)
+
+        with Image.open(io.BytesIO((data_dir / storage_path).read_bytes())) as full:
+            assert full.format == "PNG", "必须仍是真 PNG（签名 URL 链路依赖它）"
+            assert full.size == SEED_COVER_SIZE, (storage_path, full.size)
+        with Image.open(io.BytesIO((data_dir / thumb_path).read_bytes())) as thumb:
+            assert thumb.format == "PNG"
+            assert thumb.size == SEED_THUMB_SIZE, (thumb_path, thumb.size)
+
+        # 同档位：封面与缩略图的底角像素（底色）必须一致
+        full_rgb = Image.open(io.BytesIO((data_dir / storage_path).read_bytes())).convert("RGB")
+        thumb_rgb = Image.open(io.BytesIO((data_dir / thumb_path).read_bytes())).convert("RGB")
+        assert full_rgb.getpixel((0, 0)) == thumb_rgb.getpixel((0, 0)), image_id
+        # 标记确实落到了盘上的文件里（不是只有内存里的返回值有）
+        assert len(full_rgb.getcolors(maxcolors=1 << 20) or []) > 1, image_id
+
+
 # ---------------------------------------------------------------------------
 # create-superadmin / reset-password / list-users
 # ---------------------------------------------------------------------------
