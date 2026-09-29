@@ -111,6 +111,10 @@ EXPECTED_REVISIONS: dict[str, str | None] = {
     "0008": "0007",
     # M15：PostgreSQL 全文检索（tools.search_vector + GIN，契约 §31.3）
     "0009": "0008",
+    # M18：纯文案迁移（`webapp.health_check_enabled` 去掉「（二期）」）。
+    # ★ 这份链常量在 **3 个测试文件**里各存了一份（本文件、`test_m13_footer_tagline.py`、
+    #   `test_m14_migration_0008.py`）—— 新增迁移要**同时**改三处，漏一处就红。
+    "0010": "0009",
 }
 
 #: 全新库跑到 head 后的设置项行数：0002 播种 25 项 + 0007 的 6 项

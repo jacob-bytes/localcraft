@@ -122,7 +122,16 @@ SETTING_DEFAULTS: tuple[tuple[str, Any, str, bool, str], ...] = (
     ("stats.download_log_retention_days", 180, "int", False, "下载明细保留天数"),
     ("stats.view_dedup_minutes", 60, "int", False, "浏览去重窗口（分钟）"),
     ("images.signature_ttl_hours", 168, "int", False, "图片签名 URL 有效期（小时），默认 7 天"),
-    ("webapp.health_check_enabled", False, "bool", False, "在线工具探活（二期）"),
+    # M18：文案去掉「（二期）」—— M14 已实现并接通探活，原文案会让管理员以为开关没用。
+    # 数据库里的同一列由迁移 `0010` 更新（管理端 label 取自 DB 行，改这里不影响既有库）。
+    # 顺带把代码默认与 `0002` 播种文本的措辞差异也统一了。
+    (
+        "webapp.health_check_enabled",
+        False,
+        "bool",
+        False,
+        "在线工具探活开关（随维护任务定时探测）",
+    ),
     ("api.docs_enabled", False, "bool", False, "是否开放 /docs"),
 )
 

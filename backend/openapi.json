@@ -10509,6 +10509,24 @@
               "title": "Variant",
               "type": "string"
             }
+          },
+          {
+            "description": "图片签名（能力 URL 用），形如 `<b64url>.<exp>`；与 Authorization 二选一",
+            "in": "query",
+            "name": "sig",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "图片签名（能力 URL 用），形如 `<b64url>.<exp>`；与 Authorization 二选一",
+              "title": "Sig"
+            }
           }
         ],
         "responses": {
@@ -11921,6 +11939,24 @@
               ],
               "description": "指定版本；不传则下载当前版本",
               "title": "Version Id"
+            }
+          },
+          {
+            "description": "一次性下载票据；带上它就不再解析 Authorization 头",
+            "in": "query",
+            "name": "ticket",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "一次性下载票据；带上它就不再解析 Authorization 头",
+              "title": "Ticket"
             }
           }
         ],

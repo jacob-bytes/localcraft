@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Annotated, Any
 
-from fastapi import Depends, Request
+from fastapi import Depends, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -374,6 +374,12 @@ async def portal_access(
 async def image_access(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_db)],
+    sig: Annotated[
+        str | None,
+        Query(
+            description="图片签名（能力 URL 用），形如 `<b64url>.<exp>`；与 Authorization 二选一"
+        ),
+    ] = None,
 ) -> PortalAccess:
     """图片接口的鉴权依赖：**能力签名** 或 **Authorization 头**，二选一（契约 §14.3）。
 
@@ -385,10 +391,15 @@ async def image_access(
         路由体仍会照常做父工具可见性校验 —— **签名不是绕过可见性的后门**。
       - 签名无效/缺失 → 回退到 `resolve_principal`；没有有效凭证就 404，
         与「图片不存在」同码，避免用状态码差异探测资源。
+
+    ★ `sig` **声明成依赖的查询参数**（而不是在依赖体里裸读 `request.query_params`）：
+    契约 §15.6 规定 `backend/openapi.json` 是接口形状的唯一权威，而裸读的查询参数
+    **不会出现在 openapi 里** —— 于是"形状权威"上有一个洞，任何按 openapi 生成的
+    客户端都会漏掉签名参数。声明成参数后，FastAPI 会把它合并进本路由的 operation，
+    读到的与声明的就是同一个来源（`tests/test_openapi_param_coverage.py` 守着这条）。
     """
     image_id_raw = request.path_params.get("image_id")
     variant = request.query_params.get("variant") or "full"
-    sig = request.query_params.get("sig")
 
     signed_ok = False
     if image_id_raw is not None and sig:
@@ -516,15 +527,23 @@ class DownloadAccess:
 async def download_access(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_db)],
+    ticket: Annotated[
+        str | None,
+        Query(description="一次性下载票据；带上它就不再解析 Authorization 头"),
+    ] = None,
 ) -> DownloadAccess:
     """下载专用入口依赖。
 
     **票据优先**：带 `?ticket=` 时不再解析 Authorization —— 票据已经把
     `user_id` 绑进去了，混用两种凭证只会让权限来源变得难以推理。
+
+    ★ `ticket` 与 `image_access` 的 `sig` 同理：**声明成依赖的查询参数**，
+    而不是在依赖体里裸读 `request.query_params` —— 裸读的参数不会进
+    `openapi.json`，会让契约 §15.6 的「形状权威」出现洞。
     """
     from app.services import download_service
 
-    ticket_token = request.query_params.get("ticket")
+    ticket_token = ticket
     if ticket_token:
         # 只校验签名与有效期；tool_id 的比对在处理器里（那里才知道工具）
         try:
