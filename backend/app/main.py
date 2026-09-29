@@ -20,7 +20,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from typing import Any
 
-from fastapi import FastAPI, Request, Response
+from fastapi import Depends, FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -38,6 +38,7 @@ from app.core.deps import route_template
 from app.core.errors import DomainError, code_for_status, message_for_code
 from app.core.logging import configure_logging
 from app.core.metrics import monitoring_enabled, record_request
+from app.core.rate_limit import rate_limit_api
 from app.core.request_id import resolve_request_id
 from app.core.security_headers import SecurityHeadersMiddleware
 from app.core.sql_counter import (
@@ -256,10 +257,14 @@ def _request_id(request: Request) -> str:
 @app.exception_handler(DomainError)
 async def domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
     request_id = _request_id(request)
+    # 异常自带的响应头（M14 §29.4：限流的 `Retry-After`）与 `X-Request-Id`
+    # （契约 §4.4）合并 —— 两者都要出现，不能二选一。
+    headers = dict(exc.headers or {})
+    headers["X-Request-Id"] = request_id
     return JSONResponse(
         status_code=exc.http_status,
         content=_error_payload(exc.code, exc.message, exc.details, request_id),
-        headers={"X-Request-Id": request_id},
+        headers=headers,
     )
 
 
@@ -400,7 +405,17 @@ async def readyz() -> Response:
 # ---------------------------------------------------------------------------
 # API 路由（必须在静态挂载之前）
 # ---------------------------------------------------------------------------
-app.include_router(api_router, prefix="/api/v1")
+# M14（契约 §29.4）：`/api/v1` 的**全局总配额**——挂在 include_router 上，
+# 一次覆盖全部 99 个操作，而不是逐个路由加依赖（漏加一个就是一个绕过口）。
+# 登录与上传两档配额更严，作为**路由级**依赖挂在各自的路由上（在哪里就写在哪里）。
+#
+# 这个依赖**不改变接口面**：它不声明任何请求参数，因此不进 OpenAPI
+# （operations/paths 仍是 99/79），守卫测试与 `openapi.json` 都能证明这一点。
+app.include_router(
+    api_router,
+    prefix="/api/v1",
+    dependencies=[Depends(rate_limit_api)],
+)
 
 # ---------------------------------------------------------------------------
 # 运维指标端点（M1）

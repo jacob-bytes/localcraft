@@ -1127,13 +1127,20 @@ def import_users_cmd(
 
 
 async def _import_users(csv_path: Path, dry_run: bool, on_conflict: str) -> None:
+    from app.core.errors import LastSuperadminError
     from app.services import import_export_service
 
     content = csv_path.read_bytes()
-    async with SessionLocal() as session:
-        result = await import_export_service.import_users_csv(
-            session, content=content, dry_run=dry_run, on_conflict=on_conflict
-        )
+    try:
+        async with SessionLocal() as session:
+            result = await import_export_service.import_users_csv(
+                session, content=content, dry_run=dry_run, on_conflict=on_conflict
+            )
+    except LastSuperadminError as exc:
+        # M14（契约 §29.6）：导入后活跃超管数为 0 → 服务层已整体回滚。
+        # 这里给出**一句话结论 + 非零退出码**，而不是把 traceback 甩给运维。
+        await _dispose()
+        _fail(f"导入已整体回滚：{exc.message}")
     await _dispose()
 
     _ok(
@@ -1285,7 +1292,7 @@ def maintenance_cmd(
         "--task",
         help=(
             "只跑某一项：all / download-logs / sessions / orphans / acl / "
-            "tags / recycle-bin / gc-versions"
+            "tags / recycle-bin / gc-versions / webapp-health"
         ),
     ),
     dry_run: bool = typer.Option(
@@ -1306,7 +1313,7 @@ def maintenance_cmd(
 async def _maintenance(task: str, dry_run: bool, json_out: bool) -> None:
     from app.core.config import settings
     from app.repositories import system_settings as settings_repo
-    from app.services import maintenance_service
+    from app.services import maintenance_service, webapp_health_service
 
     files_root = settings.data_dir / "files"
 
@@ -1361,11 +1368,17 @@ async def _maintenance(task: str, dry_run: bool, json_out: bool) -> None:
                     payload["versions_gc"] = await maintenance_service.gc_versions(
                         session, keep=history_limit
                     )
+                elif task == "webapp-health":
+                    # M14（契约 §29.2）：在线工具探活。受设置项
+                    # `webapp.health_check_enabled` 控制，关闭时直接跳过
+                    # （`webapp_skipped=true`），不静默空转。
+                    health = await webapp_health_service.run(session, dry_run=dry_run)
+                    payload.update(health.as_dict())
                 else:
                     _fail(
                         "未知任务："
                         f"{task}（可选 all/download-logs/sessions/orphans/acl/tags/"
-                        "recycle-bin/gc-versions）"
+                        "recycle-bin/gc-versions/webapp-health）"
                     )
             except Exception as exc:  # 单项失败也要给出清晰结论
                 errors.append(f"{task}: {type(exc).__name__}: {exc}")

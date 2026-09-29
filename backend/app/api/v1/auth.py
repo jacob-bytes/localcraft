@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings as env_settings
 from app.core.cookies import clear_refresh_cookie, set_refresh_cookie
 from app.core.deps import ClientInfo, get_client_info, get_current_user
+from app.core.rate_limit import rate_limit_login
 from app.core.timeutil import utcnow
 from app.db.session import get_db
 from app.models.enums import AuthSource
@@ -77,7 +78,15 @@ async def auth_provider() -> AuthProviderResponse:
     )
 
 
-@router.post("/login", response_model=TokenResponse, summary="登录")
+@router.post(
+    "/login",
+    response_model=TokenResponse,
+    summary="登录",
+    # M14（契约 §29.4）：登录档配额（默认每 IP 每分钟 10 次，比全局总配额严得多）。
+    # 这是**暴力破解**的第一道应用层闸门；账号锁定（`security.login_max_failures`）
+    # 仍然按账号计数，两者互补：限流挡「广撒网」，锁定挡「死磕一个账号」。
+    dependencies=[Depends(rate_limit_login)],
+)
 async def login(
     body: LoginRequest,
     response: Response,

@@ -17,6 +17,7 @@ from app.core.deps import Principal, get_visibility_context, require_roles_and_s
 from app.core.errors import NotFoundError, StateConflictError, ValidationError
 from app.core.pagination import Page, PageParams
 from app.core.permissions import permissions_for_roles
+from app.core.rate_limit import rate_limit_upload
 from app.core.timeutil import utcnow
 from app.db.session import get_db
 from app.models.enums import ApiScope, ImageKind, RoleCode, ToolStatus, ToolType, VersionStatus
@@ -562,6 +563,8 @@ async def list_my_versions(
     response_model=VersionUploadResponse,
     status_code=201,
     summary="上传新版本（multipart，12 步顺序）",
+    # M14（契约 §29.4）：上传档配额（默认每 IP 每分钟 30 次）。
+    dependencies=[Depends(rate_limit_upload)],
 )
 async def upload_version(
     tool_id: int,
@@ -715,6 +718,8 @@ async def delete_version(
     response_model=ImageOut,
     status_code=201,
     summary="上传封面或截图",
+    # M14（契约 §29.4）：上传档配额（与版本上传共用同一档）。
+    dependencies=[Depends(rate_limit_upload)],
 )
 async def upload_image(
     tool_id: int,

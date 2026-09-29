@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.admin._guards import admin_all_guard
 from app.core.deps import Principal
+from app.core.rate_limit import rate_limit_upload
 from app.db.session import get_db
 from app.schemas.admin import ImportResultResponse, ToolImportRequest
 from app.services import import_export_service
@@ -38,7 +39,11 @@ def _attachment_header(filename: str) -> dict[str, str]:
 
 
 @router.post(
-    "/import/users", response_model=ImportResultResponse, summary="批量导入用户（CSV）"
+    "/import/users",
+    response_model=ImportResultResponse,
+    summary="批量导入用户（CSV）",
+    # M14（契约 §29.4）：CSV 也是 multipart 上传，走上传档配额。
+    dependencies=[Depends(rate_limit_upload)],
 )
 async def import_users(
     session: Annotated[AsyncSession, Depends(get_db)],

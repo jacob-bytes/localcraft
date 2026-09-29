@@ -18,13 +18,22 @@ class DomainError(Exception):
     http_status: int = 500
     default_message: str = "服务器内部错误"
 
+    #: 附加响应头（如 429 的 `Retry-After`）。默认无 —— 绝大多数业务错误
+    #: 只需要状态码与错误信封。`app/main.py` 的处理器会把它合并到响应上。
+    headers: dict[str, str] | None = None
+
     def __init__(
         self,
         message: str | None = None,
         details: dict[str, Any] | None = None,
+        *,
+        headers: dict[str, str] | None = None,
     ) -> None:
         self.message = message or self.default_message
         self.details = details
+        if headers:
+            # 复制一份：异常实例可能被复用/缓存，不该让调用方之后改到响应头
+            self.headers = dict(headers)
         super().__init__(self.message)
 
 
@@ -41,11 +50,13 @@ class ValidationError(DomainError):
         message: str | None = None,
         details: dict[str, Any] | None = None,
         fields: list[dict[str, Any]] | None = None,
+        *,
+        headers: dict[str, str] | None = None,
     ) -> None:
         merged = dict(details or {})
         if fields is not None:
             merged["fields"] = fields
-        super().__init__(message, merged or None)
+        super().__init__(message, merged or None, headers=headers)
 
 
 class InvalidSortError(DomainError):

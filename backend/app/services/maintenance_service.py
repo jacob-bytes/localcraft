@@ -20,6 +20,7 @@
   | 悬空 ACL 清理 | `cleanup_dangling_acl` |
   | 标签计数重算 | `recompute_tag_counts` |
   | 回收站清理 | `purge_recycle_bin` |
+  | 在线工具探活 | `webapp_health_service.run`（M14，契约 §29.2）|
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ from app.models.enums import AclSubjectType
 from app.models.taxonomy import Tag
 from app.models.tool import Tool, ToolAcl, ToolTag, ToolVersion
 from app.models.user import Group
+from app.services import webapp_health_service
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +63,16 @@ class MaintenanceResult:
     tags_recounted: int = 0
     recycle_bin_purged: list[int] = field(default_factory=list)
     versions_gc: int = 0
+    #: ---- M14（契约 §29.2）：在线工具探活 ----
+    #: `webapp_skipped` 为真表示设置项 `webapp.health_check_enabled=false`
+    #: 而**一项都没测** —— 与「测了 0 个工具（库里没有 webapp）」是两回事，
+    #: 所以单独一个布尔，而不是靠 checked == 0 去猜。
+    webapp_checked: int = 0
+    webapp_ok: int = 0
+    webapp_fail: int = 0
+    webapp_timeout: int = 0
+    webapp_skipped: bool = False
+    webapp_truncated: bool = False
     errors: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, object]:
@@ -405,6 +417,21 @@ async def run_all(
         if not dry_run:
             result.versions_gc = await gc_versions(session, keep=version_history_limit)
 
+    async def _webapp_health() -> None:
+        """M14（契约 §29.2）：在线工具探活。
+
+        与其余任务不同，它**不受 `--dry-run` 跳过** —— dry-run 下照样探测，
+        只是不把结果写回 `tools`，这样运维能先看清「打开开关会得到什么」。
+        总开关 `webapp.health_check_enabled=false` 时它自己会直接跳过。
+        """
+        health = await webapp_health_service.run(session, dry_run=dry_run)
+        result.webapp_checked = health.checked
+        result.webapp_ok = health.ok
+        result.webapp_fail = health.fail
+        result.webapp_timeout = health.timeout
+        result.webapp_skipped = health.skipped
+        result.webapp_truncated = health.truncated
+
     # 顺序刻意与 docs/02 §5 的表格一致，便于对照
     await _guard("下载明细清理", _logs)
     await _guard("会话清理", _sessions)
@@ -413,6 +440,9 @@ async def run_all(
     await _guard("标签计数重算", _tags)
     await _guard("回收站清理", _recycle)
     await _guard("历史版本淘汰", _versions)
+    # M14 追加在最后：它是**只读探测 + 回写两列**，与前面几个破坏性清理
+    # 没有顺序依赖，放最后是为了「清理先做完，探测结果不会被清理动作影响」。
+    await _guard("在线工具探活", _webapp_health)
     return result
 
 

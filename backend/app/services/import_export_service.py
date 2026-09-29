@@ -247,6 +247,18 @@ async def import_users_csv(
 
     if not dry_run and result.succeeded:
         # 整批一个事务：dry_run 时一次都不提交
+        #
+        # M14（契约 §29.6）：**提交前的终态检查**。这条路径（CSV 导入 / 从备份恢复）
+        # 通过 `_replace_roles` 整体替换角色，**不走** `_cas_guard_last_superadmin`
+        # —— 那是刻意的：合法的「从备份恢复」必须允许超管数**低于当前值**
+        # （备份里可能就只有 1 个超管）。真正该堵的只有一种结果：
+        # 「恢复完一个超管都没有」——那是把自己锁在门外。
+        #
+        # 所以这里不在过程的每一步加守卫，只在**事务提交前看一眼终态**：
+        # 0 个活跃超管 → 整体回滚 + 报错（409 LAST_SUPERADMIN）。
+        # 此时 `_replace_roles` 的 DELETE/INSERT 都已 flush 进本事务，
+        # 所以这个计数就是「本次导入之后」的真实状态。
+        await _assert_superadmin_survives(session)
         await session.commit()
     elif dry_run:
         await session.rollback()
@@ -260,6 +272,29 @@ async def import_users_csv(
         result.skipped,
     )
     return result
+
+
+async def _assert_superadmin_survives(session: AsyncSession) -> None:
+    """终态检查：导入后必须仍有活跃超管，否则整体回滚并报错（§29.6）。
+
+    错误码复用既有的 `LAST_SUPERADMIN`（409）：语义完全一致
+    （「不能失去最后一个超级管理员」），且契约 §4.3 禁止自行发明新错误码。
+    """
+    from app.core.errors import LastSuperadminError
+    from app.repositories import users as users_repo
+
+    remaining = await users_repo.count_active_superadmins(session)
+    if remaining > 0:
+        return
+    await session.rollback()
+    logger.warning("导入被拒绝：终态检查发现活跃超管数为 0，已整体回滚")
+    raise LastSuperadminError(
+        message=(
+            "导入后系统将没有任何活跃超级管理员，已整体回滚（本次导入未生效）。"
+            "请确保导入内容中至少有一个 status=active 的 superadmin。"
+        ),
+        details={"active_superadmins_after_import": 0},
+    )
 
 
 def _valid_username(username: str) -> bool:

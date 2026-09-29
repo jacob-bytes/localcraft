@@ -1,4 +1,4 @@
-"""守卫：shell 脚本里 `$VAR` 不能紧跟非 ASCII 字符。
+"""守卫：shell（含 workflow YAML 内的 shell 片段）里 `$VAR` 不能紧跟非 ASCII 字符。
 
 **为什么需要这条守卫**：这不是风格洁癖，是一个会**静默破坏输出**的真实缺陷。
 
@@ -18,6 +18,18 @@ bash 在解析 `$X（` 时把多字节字符的字节当成了变量名的一部
 所以用测试把它钉住，而不是靠"记得写花括号"。
 
 修法永远是加花括号：`$X` → `${X}`。
+
+## M14（contracts/CONTRACT.md §29.7）：扫描范围扩到 workflow YAML
+
+原先只扫 `_SHELL_SUFFIXES = {".sh"}`，于是 `.github/workflows/*.yml` 里的
+**shell 片段**（`run: |` 块）完全不在范围内 —— 而 CI 里恰好大量使用 `$VAR`
+拼中文提示。**这是真实的漏检面**：同样的片段被复制进脚本就会踩坑
+（CI runner 是 bash 5 不复现，本机 bash 3.2 才现形）。
+
+**已知取舍（§29.7 明写）**：按**文本**扫 YAML 会把注释与中文说明也纳入，
+可能命中「其实不是 shell」的地方。**这是可接受的** —— 本守卫的修法
+（`$VAR` → `${VAR}`）在任何上下文里都无害，而漏检的代价是一个会在
+bash 3.2 上崩掉的脚本。若确有误报，改文案或加花括号即可。
 """
 
 from __future__ import annotations
@@ -37,9 +49,30 @@ _BARE_VAR_BEFORE_MULTIBYTE = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)(?=[^\x00-\x
 _SHELL_SUFFIXES = {".sh"}
 _SHELL_NAMES = {"preview.sh"}
 
+#: M14（§29.7）：GitHub Actions workflow 的目录与后缀 —— 里面同样有 shell 片段
+_WORKFLOW_DIR_PARTS = (".github", "workflows")
+_WORKFLOW_SUFFIXES = {".yml", ".yaml"}
 
-def _tracked_shell_files() -> list[Path]:
-    """取 git 跟踪的 shell 脚本。
+
+def is_scanned_file(rel_path: Path) -> bool:
+    """该文件是否在守卫的扫描范围内（按**仓库相对路径**判断）。
+
+    抽成独立函数是为了能被直接反向验证：`test_workflow_files_are_in_scope`
+    会断言 `.github/workflows/ci.yml` 命中 —— 否则「扩了范围」这件事
+    可能只是注释里的一句话，「守卫已补盲」就成了空转。
+    """
+    if rel_path.suffix in _SHELL_SUFFIXES or rel_path.name in _SHELL_NAMES:
+        return True
+    parts = rel_path.parts
+    return (
+        len(parts) >= 3
+        and tuple(parts[:2]) == _WORKFLOW_DIR_PARTS
+        and rel_path.suffix in _WORKFLOW_SUFFIXES
+    )
+
+
+def _tracked_scanned_files() -> list[Path]:
+    """取 git 跟踪的 shell 脚本与 workflow YAML。
 
     用 `git ls-files` 而不是 `rglob`：只关心入库的文件，
     且用 `-z` + `core.quotepath=false` 正确处理中文路径。
@@ -54,21 +87,48 @@ def _tracked_shell_files() -> list[Path]:
     files = []
     for name in filter(None, out.split("\0")):
         p = REPO_ROOT / name
-        is_shell = p.suffix in _SHELL_SUFFIXES or p.name in _SHELL_NAMES
-        if is_shell and p.is_file():
+        if is_scanned_file(Path(name)) and p.is_file():
             files.append(p)
     return files
 
 
 def test_shell_files_were_found() -> None:
     """遍历器本身要可靠 —— 否则下面的守卫会变成空转。"""
-    files = _tracked_shell_files()
-    assert len(files) >= 20, f"只找到 {len(files)} 个 shell 脚本，遍历器可能失效"
+    files = _tracked_scanned_files()
+    shells = [f for f in files if f.suffix in _SHELL_SUFFIXES or f.name in _SHELL_NAMES]
+    assert len(shells) >= 20, f"只找到 {len(shells)} 个 shell 脚本，遍历器可能失效"
+
+
+def test_workflow_files_are_found() -> None:
+    """M14（§29.7）：workflow YAML 必须**真的**进了扫描范围。
+
+    与上一条同一个目的：防止「扩展范围」变成一句注释。
+    """
+    workflows = [
+        f
+        for f in _tracked_scanned_files()
+        if tuple(f.relative_to(REPO_ROOT).parts[:2]) == _WORKFLOW_DIR_PARTS
+    ]
+    assert len(workflows) >= 1, (
+        "没有扫到任何 .github/workflows/*.yml —— 扩展范围可能失效"
+    )
+
+
+def test_workflow_files_are_in_scope() -> None:
+    """反向验证判定函数本身（不依赖仓库里恰好有什么文件）。"""
+    assert is_scanned_file(Path(".github/workflows/ci.yml")) is True
+    assert is_scanned_file(Path(".github/workflows/release.yaml")) is True
+    assert is_scanned_file(Path("scripts/precheck.sh")) is True
+    assert is_scanned_file(Path("preview.sh")) is True
+    # 不在范围内：别处的 yml、workflows 目录下的非 YAML
+    assert is_scanned_file(Path("docker-compose.yml")) is False
+    assert is_scanned_file(Path(".github/workflows/notes.md")) is False
+    assert is_scanned_file(Path("web/package.json")) is False
 
 
 def test_no_bare_variable_before_multibyte_char() -> None:
     offenders: list[str] = []
-    for path in _tracked_shell_files():
+    for path in _tracked_scanned_files():
         try:
             text = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:  # pragma: no cover - 仓库里不该有二进制 .sh

@@ -428,4 +428,11 @@ async def update_settings(
 
     # 设置变更立即生效（FR-CFG-01）—— 本服务每次请求都读表，不做进程内缓存，
     # 所以这里不需要额外通知任何组件。
+    #
+    # 例外（M14 / 契约 §29.4）：**限流配置有 5 秒进程内缓存**（它读的是
+    # `security.rate_limit_*`，在限流依赖里读）。若不在这里显式失效，
+    # 管理员改完配额最多 5 秒后才生效 —— 那就把 FR-CFG-01 打了折。
+    from app.core.rate_limit import reset_config_cache
+
+    reset_config_cache()
     return warnings

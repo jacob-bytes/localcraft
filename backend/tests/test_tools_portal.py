@@ -376,6 +376,10 @@ async def test_item_shape_matches_contract(client, seeded) -> None:
 
     M8（contracts §23.5）在列表项上**新增 4 个字段**（向后兼容的新增）：
     `favorite_count` / `like_count` / `is_favorited` / `is_liked`。
+
+    M14（contracts §29.3）再新增 1 个**派生**字段：
+    `webapp_unhealthy`（仅 webapp 且探活状态为 fail/timeout 时为 true）。
+    列表**只**加这一个 —— 两个原始探活字段留在详情里（§29.3 的刻意取舍）。
     """
     token = await login(client, "admin")
     response = await client.get(TOOLS, params={"q": "public-approved-2"}, headers=auth(token))
@@ -403,10 +407,13 @@ async def test_item_shape_matches_contract(client, seeded) -> None:
         "like_count",
         "is_favorited",
         "is_liked",
+        # ---- M14（contracts §29.3）：探活派生字段 ----
+        "webapp_unhealthy",
         "published_at",
         "updated_at",
     }
     assert set(item) == expected
+    assert item["webapp_unhealthy"] is False, "从未检测过（NULL）不算不健康"
     assert set(item["category"]) == {"id", "slug", "name", "icon"}
     assert set(item["owner"]) == {"id", "username", "display_name"}
     assert item["current_version"] == "1.0.0"

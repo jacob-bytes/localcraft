@@ -97,7 +97,9 @@ LEGACY_FEATURE_FIELDS: frozenset[str] = frozenset(
     {"webapp_health_check", "skill_preview", "anonymous_view", "change_password"}
 )
 
-#: 迁移链（冻结）：0007 必须挂在 0006 后面，且链是一条直线。
+#: 迁移链（冻结）：0007 挂在 0006 后面，且链是一条直线。
+#: M14（contracts §29.5）追加 `0008`（限流设置项 + 补播种 images.signature_ttl_hours）
+#: —— `0007` 已随 v1.1.0 发布，所以 M14 只能**新建** 0008，不能改 0007。
 EXPECTED_REVISIONS: dict[str, str | None] = {
     "0001": None,
     "0002": "0001",
@@ -106,17 +108,18 @@ EXPECTED_REVISIONS: dict[str, str | None] = {
     "0005": "0004",
     "0006": "0005",
     "0007": "0006",
+    "0008": "0007",
 }
 
 #: 全新库跑到 head 后的设置项行数：0002 播种 25 项 + 0007 的 6 项
-#: （§27.2 的 5 项 + §28.3 并进 0007 的 `portal.footer_tagline`）。
+#: （§27.2 的 5 项 + §28.3 并进 0007 的 `portal.footer_tagline`）
+#: + M14 的 0008 的 5 项（§29.4 的 4 个限流项 + `images.signature_ttl_hours`）
+#: = **36**。
 #:
-#: ★ 不等于 `len(SETTING_DEFAULTS)`（32）—— 权威清单里的
-#: `images.signature_ttl_hours` **从来没有被任何迁移播种过**（0002 的冻结快照
-#: 里没有它），只靠 `get_effective_int` 的运行时兜底。这是本用例发现的**既有**
-#: 缺陷，不属于 M12/M13 范围，所以这里写成硬编码的 31 而不是等式，避免把既有
-#: 问题伪装成「本轮改坏了」。（已上报，见 M12 交付报告。）
-_EXPECTED_FRESH_DB_SETTING_ROWS = 31
+#: ★ 注意 `len(SETTING_DEFAULTS)` 现在是 36：M14 的 0008 把
+#: `images.signature_ttl_hours` 补播种了，于是「权威清单」与「库里的行」
+#: 终于一致（M12 时两者的差 1 正是那个从未被播种的项，见 M12 交付报告）。
+_EXPECTED_FRESH_DB_SETTING_ROWS = 36
 
 
 async def _snapshot_new_values() -> dict[str, Any]:
@@ -484,7 +487,7 @@ def test_migration_0007_roundtrip_and_idempotency(tmp_path: Path) -> None:
     # ---- ④ downgrade 不能误删别人的设置项 ----
     assert _setting_count(db_path) == _EXPECTED_FRESH_DB_SETTING_ROWS, (
         "全新库跑到 head 的设置项行数应为 "
-        f"{_EXPECTED_FRESH_DB_SETTING_ROWS}（0002 的 25 + 0007 的 5）"
+        f"{_EXPECTED_FRESH_DB_SETTING_ROWS}（0002 的 25 + 0007 的 6 + M14 的 0008 的 5）"
     )
 
 

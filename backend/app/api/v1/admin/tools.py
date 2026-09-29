@@ -16,6 +16,7 @@ from app.api.v1.admin._guards import admin_all_guard, approver_guard
 from app.core.deps import Principal
 from app.core.errors import NotFoundError, StateConflictError
 from app.core.pagination import PageParams
+from app.core.rate_limit import rate_limit_upload
 from app.db.session import get_db
 from app.models.enums import ToolStatus
 from app.repositories import tools as tools_repo
@@ -86,6 +87,8 @@ async def create_tool_as_admin(
     response_model=VersionUploadResponse,
     status_code=201,
     summary="管理侧代上传版本",
+    # M14（契约 §29.4）：上传档配额（与 /me 的上传共用同一档）。
+    dependencies=[Depends(rate_limit_upload)],
 )
 async def upload_version_as_admin(
     tool_id: int,

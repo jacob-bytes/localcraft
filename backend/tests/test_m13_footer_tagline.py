@@ -75,7 +75,8 @@ EXPECTED_SIX: dict[str, tuple[str, str, str]] = {
 #: M12 的 5 项（§27.2）—— 用来钉住「默认全空」这条**没有被 §28 改动**。
 M12_KEYS: frozenset[str] = frozenset(EXPECTED_SIX) - {TAGLINE_KEY}
 
-#: 迁移链（冻结）：M13 **并进** 0007，所以这条链与 M12 时逐字相同。
+#: 迁移链（冻结）：M13 **并进** 0007，所以 M13 当时这条链与 M12 时逐字相同。
+#: M14（contracts §29.5）追加 `0008`：`0007` 已随 v1.1.0 发布，只能新建 0008。
 EXPECTED_REVISIONS: dict[str, str | None] = {
     "0001": None,
     "0002": "0001",
@@ -84,13 +85,18 @@ EXPECTED_REVISIONS: dict[str, str | None] = {
     "0005": "0004",
     "0006": "0005",
     "0007": "0006",
+    "0008": "0007",
 }
 
-#: 全新库跑到 head 的设置项行数：0002 的 25 + 0007 的 6（§28.5 并进，不新增迁移）。
-EXPECTED_FRESH_DB_SETTING_ROWS = 31
+#: 全新库跑到 head 的设置项行数：0002 的 25 + 0007 的 6 + M14 的 0008 的 5 = 36。
+EXPECTED_FRESH_DB_SETTING_ROWS = 36
 
-#: 只播种 0002 那批（= 0006 的库）时的行数 —— downgrade 后的对照值。
+#: 只播种 0002 那批（= 0006 的库）时的行数 —— 「downgrade 到 0006」后的对照值。
 _ROWS_AT_0006 = 25
+
+#: 0007 的行被直接删掉、但 **0008 的行还在**时的行数（25 + 5）——
+#: `_call_migration_body(["downgrade"])` 只执行 0007 的迁移体，不会碰 0008。
+_ROWS_WITHOUT_0007 = 30
 
 #: 读 JSON 列必须声明 `sa.JSON`（SQLite 里值物理上是 JSON 文本）。
 _rows_table = sa.table(
@@ -229,8 +235,15 @@ def test_migration_0007_snapshot_matches_authoritative_list() -> None:
     assert snapshot[TAGLINE_KEY][0] == TAGLINE
 
 
-def test_migration_0007_revision_and_no_0008() -> None:
-    """§28.5：并进 `0007`。`revision`/`down_revision` 不变，仓库里没有 `0008`。"""
+def test_migration_0007_revision_unchanged_and_0008_follows() -> None:
+    """`0007` 的 `revision`/`down_revision` 不变；M14 的 `0008` 挂在其后。
+
+    ★ 本条原为 `test_migration_0007_revision_and_no_0008`，断言「仓库里没有 0008」
+    —— 那是 **M13 当时的**正确断言（§28.5：0007 未发布，所以第 6 项并进 0007）。
+    M14 的 §29.5 反过来要求**新建** `0008`，因为 `0007` 已随 v1.1.0 发布。
+    两条裁定不矛盾，判据是「迁移是否已经发布」，所以这里改成断言同一判据的
+    新形态：`0007` 一字未动 + `0008` 紧挂在 `0007` 后面（链仍是直线）。
+    """
     module = _load_migration(MIGRATION_0007)
     assert module.revision == "0007", "并进迁移不该改 revision"
     assert module.down_revision == "0006", "并进迁移不该改 down_revision"
@@ -241,13 +254,17 @@ def test_migration_0007_revision_and_no_0008() -> None:
         revisions[loaded.revision] = loaded.down_revision
 
     assert revisions == EXPECTED_REVISIONS, (
-        "迁移链被改动了 —— M13 只允许扩展 0007\n"
+        "迁移链被改动了\n"
         f"  实际: {revisions}\n"
         f"  预期: {EXPECTED_REVISIONS}"
     )
-    assert "0008" not in revisions, "§28.5 明确不新建 0008"
-    assert not list(MIGRATIONS_DIR.glob("0008*.py")), "磁盘上不该出现 0008 迁移文件"
+    assert revisions.get("0008") == "0007", "M14 的 0008 必须挂在 0007 后面（§29.5）"
     assert MIGRATION_0007.is_file(), "0007 仍是本节制的迁移"
+    # `0007` 已发布，M14 不得改它：内容级断言由 M12/M13 的其它用例覆盖
+    # （快照与 SETTING_DEFAULTS 逐字一致、6 行、值/文案不变）。
+    module_0008 = _load_migration(MIGRATIONS_DIR / "0008_rate_limit_and_image_ttl_settings.py")
+    assert module_0008.revision == "0008"
+    assert module_0008.down_revision == "0007"
 
 
 def test_migration_0007_roundtrip_and_repeat_upgrade(tmp_path: Path) -> None:
@@ -283,7 +300,8 @@ def test_migration_0007_roundtrip_and_repeat_upgrade(tmp_path: Path) -> None:
 
     _call_migration_body(db_path, ["downgrade", "downgrade"])
     assert _six_rows(db_path) == {}, "重复 downgrade 不该报错，6 行都应消失"
-    assert _setting_count(db_path) == _ROWS_AT_0006, "downgrade 不该误删别的设置项"
+    # 直接执行 0007 的迁移体不会碰 M14 的 0008 的 5 行，所以对照值是 25 + 5
+    assert _setting_count(db_path) == _ROWS_WITHOUT_0007, "downgrade 不该误删别的设置项"
 
     _call_migration_body(db_path, ["upgrade", "upgrade"])
     assert set(_six_rows(db_path)) == set(EXPECTED_SIX), "再次 upgrade 应恢复 6 行"

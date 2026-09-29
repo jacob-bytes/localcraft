@@ -5787,6 +5787,28 @@
           "visibility": {
             "$ref": "#/components/schemas/ToolVisibility"
           },
+          "webapp_checked_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Webapp Checked At"
+          },
+          "webapp_health_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Webapp Health Status"
+          },
           "webapp_url": {
             "anyOf": [
               {
@@ -6134,6 +6156,11 @@
           },
           "visibility": {
             "$ref": "#/components/schemas/ToolVisibility"
+          },
+          "webapp_unhealthy": {
+            "default": false,
+            "title": "Webapp Unhealthy",
+            "type": "boolean"
           }
         },
         "required": [

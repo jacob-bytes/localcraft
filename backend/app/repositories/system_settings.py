@@ -60,6 +60,28 @@ SETTING_DEFAULTS: tuple[tuple[str, Any, str, bool, str], ...] = (
     ("security.refresh_token_days", 7, "int", False, "refresh token 有效期（天）"),
     ("security.login_max_failures", 5, "int", False, "连续登录失败锁定阈值"),
     ("security.lockout_minutes", 15, "int", False, "锁定时长（分钟）"),
+    # M14（契约 §29.4）：应用层限流。**默认值照抄契约表格**，不要「顺手调优」。
+    # 这 4 项的数据库行由迁移 0008 播种（0002 是冻结快照，改它不会让既有库拿到行）。
+    # 口径：key 为 `(scope, client_ip)` 的进程内滑动窗口；**loopback 来源豁免**。
+    ("security.rate_limit_enabled", True, "bool", False, "限流总开关"),
+    #: M14 集成期修正：300 → 1200。门户一次加载约 21 个 /api/v1 请求
+    #: （19 封面 + /meta + /tools），300/min 只够每分钟 14 次加载、太贴近正常浏览；
+    #: 详见 app/core/rate_limit.py 的 SCOPE_SETTINGS 注释。
+    ("security.rate_limit_per_minute", 1200, "int", False, "每 IP 每分钟的 API 总配额"),
+    (
+        "security.rate_limit_login_per_minute",
+        10,
+        "int",
+        False,
+        "每 IP 每分钟的登录配额",
+    ),
+    (
+        "security.rate_limit_upload_per_minute",
+        30,
+        "int",
+        False,
+        "每 IP 每分钟的上传配额",
+    ),
     ("portal.site_name", "工具与 Skill 平台", "string", True, "站点名称"),
     # M12（契约 §27.2）：站点定制信息。**默认空串是刻意的** ——
     # 既有部署不做任何配置时视觉上零变化（无副标题、无门户页脚字段）。
@@ -197,6 +219,11 @@ SETTING_SPECS: dict[str, SettingSpec] = {
     "security.refresh_token_days": SettingSpec(minimum=1, maximum=365),
     "security.login_max_failures": SettingSpec(minimum=1, maximum=20),
     "security.lockout_minutes": SettingSpec(minimum=1, maximum=1440),
+    # M14（契约 §29.4）：1 分钟窗口内的配额，下限 1（写 0 的语义含糊，
+    # 会让「关掉某一档」与「配错了」不可区分；要关就用总开关）。
+    "security.rate_limit_per_minute": SettingSpec(minimum=1, maximum=1_000_000),
+    "security.rate_limit_login_per_minute": SettingSpec(minimum=1, maximum=1_000_000),
+    "security.rate_limit_upload_per_minute": SettingSpec(minimum=1, maximum=1_000_000),
     "portal.default_sort": SettingSpec(options=("hot", "new", "name")),
     "portal.page_size": SettingSpec(minimum=1, maximum=200),
     "stats.download_log_retention_days": SettingSpec(minimum=1, maximum=3650),

@@ -49,6 +49,13 @@ class ToolListItem(BaseModel):
     is_liked: bool = False
     published_at: OptionalUTCDateTime = None
     updated_at: OptionalUTCDateTime = None
+    #: ---- M14（contracts §29.3）----
+    #: 在线工具探活的**派生**字段：仅当 `tool_type == 'webapp'` 且
+    #: `webapp_health_status in ('fail','timeout')` 时为 `true`。
+    #: **从未检测过（NULL）不算不健康** —— 否则刚打开探活开关时会满屏告警，
+    #: 而那是「还没测」而不是「坏了」。列表只给这个布尔、不给两个原始字段：
+    #: 列表页 24 条不需要背两个完整字段，卡片只需要知道要不要打标记。
+    webapp_unhealthy: bool = False
 
 
 class ToolFacets(BaseModel):
@@ -120,6 +127,15 @@ class ToolDetail(BaseModel):
     tags: list[str] = Field(default_factory=list)
     images: list[ImageOut] = Field(default_factory=list)
     webapp_url: str | None = None
+    #: ---- M14（contracts §29.3）----
+    #: 详情页给**原始值**（列表页只给派生布尔）：
+    #: `webapp_health_status` 是 `'ok' | 'fail' | 'timeout' | null`，
+    #: `null` 表示**从未检测过**（与 `'fail'` 是两回事）；
+    #: `webapp_checked_at` 是最近一次检测时间，同样可以是 `null`。
+    #: 时间字段用项目统一的 `OptionalUTCDateTime`（序列化成带 `Z` 的 UTC 串）——
+    #: 与 `published_at` / `updated_at` 同口径，避免 PG 的会话时区把偏移暴露到线上。
+    webapp_health_status: str | None = None
+    webapp_checked_at: OptionalUTCDateTime = None
     current_version: CurrentVersionDetail | None = None
     pending_version: CurrentVersionBrief | None = None
     version_count: int = 0

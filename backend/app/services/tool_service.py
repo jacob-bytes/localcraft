@@ -46,6 +46,10 @@ PENDING_VISIBLE_ROLES: frozenset[str] = frozenset(
     {RoleCode.APPROVER.value, RoleCode.SUPERADMIN.value}
 )
 
+#: M14（contracts §29.3）：算作「不健康」的探活状态。
+#: `ok` 与 `None`（从未检测）都**不**算 —— 后者是「还没测」，不是「坏了」。
+UNHEALTHY_WEBAPP_STATUSES: frozenset[str] = frozenset({"fail", "timeout"})
+
 
 def cover_url_for(tool: Tool, *, ttl_hours: int) -> str | None:
     """封面图走带签名的 `/api/v1/images/{id}` URL（契约 §14.3）。
@@ -121,6 +125,13 @@ def build_list_item(
         # 兜底：owner/approver 之外恒为 false（避免通过该字段探测待审状态）
         has_pending_version=bool(tool.pending_version_id is not None and sees_pending),
         can_download=can_download,
+        # M14（contracts §29.3）：探活状态的**派生**布尔。只有 fail/timeout 为真；
+        # `NULL`（从未检测）不算不健康 —— 否则刚打开探活开关时满屏告警。
+        # 只对 webapp 判定：别的类型不会写这两个列，但显式判类型更抗「脏数据」。
+        webapp_unhealthy=(
+            tool.tool_type == ToolType.WEBAPP
+            and tool.webapp_health_status in UNHEALTHY_WEBAPP_STATUSES
+        ),
         published_at=tool.published_at,
         updated_at=tool.updated_at,
     )
@@ -477,6 +488,10 @@ async def build_detail(
         tags=[t.display_name for t in tool.tags],
         images=[build_image_out(image, ttl_hours=ttl_hours) for image in images],
         webapp_url=tool.webapp_url,
+        # M14（contracts §29.3）：详情页给原始值。两个字段都可以是 `null`
+        # （从未检测过），前端据此区分「未检测」与「检测失败」。
+        webapp_health_status=tool.webapp_health_status,
+        webapp_checked_at=tool.webapp_checked_at,
         current_version=build_version_detail(current, can_download=perms.can_download),
         pending_version=(
             CurrentVersionBrief(id=pending.id, version=pending.version)
