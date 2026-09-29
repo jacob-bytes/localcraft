@@ -307,6 +307,15 @@ export interface ToolCategoryRef {
   icon: string | null;
 }
 
+/**
+ * M14（CONTRACT §29.3）：在线工具的上次探活结果。
+ *
+ * `ToolListItem` **没有**这个字段（列表只给派生布尔 `webapp_unhealthy`；
+ * §29.3 的理由：列表页 24 条不需要背两个完整字段）；`ToolDetail` 才给原始值。
+ * 注意「从未检测过」不在这三个值里 —— 它是 `null`，与 `fail` 是两回事。
+ */
+export type WebappHealthStatus = "ok" | "fail" | "timeout";
+
 export interface ToolListItem {
   id: number;
   slug: string;
@@ -334,6 +343,14 @@ export interface ToolListItem {
   /** **当前请求者**是否已收藏 / 已点赞；匿名恒为 `false`（§23.5）。 */
   is_favorited: boolean;
   is_liked: boolean;
+  /* ---- M14（CONTRACT §29.3）—— 在线工具探活（列表只给派生布尔） ------------- */
+  /**
+   * 派生字段：仅「`tool_type === 'webapp'` 且上次检测为 `fail` / `timeout`」时为 `true`。
+   * **`null`（从未检测过）不算不健康** —— 否则刚部署时会满屏告警（§29.3 原文）。
+   *
+   * 后端未落地时该字段缺失 → 运行时按 `false` 处理（见 `lib/webappHealth.ts`）。
+   */
+  webapp_unhealthy: boolean;
 }
 
 /** Query parameters for `GET /tools` (docs/03 §3.3). Arrays are repeated params. */
@@ -508,6 +525,14 @@ export interface ToolDetail {
    * `backend/openapi.json`（§15.6：openapi 是形状权威）。已上报监控方。
    */
   estimated_saving_minutes: number | null;
+  /* ---- M14（CONTRACT §29.3）—— 在线工具探活（详情给原始值） ------------------ */
+  /**
+   * 上次探活结果。**`null` = 从未检测过，与 `fail` 是两回事**（§29.3 原文），
+   * 所以展示层必须把二者渲染成不同的文案（见 `components/tools/WebappHealthMark`）。
+   */
+  webapp_health_status: WebappHealthStatus | null;
+  /** 上次探活时间；与 `webapp_health_status` 同时为 `null`（从未检测）。 */
+  webapp_checked_at: string | null;
 }
 
 /** `GET /tools/{slug}/versions/{version}/skill-preview` (docs/03 §3.5). */

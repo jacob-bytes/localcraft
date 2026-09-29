@@ -134,6 +134,7 @@ import {
   skillTreeSummary,
   toolSeedToListItem,
   waitingHoursFor,
+  webappHealthOf,
   type MockApprovalRecord,
   type MockCategoryRecord,
   type MockDownloadLog,
@@ -1002,6 +1003,12 @@ function toToolDetail(record: MockToolRecord, user: MockUser | null): ToolDetail
     is_liked: user !== null && isEngaged("likes", user.id, record.seed.id),
     // M8 · F10：`null` = 作者未填写（契约 §23.3：「不是一个可以当成 0 的值」）。
     estimated_saving_minutes: savingMinutes.get(record.seed.id) ?? null,
+    /*
+     * M14（CONTRACT §29.3）：详情给**原始值**（列表只给派生布尔）。
+     * 没有种子的工具 → `null` = **从未检测过**，与 `fail` 是两回事。
+     */
+    webapp_health_status: webappHealthOf(record.seed.id)?.status ?? null,
+    webapp_checked_at: webappHealthOf(record.seed.id)?.checked_at ?? null,
   };
 }
 

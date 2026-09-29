@@ -5,10 +5,12 @@ import { Link } from "react-router-dom";
 import type { ToolListItem } from "@/api/types";
 import { EngagementCounts, FavoriteToggle } from "@/components/tools/EngagementActions";
 import { ToolTypeBadge } from "@/components/tools/ToolTypeBadge";
+import { WebappUnhealthyMark } from "@/components/tools/WebappHealthMark";
 import { Badge } from "@/components/ui/badge";
 import { formatCount, formatRelativeTime } from "@/lib/format";
 import { categoryTintClass, TOOL_TYPE_META, VISIBILITY_LABELS } from "@/lib/toolMeta";
 import { cn } from "@/lib/utils";
+import { isWebappUnhealthy } from "@/lib/webappHealth";
 
 const MAX_TAGS = 3;
 
@@ -139,10 +141,12 @@ function ToolCardGrid({ tool }: { tool: ToolListItem }) {
       <ToolCover tool={tool} />
 
       {/*
-        封面右上角：待审徽标与收藏切换竖排。两者都可能出现（作者本人看到自己
-        待审的工具），所以用一个 flex 列容器而不是各自定位到同一个坐标。
+        封面右上角：探活标记、待审徽标与收藏切换竖排。三者都可能同时出现
+        （一个待审的在线工具恰好上次探活失败，作者本人还收藏了它），
+        所以用一个 flex 列容器而不是各自定位到同一个坐标。
       */}
       <div className="pointer-events-none absolute right-2 top-2 z-20 flex flex-col items-end gap-1">
+        {isWebappUnhealthy(tool.webapp_unhealthy) ? <WebappUnhealthyMark /> : null}
         {tool.has_pending_version ? <Badge variant="warning">新版待审</Badge> : null}
         <FavoriteToggle tool={tool} className="pointer-events-auto" />
       </div>

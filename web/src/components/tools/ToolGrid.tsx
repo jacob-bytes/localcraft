@@ -24,6 +24,13 @@ export function ToolGrid({
 
   return (
     <ul
+      /*
+       * M14：门户里同一个工具现在可能同时出现在两个地方 ——「继续使用」/「我的
+       * 收藏」横向区块，以及卡片墙本身。`data-tool-slug` 两处都有（它由 `ToolCard`
+       * 渲染），所以「**卡片墙上的那张卡**」需要一个稳定锚点；测试里
+       * `[data-testid="tool-grid"] [data-tool-slug=…]` 就是它。
+       */
+      data-testid="tool-grid"
       className={cn(
         "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4",
         className,

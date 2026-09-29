@@ -29,6 +29,7 @@ import { Markdown } from "@/components/common/Markdown";
 import { PageSkeleton } from "@/components/common/PageSkeleton";
 import { Pagination } from "@/components/common/Pagination";
 import { PortalSideNav } from "@/components/layout/PortalSideNav";
+import { PortalHighlights } from "@/components/portal/PortalHighlights";
 import { ToolFilters } from "@/components/tools/ToolFilters";
 import { ToolGrid } from "@/components/tools/ToolGrid";
 import { Button } from "@/components/ui/button";
@@ -319,6 +320,13 @@ export default function PortalPage() {
       </section>
 
       <Announcement markdown={meta?.announcement_md ?? null} />
+
+      {/*
+        M14 · F1（CONTRACT §29.8）：公告下方、工具栏上方的两个区块。
+        两个区块分别在「自己有数据」时才渲染 —— 全空时这里**一个元素都不产生**，
+        默认部署的页面与加这个功能之前逐字一致（没有空标题，也没有多出来的 margin）。
+      */}
+      <PortalHighlights />
 
       <div className="lg:grid lg:grid-cols-[16rem_minmax(0,1fr)] lg:gap-6">
         {/* ---- Left rail (lg+) ---- */}

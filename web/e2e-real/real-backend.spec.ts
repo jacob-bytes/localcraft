@@ -925,7 +925,8 @@ test.describe("真实后端联调（mock 之外的路径）", () => {
     const slug = await firstToolSlug(page, auth);
 
     // ① 门户卡片：计数照常（公共数字），收藏星标不存在、左栏入口也不存在
-    const card = page.locator(`[data-tool-slug="${slug}"]`);
+    // M14：锚定卡片墙那张（门户首页还可能渲染「继续使用」/「我的收藏」区块）。
+    const card = page.locator(`[data-testid="tool-grid"] [data-tool-slug="${slug}"]`);
     await expect(card.getByTestId("favorite-count-value")).toBeVisible();
     await expect(card.getByTestId("card-favorite-button")).toHaveCount(0);
     await expect(page.getByTestId("nav-my-favorites")).toHaveCount(0);
@@ -963,7 +964,10 @@ test.describe("真实后端联调（mock 之外的路径）", () => {
     await signIn(authorPage, AUTHOR.username, AUTHOR.password);
     await expectPortalReady(authorPage);
 
-    const authorCard = authorPage.locator(`[data-tool-slug="${slug}"]`);
+    // M14：同上，锚定卡片墙那张。
+    const authorCard = authorPage.locator(
+      `[data-testid="tool-grid"] [data-tool-slug="${slug}"]`,
+    );
     const authorButton = authorCard.getByTestId("card-favorite-button");
     await expect(authorButton).toBeVisible();
     await expect(authorButton).toHaveAttribute("aria-pressed", "false");
@@ -1093,5 +1097,77 @@ test.describe("真实后端联调（mock 之外的路径）", () => {
       Object.keys(window.sessionStorage).filter((key) => key.startsWith("localcraft:chunk-retry:")),
     );
     expect(flags.length, "应留下重试标记以阻止第二次自动重载").toBeGreaterThan(0);
+  });
+
+  /* ------------------------------------------------------------------ M14 */
+  test("P. M14 默认部署零变化（真机）：门户两个区块都不渲染，且匿名不发 /me/favorites", async ({
+    page,
+  }) => {
+    /*
+     * 真机版的「默认部署零变化」：全新浏览器上下文（没有最近访问、没有收藏）+
+     * 真实后端种子。门户里**不得**出现这两个区块的任何元素 —— 与 mock 套件的
+     * 用例 1 是同一条断言，只是换成了真实数据路径。
+     */
+    const favoritesRequests: string[] = [];
+    page.on("request", (request) => {
+      const url = request.url();
+      if (url.includes(`${API}/me/favorites`)) favoritesRequests.push(url);
+    });
+
+    await page.goto("/");
+    await expectPortalReady(page);
+
+    await expect(page.getByTestId("portal-continue-using")).toHaveCount(0);
+    await expect(page.getByTestId("portal-favorites-highlight")).toHaveCount(0);
+    expect(favoritesRequests, "匿名不得请求 /me/favorites（白打 401）").toEqual([]);
+  });
+
+  test("Q. M14 探活展示（真机）：webapp 详情一定有健康行；未检测不会被渲染成「失败」", async ({
+    page,
+  }) => {
+    const auth = captureAuthHeader(page);
+    await signIn(page, ADMIN.username, ADMIN.password);
+    await expectPortalReady(page);
+
+    // 取一个真实存在的在线工具，并在**过滤后**的卡片墙里定位它（避免分页歧义）。
+    const list = (await api(page, `${API}/tools?page=1&page_size=1&type=webapp`, auth.current()))
+      .body as unknown as { items: Array<{ slug: string }> };
+    const slug = list.items[0]?.slug;
+    expect(slug, "种子里应有至少一个 webapp 工具").toBeTruthy();
+
+    await page.goto("/?type=webapp");
+    await expectPortalReady(page);
+
+    await page.goto(`/tools/${slug}`);
+    await expectAfterNavigation(page.getByTestId("tool-detail"), "工具详情页");
+
+    /*
+     * 后端 M14 的 `ToolDetail.webapp_health_status` / `webapp_checked_at` 若还没落地
+     * （或从未跑过探活任务 → 均为 `null`），前端必须**宽容降级**为「尚未检测」，
+     * 而不是崩掉、渲染 `undefined`、或误报成「检测失败」（F2.2 / F2.4）。
+     */
+    const row = page.getByTestId("webapp-health");
+    await expect(row, "在线工具详情必须有健康状态行").toBeVisible();
+    const status = await row.getAttribute("data-health");
+    const label = (await page.getByTestId("webapp-health-label").innerText()).trim();
+
+    expect(
+      ["ok", "fail", "timeout", "unchecked"],
+      `data-health 只能是这四个已知取值之一，实测 ${String(status)}`,
+    ).toContain(status);
+    expect(label.length, "状态文案不得为空 / 不得是 undefined").toBeGreaterThan(0);
+    expect(["运行正常", "检测失败", "检测超时", "尚未检测"]).toContain(label);
+
+    // 卡片标记必须与详情状态一致（§29.3 的派生规则：只有 fail/timeout 才打标记）。
+    const wallBadge = page.locator(
+      `[data-testid="tool-grid"] [data-tool-slug="${slug}"] [data-testid="webapp-unhealthy-badge"]`,
+    );
+    await expect(wallBadge).toHaveCount(status === "fail" || status === "timeout" ? 1 : 0);
+
+    if (status === "unchecked") {
+      expect(label).toBe("尚未检测");
+      expect(label, "「尚未检测」不得出现「失败」字样").not.toContain("失败");
+      await expect(row).toContainText("从未检测");
+    }
   });
 });

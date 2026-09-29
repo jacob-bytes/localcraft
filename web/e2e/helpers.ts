@@ -86,7 +86,12 @@ export async function login(
 
 /** Opens the portal card for a tool slug (the whole card is a `<Link>`). */
 export async function openTool(page: Page, slug: string): Promise<void> {
-  const card = page.locator(`[data-tool-slug="${slug}"]`);
+  /*
+   * M14：门户首页可能同时渲染「继续使用」/「我的收藏」横向区块，同一个 slug 会在
+   * 页面上出现两张卡。这里定位的是**卡片墙上**那张（`ToolGrid` 的 `tool-grid`），
+   * 与既有语义一致：`openTool` 的入口一直是卡片墙。
+   */
+  const card = page.locator(`[data-testid="tool-grid"] [data-tool-slug="${slug}"]`);
   await expect(card).toBeVisible();
   await card.click();
   await expect(page).toHaveURL(new RegExp(`/tools/${slug}$`));
@@ -164,5 +169,131 @@ export async function setSiteConfig(page: Page, config: MockSiteConfig): Promise
       window.localStorage.setItem(payload.key, payload.value);
     },
     { key: MOCK_SITE_CONFIG_KEY, value: JSON.stringify(config) },
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* M14 · 门户两个区块（CONTRACT §29.8）+ 探活展示（§29.3）                      */
+/* -------------------------------------------------------------------------- */
+
+/** 必须与 `src/lib/recentTools.ts` 的 `RECENT_TOOLS_STORAGE_KEY` 一致。 */
+export const RECENT_TOOLS_KEY = "localcraft:recent-tools";
+
+export interface RecentToolFixture {
+  slug: string;
+  name: string;
+  /** epoch ms；只用于排序，不含任何身份信息（M7 · F6 的存储形状）。 */
+  at: number;
+}
+
+/**
+ * 预置「最近访问」。**必须在任何 `page.goto` 之前调用**：走 `addInitScript` 在文档
+ * 脚本之前写入 `localStorage`，门户挂载时 `readRecentTools()` 才读得到。
+ *
+ * 写的是与生产**完全相同的键与形状**（`{slug, name, at}[]`，最多 8 条）——
+ * 这里不发明任何「测试专用」存储，否则测的就不是真实路径了。
+ */
+export async function setRecentTools(
+  page: Page,
+  entries: RecentToolFixture[],
+): Promise<void> {
+  await page.addInitScript(
+    (payload: { key: string; value: string }) => {
+      window.localStorage.setItem(payload.key, payload.value);
+    },
+    { key: RECENT_TOOLS_KEY, value: JSON.stringify(entries) },
+  );
+}
+
+export interface ContrastReading {
+  dark: boolean;
+  contrast: number;
+  color: string;
+  foreground: string;
+  background: string;
+}
+
+/**
+ * 量一个元素的**实际渲染对比度**（WCAG 2.x 公式）。
+ *
+ * 与 `m9-viewer-engagement.spec.ts` 里那段是同一套做法，这里抽出来给 M14 用：
+ * 令牌是 `oklch(...)`，Chrome 原样返回该语法，所以颜色一律走 **canvas 真实渲染出的
+ * 像素**（`getImageData` 给的就是浏览器自己转换后的 sRGB 字节），不手写解析。
+ *
+ * `subject` 决定量的是哪一对颜色：
+ *  - `"text"`（默认）：元素的 `color` vs 它背后第一个不透明的背景 —— WCAG 正文要求 4.5:1；
+ *  - `"fill"`：元素**自身的 `background-color`** vs 它**父链**上第一个不透明的背景
+ *    —— 用来量「纯图形」标记（状态圆点），WCAG 1.4.11 要求 3:1。
+ *    注意不能拿元素的 `color` 去量：那量的是「文字 vs 圆点填充」，是另一回事。
+ */
+export async function contrastOf(
+  page: Page,
+  selector: string,
+  subject: "text" | "fill" = "text",
+): Promise<ContrastReading | null> {
+  return page.evaluate(
+    ([target, kind]: readonly [string, "text" | "fill"]) => {
+      const element = document.querySelector(target);
+      if (!element) return null;
+
+      const canvas = document.createElement("canvas");
+      canvas.width = 1;
+      canvas.height = 1;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      if (!context) return null;
+
+      const toRgb = (cssColor: string): [number, number, number, number] => {
+        context.clearRect(0, 0, 1, 1);
+        context.fillStyle = "#010203"; // 哨兵：解析失败时不会与目标色混淆
+        context.fillStyle = cssColor;
+        context.fillRect(0, 0, 1, 1);
+        const data = context.getImageData(0, 0, 1, 1).data;
+        return [data[0] ?? 0, data[1] ?? 0, data[2] ?? 0, data[3] ?? 0];
+      };
+      const luminance = ([r, g, b]: [number, number, number, number]): number => {
+        const channel = (value: number): number => {
+          const scaled = value / 255;
+          return scaled <= 0.03928 ? scaled / 12.92 : ((scaled + 0.055) / 1.055) ** 2.4;
+        };
+        return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+      };
+      const opaque = (cssColor: string | undefined): [number, number, number, number] | null => {
+        if (!cssColor || cssColor === "transparent" || cssColor === "rgba(0, 0, 0, 0)") {
+          return null;
+        }
+        const resolved = toRgb(cssColor);
+        return resolved[3] > 0 ? resolved : null;
+      };
+
+      const ownBackground = window.getComputedStyle(element).backgroundColor;
+      const color = window.getComputedStyle(element).color;
+      const foreground =
+        kind === "fill" ? (opaque(ownBackground) ?? toRgb("rgba(0,0,0,0)")) : toRgb(color);
+
+      // 背后的底色：文本从元素自身往上找；图形从**父元素**往上找（自身那层就是被测对象）。
+      let node: Element | null = kind === "fill" ? element.parentElement : element;
+      let background: [number, number, number, number] | null = null;
+      while (node) {
+        const found = opaque(window.getComputedStyle(node).backgroundColor);
+        if (found) {
+          background = found;
+          break;
+        }
+        node = node.parentElement;
+      }
+      const effective: [number, number, number, number] = background ?? [255, 255, 255, 255];
+      const foregroundLuminance = luminance(foreground);
+      const backgroundLuminance = luminance(effective);
+      const lighter = Math.max(foregroundLuminance, backgroundLuminance);
+      const darker = Math.min(foregroundLuminance, backgroundLuminance);
+      return {
+        dark: document.documentElement.classList.contains("dark"),
+        contrast: (lighter + 0.05) / (darker + 0.05),
+        color: kind === "fill" ? ownBackground : color,
+        foreground: `rgb(${foreground[0]}, ${foreground[1]}, ${foreground[2]})`,
+        background: `rgb(${effective[0]}, ${effective[1]}, ${effective[2]})`,
+      };
+    },
+    [selector, subject] as const,
   );
 }

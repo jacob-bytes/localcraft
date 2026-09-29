@@ -60,9 +60,14 @@ async function makeTempFile(name: string, content: string): Promise<string> {
   return filePath;
 }
 
-/** 工具卡片（整卡是拉伸链接，`data-tool-slug` 在卡片的包裹元素上）。 */
+/**
+ * **卡片墙上**的工具卡片（整卡是拉伸链接，`data-tool-slug` 在卡片的包裹元素上）。
+ *
+ * M14 起门户首页还可能有「继续使用」/「我的收藏」横向区块，同一个 slug 会出现
+ * 两张卡 —— 这里锚定 `ToolGrid` 的 `tool-grid`，指的就是卡片墙那张。
+ */
 function cardFor(page: Page, slug: string) {
-  return page.locator(`[data-tool-slug="${slug}"]`);
+  return page.locator(`[data-testid="tool-grid"] [data-tool-slug="${slug}"]`);
 }
 
 /**

@@ -372,11 +372,16 @@ test.describe("M1 验收（MSW mock 状态）", () => {
     await login(page, "admin", "Admin@12345");
     await expect(page.getByTestId("tool-card")).toHaveCount(await expectedCards(page));
 
-    const noCover = page.locator('[data-tool-slug="code-review-skill"]');
+    // M14：锚定卡片墙那张（门户首页还可能渲染「继续使用」/「我的收藏」区块）。
+    const noCover = page.locator(
+      '[data-testid="tool-grid"] [data-tool-slug="code-review-skill"]',
+    );
     await expect(noCover.getByTestId("cover-placeholder")).toBeVisible();
     await expect(noCover.getByTestId("cover-image")).toHaveCount(0);
 
-    const withCover = page.locator('[data-tool-slug="log-analyzer-a3f2"]');
+    const withCover = page.locator(
+      '[data-testid="tool-grid"] [data-tool-slug="log-analyzer-a3f2"]',
+    );
     await expect(withCover.getByTestId("cover-image")).toBeVisible();
 
     // every <img> must actually have decoded (no broken image)
@@ -410,7 +415,9 @@ test.describe("M1 验收（MSW mock 状态）", () => {
     await login(page, "admin", "Admin@12345");
     await expect(page.getByTestId("tool-card")).toHaveCount(await expectedCards(page));
 
-    const longCard = page.locator('[data-tool-slug="gray-release-orchestrator"]');
+    const longCard = page.locator(
+      '[data-testid="tool-grid"] [data-tool-slug="gray-release-orchestrator"]',
+    );
     const name = longCard.getByTestId("tool-card-name");
     const summary = longCard.getByTestId("tool-card-summary");
 

@@ -940,6 +940,46 @@ export function coverImageId(toolId: number): number {
   return 1000 + toolId;
 }
 
+/* -------------------------------------------------------------------------- */
+/* M14（CONTRACT §29.3）· 在线工具探活的确定性种子                              */
+/* -------------------------------------------------------------------------- */
+
+export interface MockWebappHealth {
+  status: "ok" | "fail" | "timeout";
+  checked_at: string;
+}
+
+/**
+ * 只有这三个在线工具有检测结果，其余（含全部非 webapp 工具）**没有条目** ——
+ * 也就是 `webapp_health_status = NULL`（**从未检测过**，与 `fail` 是两回事，
+ * §29.2 的原文）。刻意两侧都留：
+ *
+ * | 工具 | 状态 | 用来验 |
+ * | --- | --- | --- |
+ * | `deploy-assistant`（2） | `ok` | 健康时**不**打标记 |
+ * | `k8s-inspect-2d47`（101） | `fail` | 卡片标记 + 「检测失败」 |
+ * | `trace-collector-webapp`（106） | `timeout` | `timeout` 也算不健康（§29.3） |
+ * | `api-mock-server-7b1c`（102）/ `ui-screenshot-diff`（104） | 无条目 → `null` | 「尚未检测」，**不得**渲染成「失败」 |
+ *
+ * 时间戳写死，断言才能稳定（与 `MOCK_INSIGHTS_ANCHOR` 同一套做法）。
+ */
+export const MOCK_WEBAPP_HEALTH: Record<number, MockWebappHealth> = {
+  2: { status: "ok", checked_at: "2025-03-16T08:00:00Z" },
+  101: { status: "fail", checked_at: "2025-03-16T08:00:00Z" },
+  106: { status: "timeout", checked_at: "2025-03-16T08:00:00Z" },
+};
+
+/** 某工具的探活结果；没有条目 = 从未检测过（返回 `null`，**不是** `fail`）。 */
+export function webappHealthOf(toolId: number): MockWebappHealth | null {
+  return MOCK_WEBAPP_HEALTH[toolId] ?? null;
+}
+
+/** §29.3 的派生规则：只有 `fail` / `timeout` 才算不健康（`null` 不算）。 */
+export function webappUnhealthyOf(toolId: number): boolean {
+  const health = webappHealthOf(toolId);
+  return health?.status === "fail" || health?.status === "timeout";
+}
+
 /** Portal envelope item for a seeded tool (matches `ToolListItem` exactly). */
 export function toolSeedToListItem(seed: ToolSeed): ToolListItem {
   const category = categoryBySlug(seed.category_slug);
@@ -981,6 +1021,11 @@ export function toolSeedToListItem(seed: ToolSeed): ToolListItem {
     like_count: 0,
     is_favorited: false,
     is_liked: false,
+    /*
+     * M14（CONTRACT §29.3）：派生字段，只对「在线工具且上次检测 fail/timeout」为真。
+     * 非 webapp 工具与「从未检测过」都是 false —— §29.3 明确要求 NULL 不算不健康。
+     */
+    webapp_unhealthy: seed.tool_type === "webapp" && webappUnhealthyOf(seed.id),
   };
 }
 
