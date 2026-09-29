@@ -49,6 +49,8 @@
 | --- | --- | --- |
 | 门户浏览、详情、搜索 | 任意已登录用户 | `tools:read` |
 | 下载工具 | `user` 及以上（`viewer` 除外） | `tools:read` |
+| 收藏 / 点赞（`PUT` / `DELETE`） | `user` 及以上（**`viewer` 除外**，契约 §25.1） | `tools:write`。计数是**全站可见的公共数字**，所以不复用只读 Scope |
+| 我的收藏（`GET /me/favorites`） | 任意已登录用户（`viewer` 可读，但其收藏夹必然为空） | `tools:read` |
 | 个人中心：管理自己的工具与版本 | `user` 及以上 | `tools:write` |
 | 审批：批准/驳回/下架/上架、查看队列与历史 | `approver` / `superadmin` | `approvals:write` |
 | 分类、标签管理 | `approver` / `superadmin` | `taxonomy:write` |
@@ -115,7 +117,7 @@
 | 413 | 文件过大 | `PAYLOAD_TOO_LARGE` |
 | 415 | 文件类型不允许 | `UNSUPPORTED_MEDIA_TYPE` |
 | 422 | 语义错误（文件内容非法） | `SKILL_PARSE_FAILED`、`ZIP_BOMB_DETECTED`、`ZIP_PATH_TRAVERSAL` |
-| 429 | 请求过频 | `RATE_LIMITED`（本期未启用限流，保留） |
+| 429 | 请求过频 | `RATE_LIMITED`（**M14 起真实启用**，附 `Retry-After` 响应头，见 §1.11） |
 | 500 | 服务端异常 | `INTERNAL_ERROR` |
 | 503 | 依赖不可用 | `DATABASE_UNAVAILABLE`、`STORAGE_FULL` |
 | 507 | 配额耗尽 | `INSUFFICIENT_STORAGE`、`USER_QUOTA_EXCEEDED` |
@@ -148,6 +150,43 @@
 2. 后端签发一次性下载票据：`POST /tools/{id}/download-ticket` 返回 `{url, expires_at}`，前端用 `<a>` 打开该短时效 URL（推荐，支持 Range 与浏览器原生下载管理器）
 
 **推荐方案 2**，票据为 HMAC 签名，有效期 60 秒，绑定 `(tool_id, version_id, user_id)`。下载接口在存在 `ticket` 查询参数时跳过 Header 鉴权。
+
+### 1.11 限流
+
+**M14 起真实启用**（`contracts/CONTRACT.md` §29.4）。按**客户端 IP** 做进程内滑动窗口计数，键为 `(scope, ip)`。
+
+命中限流时返回统一错误信封，并**额外带 `Retry-After` 响应头**（与 `X-Request-Id` 同时出现，二者不互斥）：
+
+```json
+{
+  "code": "RATE_LIMITED",
+  "message": "请求过于频繁，请稍后再试",
+  "details": { "scope": "api", "limit": 1200, "retry_after_seconds": 12 },
+  "request_id": "01HQ8X5K2M9PQR3TVWXYZ4ABCD"
+}
+```
+
+```
+HTTP/1.1 429 Too Many Requests
+Retry-After: 12
+X-Request-Id: 01HQ8X5K2M9PQR3TVWXYZ4ABCD
+```
+
+**三档配额**（值来自系统设置，管理端可改；下表为默认值）：
+
+| scope | 覆盖范围 | 设置键 | 默认 |
+| --- | --- | --- | --- |
+| `api` | 全部 `/api/v1/*`（挂在路由挂载处，一次覆盖全部 99 个操作，不逐个路由加依赖） | `security.rate_limit_per_minute` | `1200` / 分钟 |
+| `login` | `POST /api/v1/auth/login` | `security.rate_limit_login_per_minute` | `10` / 分钟 |
+| `upload` | 上传版本包、上传封面/截图、管理侧代上传版本、CSV 导入 | `security.rate_limit_upload_per_minute` | `30` / 分钟 |
+
+总开关 `security.rate_limit_enabled`（默认 `true`）。
+
+**封面图也走 `api` 额度**：`images` 路由在 `/api/v1` 下，一次门户加载约 19 张封面 + `/meta` + `/tools`。这正是 `api` 默认值由 300 上调到 1200 的原因 —— 300/min 时超限的症状是**封面裂图**，会被误当成缺陷上报（`contracts/CONTRACT.md` §30.1）。
+
+**loopback 豁免**：来源为 `127.0.0.1` / `::1` / `localhost` / `testclient` 的请求**不计入限流**（健康检查、运维脚本、测试客户端）。因此测试套件打不到限流，覆盖方式是直接测限流器本身。
+
+**已知限制**：计数是**进程内**的 —— 多 worker 部署下实际配额会按 worker 数放宽。当前部署脚本为 `--workers 1`，实际配额与配置一致（`contracts/CONTRACT.md` §30.3）。
 
 ---
 
@@ -183,10 +222,14 @@
 | GET | `/api/v1/tools/{slug}/download` | 下载（支持 `?version_id=` 与 `?ticket=`） |
 | POST | `/api/v1/tools/{slug}/download-ticket` | 签发一次性下载票据 |
 | GET | `/api/v1/tools/{slug}/stats` | 该工具的统计（浏览量、下载量、趋势） |
+| PUT | `/api/v1/tools/{slug}/favorite` | 收藏。**幂等**：已收藏再调仍成功，计数只加一次（契约 §23.4）。响应 `ToolEngagementResponse` |
+| DELETE | `/api/v1/tools/{slug}/favorite` | 取消收藏。**幂等**：未收藏再调仍成功，**不报 404** |
+| PUT | `/api/v1/tools/{slug}/like` | 点赞。**幂等**，形状与收藏对称 |
+| DELETE | `/api/v1/tools/{slug}/like` | 取消点赞。**幂等** |
 | GET | `/api/v1/categories` | 分类列表（含各分类可见工具数） |
 | GET | `/api/v1/tags` | 标签列表（支持前缀搜索，用于输入联想） |
 | GET | `/api/v1/directory` | **主体目录**：ACL 授权时搜索用户/用户组。任何已登录用户可调，**最小披露**（用户只给 id/username/display_name，组只给 id/name/member_count）。M6 新增，是对 92 冻结的刻意例外 —— 见 `contracts/CONTRACT.md` §20.4③ |
-| GET | `/api/v1/images/{id}` | 图片获取。**签名能力 URL**：接受 `?sig=`（HMAC，后端在列表/详情响应中下发）或 `Authorization` 头，两者都无返回 404。详见 `contracts/CONTRACT.md` §14.3 |
+| GET | `/api/v1/images/{id}` | 图片获取。**签名能力 URL**：接受 `?variant=full\|thumb` + `?sig=`（HMAC，**签名绑定 `variant`**，后端在列表/详情响应中下发）或 `Authorization` 头，两者都无返回 **404**（不是 403）。详见 §3.16 与 `contracts/CONTRACT.md` §14.3 |
 
 ### 2.4 个人中心
 
@@ -211,6 +254,7 @@
 | PATCH | `/api/v1/me/tools/{id}/images/{image_id}` | 更新排序、alt 文本、设为封面 |
 | DELETE | `/api/v1/me/tools/{id}/images/{image_id}` | 删除图片 |
 | GET | `/api/v1/me/downloads` | 我的下载历史 |
+| GET | `/api/v1/me/favorites` | 我的收藏。分页（`page` / `page_size`），**复用门户列表项形状**（`ToolListItem`），按收藏时间倒序（契约 §23.4），`facets` 恒为 `null`。可见性走既有规则：被收藏的工具若已下线/转私有/被删除，会从结果里消失。`viewer` 可读（`tools:read`），但其收藏夹必然为空 |
 
 ### 2.5 管理后台
 
@@ -272,11 +316,17 @@
 | POST | `/api/v1/admin/import/tools` | 批量导入工具元数据 | superadmin |
 | GET | `/api/v1/admin/export/tools` | 导出工具 JSON | superadmin |
 
-合计 **93 个操作 / 75 条路径**（M6 新增 `GET /api/v1/directory`，见下）。
+合计 **99 个操作 / 79 条路径**（M6 新增 `GET /api/v1/directory`，M8 新增收藏/点赞/我的收藏 5 个操作，见下）。
 
 > **计数口径（M3 前端 checkpoint 补入，2025-03）**：本节早先写作「约 85 个接口」是过期数字，
 > 且漏列了管理侧代创建的两个接口 —— 这导致「`docs/03` §2.5 清单」与「冻结的 92 操作」无法同时成立，
 > 使守卫测试出现自相矛盾的断言。现已补齐。**权威来源是 `backend/openapi.json`**（`contracts/CONTRACT.md` §15.6）。
+>
+> **计数口径（M18 收尾补入）**：上一版写作「93 个操作 / 75 条路径」同样是过期数字 ——
+> 它既没算 M6 的 `GET /api/v1/directory`，也没算 **M8 的 5 个收藏/点赞操作 / 3 条路径**
+> （`contracts/CONTRACT.md` §23.4）。当前冻结面是 **99 操作 / 79 路径**（§23 / §35），
+> 与 `backend/openapi.json` 逐字一致（`python -m app.cli export-openapi` 导出结果为
+> 「79 个路径 / 99 个操作」）。M14~M18 期间**只加字段、不加端点**，所以这个数字不再变。
 
 ---
 
@@ -289,23 +339,54 @@
 ```json
 {
   "site_name": "工具与 Skill 平台",
+  "site_subtitle": "",
   "announcement_md": "本周五 20:00 进行例行维护。",
   "auth_provider": "local",
-  "allow_anonymous_view": false,
+  "allow_anonymous_view": true,
   "default_sort": "hot",
   "page_size": 24,
   "app_version": "1.0.0",
   "api_version": "v1",
+  "footer_org": "某事业部 · 数字化组",
+  "footer_contact_email": "ops@example.com",
+  "footer_contact_phone": "8888",
+  "footer_notice": "内部系统，请勿外传",
+  "footer_tagline": "内网工具与 Skill 共享平台",
   "features": {
     "webapp_health_check": false,
     "skill_preview": true,
-    "anonymous_view": false,
+    "anonymous_view": true,
     "change_password": true
   }
 }
 ```
 
-**`features` 是可扩展的能力声明**：前端只读取自己需要的键，后端新增键属于非破坏性变更（不升 API 版本）。M1 实际返回上述 4 个键，其中 `anonymous_view` 与 `change_password` 供前端决定是否渲染「匿名浏览入口」与「修改密码入口」。
+**只返回 `is_public = true` 的设置项**。`system_settings` 是带 `is_public` 标记的 KV 表，`/meta` 的数据来源严格限定为公开项 —— 私有项（上传配额、审批开关、`security.rate_limit_*` 限流配置、`portal.allow_admin_view_private` 等）**绝不外泄**（FR-CFG-03）。
+
+**字段 ↔ 设置键映射**（M12 / M13 的 6 个站点定制字段全部走这条既有机制）：
+
+| 响应字段 | 来源 | 默认值 | 备注 |
+| --- | --- | --- | --- |
+| `site_name` | `portal.site_name` | `工具与 Skill 平台` | 未配置时的回退文案 |
+| `site_subtitle` | `portal.site_subtitle` | `""` | M12。空串 = 前端不渲染副标题 |
+| `announcement_md` | `portal.announcement_md` | `""` | |
+| `allow_anonymous_view` | `portal.allow_anonymous_view` | `true` | 迁移 `0005` 把默认值改为 `true`（M5） |
+| `default_sort` | `portal.default_sort` | `hot` | |
+| `page_size` | `portal.page_size` | `24` | |
+| `footer_org` | `portal.footer_org` | `""` | M12 |
+| `footer_contact_email` | `portal.footer_contact_email` | `""` | M12 |
+| `footer_contact_phone` | `portal.footer_contact_phone` | `""` | M12 |
+| `footer_notice` | `portal.footer_notice` | `""` | M12 |
+| `footer_tagline` | `portal.footer_tagline` | `内网工具与 Skill 共享平台` | M13。**默认值刻意不是空串**（定点例外），用于恢复原本写死的标语 |
+| `app_version` | 非设置项（版本环境变量） | — | 页脚显示版本时取此字段 |
+| `api_version` | 非设置项，固定 `v1` | `v1` | |
+| `auth_provider` | 非设置项，当前固定 `local` | `local` | |
+
+**6 个定制字段都是 `str` 且始终返回**（未配置时为空串而不是 `null`），前端可直接按字符串判空，不必处理 `null`。它们全部**恰好是这 6 个**：`site_subtitle`、`footer_org`、`footer_contact_email`、`footer_contact_phone`、`footer_notice`、`footer_tagline`。
+
+前端渲染规则（详见 `contracts/CONTRACT.md` §27.4 / §28.6）：4 个页脚信息字段（运营方 / 邮箱 / 电话 / 备案号）**全部为空时整个页脚信息块不渲染**；`footer_tagline` 与版本行显示在所有 AppShell 页。
+
+**`features` 是可扩展的能力声明**：前端只读取自己需要的键，后端新增键属于非破坏性变更（不升 API 版本）。当前实际返回上述 4 个键，其中 `anonymous_view` 与 `change_password` 供前端决定是否渲染「匿名浏览入口」与「修改密码入口」。`webapp_health_check` 取自**私有**设置项 `webapp.health_check_enabled`（它不是 `portal.*` 公开项，只以这个布尔的形式对外暴露）。
 
 `features` 用于前端根据后端能力决定是否渲染某些区块，避免前后端发布不同步时的白屏。
 
@@ -392,7 +473,7 @@ Set-Cookie: refresh_token=<opaque>; HttpOnly; Secure; SameSite=Lax; Path=/api/v1
       "visibility": "public",
       "category": { "id": 3, "slug": "dev-tools", "name": "研发工具", "icon": "wrench" },
       "tags": ["python", "log", "ops"],
-      "cover_url": "/api/v1/images/88?variant=thumb",
+      "cover_url": "/api/v1/images/88?variant=thumb&sig=<b64url>.<exp>",
       "owner": { "id": 42, "username": "zhangsan", "display_name": "张三" },
       "current_version": "1.2.0",
       "file_size": 4821043,
@@ -400,8 +481,13 @@ Set-Cookie: refresh_token=<opaque>; HttpOnly; Secure; SameSite=Lax; Path=/api/v1
       "view_count": 892,
       "has_pending_version": false,
       "can_download": true,
+      "favorite_count": 12,
+      "like_count": 31,
+      "is_favorited": false,
+      "is_liked": true,
       "published_at": "2025-01-08T09:12:00Z",
-      "updated_at": "2025-03-02T14:31:00Z"
+      "updated_at": "2025-03-02T14:31:00Z",
+      "webapp_unhealthy": false
     }
   ],
   "total": 137,
@@ -435,6 +521,16 @@ Set-Cookie: refresh_token=<opaque>; HttpOnly; Secure; SameSite=Lax; Path=/api/v1
 
 **`has_pending_version` 的可见性**：仅当请求者是 owner 或 approver/superadmin 时为 `true`，对其他用户恒为 `false`（SRS 待确认 Q3）。
 
+**M8 追加的 4 个互动字段**（`contracts/CONTRACT.md` §23.5）：`favorite_count` / `like_count` 是两个**反规范化计数**，照常对匿名请求者返回；`is_favorited` / `is_liked` 表示**当前请求者**是否已收藏/点赞，对匿名请求者恒为 `false`。`viewer` 角色**不能收藏/点赞**（调用 `PUT`/`DELETE` 返回 403，见 §25.1），其两个布尔同样恒为 `false`。
+
+**`webapp_unhealthy`（M14，`contracts/CONTRACT.md` §29.3）**：一个**派生**布尔，类型 `bool`，序列化名就是 `webapp_unhealthy`。仅当 `tool_type == "webapp"` **且** `webapp_health_status ∈ {"fail", "timeout"}` 时为 `true`，其余一律 `false`。
+
+- **从未检测过（`webapp_health_status` 为 `NULL`）不算不健康** —— 否则刚打开探活开关时会满屏告警，而那是「还没测」而不是「坏了」。
+- 列表项**只给这个派生布尔**，不给 `webapp_health_status` / `webapp_checked_at` 两个原始字段（列表页 24 条不必背两个完整字段，卡片只需要知道要不要打标记）。两个原始字段只在**详情**里给，见 §3.4。
+- 该字段只出现在**门户列表项** `ToolListItem` 上，即恰好两个响应：`GET /api/v1/tools` 与 `GET /api/v1/me/favorites`。`MyToolListItem`（`/me/tools`）与 `AdminToolItem`（`/admin/tools`、`/admin/recycle-bin`）**都没有**这个字段（`openapi.json` 可核）。
+
+> **`?tab=all|recent|favorites` 不是本接口的请求参数**。它是门户页的**纯前端 URL 状态**（`contracts/CONTRACT.md` §32.4 把 tab 结构、默认值、URL 状态全部判给前端）：`GET /api/v1/tools` 不认识 `tab`，传了也会被忽略。「继续使用」来自浏览器本地记录，「我的收藏」由前端单独调 `GET /api/v1/me/favorites`。
+
 ---
 
 ### 3.4 `GET /api/v1/tools/{slug}`
@@ -455,10 +551,12 @@ Set-Cookie: refresh_token=<opaque>; HttpOnly; Secure; SameSite=Lax; Path=/api/v1
   "category": { "id": 3, "slug": "dev-tools", "name": "研发工具" },
   "tags": ["python", "log", "ops"],
   "images": [
-    { "id": 88, "kind": "cover", "url": "/api/v1/images/88", "thumb_url": "/api/v1/images/88?variant=thumb", "width": 1200, "height": 630 },
-    { "id": 89, "kind": "screenshot", "url": "/api/v1/images/89", "thumb_url": "/api/v1/images/89?variant=thumb", "alt_text": "分析结果界面" }
+    { "id": 88, "kind": "cover", "url": "/api/v1/images/88?variant=full&sig=<b64url>.<exp>", "thumb_url": "/api/v1/images/88?variant=thumb&sig=<b64url>.<exp>", "width": 1280, "height": 720 },
+    { "id": 89, "kind": "screenshot", "url": "/api/v1/images/89?variant=full&sig=<b64url>.<exp>", "thumb_url": "/api/v1/images/89?variant=thumb&sig=<b64url>.<exp>", "alt_text": "分析结果界面" }
   ],
   "webapp_url": null,
+  "webapp_health_status": "ok",
+  "webapp_checked_at": "2025-03-14T07:00:00Z",
   "current_version": {
     "id": 345,
     "version": "1.2.0",
@@ -490,6 +588,19 @@ Set-Cookie: refresh_token=<opaque>; HttpOnly; Secure; SameSite=Lax; Path=/api/v1
 ```
 
 **`permissions` 对象**是刻意的设计：前端不需要自己实现一遍权限逻辑，直接读服务端给的布尔值。这避免了「前端判断和后端不一致导致按钮显示了但调用失败」。服务端仍是唯一权威（SRS 3.3）。
+
+**`images[]` 的 `url` / `thumb_url` 是带签名的最长时效能力 URL**（形如 `?variant=full&sig=<b64url>.<exp>`，见 §3.16），前端原样使用。`width` / `height` 是**该图实际落盘的像素尺寸**，逐图返回、不是固定常量 —— 上例给的是 `seed-demo` 种子封面：**M18 起全尺寸封面为 1280×720**（缩略图仍为 160×90）。已播种过的老实例不会自动变（幂等播种器不重写既有行），那里仍是 320×180，见 `docs/09-勘误与已知限制.md` §20。
+
+**M14 追加的 2 个探活字段**（`contracts/CONTRACT.md` §29.3）—— 详情给**原始值**，列表给派生布尔（§3.3 的 `webapp_unhealthy`）：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `webapp_health_status` | `str \| null` | `"ok"` / `"fail"` / `"timeout"` / `null`。**`null` = 从未检测过**，与 `"fail"` 是两回事 |
+| `webapp_checked_at` | `datetime \| null` | 最近一次检测时间（UTC，带 `Z`，与 `published_at` 同口径）。从未检测过时为 `null` |
+
+探活结果只在 `webapp.health_check_enabled = true` 时由 maintenance 任务 `webapp-health` 写入，因此关闭该开关时这两个字段恒为 `null`（不新增端点、不新增响应字段之外的东西）。
+
+**M8 另外追加的字段**（本示例不逐字段复写，理由见下文「关于响应示例的维护方式」）：`favorite_count` / `like_count` / `is_favorited` / `is_liked`（语义同 §3.3），以及只读回显字段 `estimated_saving_minutes`（`int | null`，范围 1~1440，`null` = 作者未填写；**不在列表项里返回**，列表保持精简）。
 
 **`skill` 类型额外字段**（仅当 `tool_type == "skill"`）：
 
@@ -576,7 +687,9 @@ Skill 的 `readme_md` 正文与完整文件树**不在此接口返回**（可能
   "category_id": 3,
   "tags": ["python", "log", "ops"],
   "visibility": "public",
-  "webapp_url": null
+  "webapp_url": null,
+  "webapp_health_url": null,
+  "estimated_saving_minutes": 15
 }
 ```
 
@@ -592,6 +705,10 @@ Skill 的 `readme_md` 正文与完整文件树**不在此接口返回**（可能
 | `tags` | 选填，≤ 8 个，每个 ≤ 64 字符 |
 | `visibility` | 选填，默认 `public` |
 | `webapp_url` | `tool_type == "webapp"` 时**必填**，且必须匹配 `^https?://` |
+| `webapp_health_url` | 选填，≤ 1024 字符，必须以 `http://` 或 `https://` 开头。**探活任务只检测 `webapp_health_url` 非空的 webapp**（`contracts/CONTRACT.md` §29.2） |
+| `estimated_saving_minutes` | 选填，1 ~ 1440 整数。**`null` = 作者未填写**，不是一个可以当成 `0` 的值，因此默认值就是 `null`（不设默认 0） |
+
+`PATCH /api/v1/me/tools/{id}` 接受同一组字段（全部可选，局部更新语义）。其中 `webapp_url` / `webapp_health_url` / `estimated_saving_minutes` 有**显式区分**：**省略该字段 = 不改**，显式传 `null` = 清空（回到「未填写」）。
 
 **响应** `201`：返回工具详情（同 3.4 的结构，`status` 为 `draft`）。
 
@@ -629,9 +746,26 @@ Skill 的 `readme_md` 正文与完整文件树**不在此接口返回**（可能
     "parse_error": null
   },
   "tool_status": "pending_update",
-  "created_at": "2025-03-14T08:21:33Z"
+  "created_at": "2025-03-14T08:21:33Z",
+  "duplicate_of": {
+    "tool_id": 9,
+    "slug": "log-analyzer-legacy-b7c1",
+    "name": "日志分析器（旧版）",
+    "version_id": 210,
+    "version": "1.0.0",
+    "file_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+    "is_current": true,
+    "uploaded_at": "2024-11-02T03:10:00Z"
+  }
 }
 ```
+
+**`duplicate_of`（M8，`contracts/CONTRACT.md` §23.2）**：上传**去重命中**信息，`null` = 未命中，或本次没有文件可比（`webapp` / `prompt` 类型没有 `file_sha256`）。
+
+- 命中依据是既有的 `tool_versions.file_sha256` 索引，不新增哈希计算。
+- **同一工具的新版本不算重复**（那是正常迭代），只报**其他工具**里的相同文件。
+- **命中不阻断上传** —— 版本照常入库，前端据此展示**非阻塞**提示（例如「与 xx 的 v1.0.0 内容相同，可直接使用」）。
+- 检测放在**服务端**是刻意的：浏览器端算 SHA-256 需要 `crypto.subtle`，而它只在安全上下文（HTTPS / localhost）可用，本项目按 D39 用 `http://<ip>:<port>` 直连，那里 `crypto.subtle` 为 `undefined`。契约因此裁定**不新增端点、不做客户端预检**。
 
 **错误场景**：
 
@@ -988,6 +1122,39 @@ lisi,李四,lisi@example.com,user,active
 
 ---
 
+### 3.16 `GET /api/v1/images/{id}` —— 能力签名 URL
+
+图片不做静态目录直出（否则猜到 ID 就能看到 `private` 工具的截图），每次读取都校验**父工具**的可见性。两条鉴权路径**二选一**：
+
+| 路径 | 形式 | 适用场景 |
+| --- | --- | --- |
+| 能力签名 | `?variant=full\|thumb&sig=<b64url>.<exp>` | `<img>` 标签带不上 `Authorization` 头 |
+| Bearer 凭证 | `Authorization: Bearer <JWT / st_ token>` | 编辑器预览等已登录场景 |
+
+`variant` 取值 `full`（默认）或 `thumb`，非法值由参数校验拦成 `422`。
+
+**签名绑定 `variant`**。HMAC 的报文是 `f"{image_id}|{variant}|{exp}"`，所以**把 `variant=thumb` 改成 `full` 会让签名失效**（反之亦然）—— 不能拿缩略图的签名去取原图。`exp` 编在 URL 自身里（`?sig=<mac>.<exp>`），校验时比的是 URL 里的 `exp`，不是当前设置值，因此改设置不影响已签发的 URL。
+
+**有效期**：系统设置 `images.signature_ttl_hours`，默认 `168` 小时（7 天）。它是**私有设置项，不经 `/meta` 外泄**。签发的 TTL 读取带 60 秒进程内缓存，所以改设置后最多 60 秒生效。
+
+**状态码**：
+
+| 情况 | 结果 |
+| --- | --- |
+| 签名有效（或 Bearer 有效）且父工具可见 | `200` + 图片字节，`Cache-Control: private, max-age=86400` |
+| **无签名且无 Bearer 凭证** | **`404`**（**不是 403**） |
+| **签名无效 / 错签名且无 Bearer 凭证** | **`404`**（与上一条**同码**，避免用状态码差异探测资源） |
+| Bearer 有效，但父工具对该用户不可见 | `404` |
+| 父工具已软删除，或图片行/落盘文件不存在 | `404` |
+| Bearer 是 API Token 但缺 `tools:read` | `403 SCOPE_MISSING` |
+| Bearer 有效但 `must_change_password = true` | `403 PASSWORD_CHANGE_REQUIRED` |
+
+**签名不是绕过可见性的后门**：签名只证明「这个 URL 是服务端下发的」，报文里只含 `image_id` / `variant` / `exp`（**不含用户身份**）；父工具的可见性仍照常校验 —— URL 外泄不等于图片外泄。
+
+**`thumb` 回退**：历史数据没有缩略图文件时，`variant=thumb` 回退返回原图，而不是报错。
+
+---
+
 > **关于响应示例的维护方式（M3 前端 checkpoint 裁定，2025-03）**
 >
 > 本文档早先逐字段复写每个响应，结果持续与实现漂移（本轮就发现 5 处：`version_seq`、
@@ -1026,6 +1193,7 @@ lisi,李四,lisi@example.com,user,active
 | `PASSWORD_CHANGE_REQUIRED` | 403 | 需先改密 | 强制跳改密页 |
 | `NOT_FOUND` | 404 | 不存在或无权查看 | 展示 404 页 |
 | `ACCOUNT_LOCKED` | 423 | 账号锁定中 | 展示剩余时间倒计时 |
+| `RATE_LIMITED` | 429 | 请求过频（M14 起真实启用，见 §1.11） | 按 `Retry-After` 头退避重试；`details.scope` 指出是哪一档配额。封面裂图也可能是命中 `api` 额度 |
 | `VERSION_EXISTS` | 409 | 版本号重复 | 定位版本号输入框 |
 | `ALREADY_PROCESSED` | 409 | 审批已被他人处理 | 刷新列表 |
 | `LAST_SUPERADMIN` | 409 | 不能禁用最后一个超管 | 提示 |
