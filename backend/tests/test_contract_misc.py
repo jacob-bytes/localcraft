@@ -94,9 +94,11 @@ def _parse_documented_error_codes() -> dict[str, int]:
 def _codes_mentioned_in_section_1_7() -> set[str]:
     """docs/03 §1.7 的「HTTP 语义 典型 code」表也列了若干错误码。
 
-    该表与 §4 的总表**不完全一致**：`RATE_LIMITED` 只出现在 §1.7，
-    §4 的总表里漏了它（文档问题，已在 checkpoint 报告里列出）。
-    因此判定「是否发明新码」时必须两张表一起看。
+    该表与 §4 的总表**曾经不完全一致**：`RATE_LIMITED` 一度只出现在 §1.7，
+    §4 的总表漏了它（那时限流还没启用，429 只是「保留」）。
+    M14 起限流真实启用，这一处遗漏**已经修好**（`RATE_LIMITED` 现同时出现在
+    §1.7、§1.11 与 §4 总表）。两张表一起看仍然是对的判定方式 ——
+    留作将来再次出现分叉时的兜底。
     """
     doc = DOCS_DIR / "03-API接口清单.md"
     text = doc.read_text(encoding="utf-8")
@@ -119,10 +121,20 @@ def test_error_registry_matches_docs_table() -> None:
     assert not invented, f"实现里出现了文档未定义的错误码: {sorted(invented)}"
 
 
-def test_rate_limited_is_documented_only_in_section_1_7() -> None:
-    """固化上面那条文档不一致，避免它被无声地「修好」或忘记。"""
+def test_rate_limited_is_documented_in_the_error_table() -> None:
+    """固化「`RATE_LIMITED` 已在 §4 总表里」这件事，防止它再退回去。
+
+    本测试的前身是 `test_rate_limited_is_documented_only_in_section_1_7`：
+    它当时**刻意固化**了一处文档不一致（`RATE_LIMITED` 只在 §1.7 的语义表里、
+    §4 的总表漏了它），目的是不让这处遗漏被无声地「修好」或忘记 ——
+    而它确实在 M14 的文档补写时**触发了**，说明这道守卫是有用的。
+
+    遗漏现已修复（M14 起限流真实启用，`RATE_LIMITED` 同时写进 §1.7 语义表、
+    新增的 §1.11 限流小节与 §4 总表），所以断言反过来：
+    固化**修好之后**的状态，避免哪天又退回「只在 §1.7」。
+    """
     assert "RATE_LIMITED" in _codes_mentioned_in_section_1_7()
-    assert "RATE_LIMITED" not in _parse_documented_error_codes()
+    assert "RATE_LIMITED" in _parse_documented_error_codes()
 
 
 def test_every_domain_error_subclass_is_registered() -> None:

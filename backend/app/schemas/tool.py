@@ -61,7 +61,8 @@ class ToolListItem(BaseModel):
 class ToolFacets(BaseModel):
     """分类与类型的计数**已按当前用户可见性过滤**（FR-TAX-07）。
 
-    **只在 `page == 1` 时返回**，翻页时整个 `facets` 键省略（docs/03 §3.3）。
+    **只在 `page == 1` 时有值**；**键始终存在**，翻页时是 `null`（不是省略键，
+    与 docs/09 §6.3 第 20 条同源）。
     """
 
     categories: list[CategoryFacet] = []

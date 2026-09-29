@@ -97,7 +97,8 @@ async def list_tools(
     - **`sort` 白名单校验**，非法值返回 400 `INVALID_SORT` 而不是 500；
       排序表达式从 `SORT_EXPRESSIONS` 查表得到，**绝不把 `sort` 拼进 SQL**
       （docs/03 §1.6）。
-    - **`facets` 只在 `page == 1` 时返回**，翻页时整个键省略（docs/03 §3.3）。
+    - **`facets` 只在 `page == 1` 时有值**；**键始终存在**，翻页时是 `null`
+      （不是省略键 —— 前端按 `null` 判断，旧注释写成「省略」是错的，见 docs/09 §6.3 第 20 条）。
     - 可见性判定下推到 SQL（EXISTS 子查询），不在 Python 里过滤
       （docs/01 §4.3 性能要求）。
     - 未登录用户由 `portal.allow_anonymous_view` 决定 401 还是返回公开数据

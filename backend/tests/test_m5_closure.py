@@ -49,7 +49,16 @@ def test_verify_image_signature_roundtrip_and_tamper() -> None:
     assert verify_image_signature(2, "thumb", sig) is False
     assert verify_image_signature(1, "full", sig) is False
     mac, _, exp = sig.partition(".")
-    assert verify_image_signature(1, "thumb", f"{mac[:-2]}xx.{exp}") is False
+    # ★ 篡改必须落在**解码后的字节**上，不能只落在字符串上。
+    # 签名是**去掉 padding 的 base64url**（`_b64url_encode`），32 字节编成 43 个字符，
+    # 末位字符只有高 4 位参与解码、低 2 位被 base64 解码器忽略（末位只可能是 A/Q/g/w）；
+    # 而 `verify_image_signature` 比较的是 `_b64url_decode(mac_part)` 出来的**字节**
+    # （`hmac.compare_digest`）。所以「把最后两位换成 xx」不是稳定有效的篡改：
+    # 只要原 mac 第 42 位恰是 `x`、第 43 位恰是 `w`，换完**解码出的字节完全没变**，
+    # 校验照样通过 —— CI 上真踩到过一次（`assert True is False`，实测约 1/1000 命中）。
+    # 改首字符则必然改变解码后的第 1 个字节，与 key、与当前时间都无关。
+    flipped = ("A" if mac[0] != "A" else "B") + mac[1:]
+    assert verify_image_signature(1, "thumb", f"{flipped}.{exp}") is False
     assert verify_image_signature(1, "thumb", "garbage") is False
     assert verify_image_signature(1, "thumb", None) is False
 
