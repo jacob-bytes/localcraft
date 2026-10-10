@@ -11694,20 +11694,21 @@
         "operationId": "list_tools_api_v1_tools_get",
         "parameters": [
           {
-            "description": "关键词，搜索名称、简介、详情、标签",
+            "description": "关键词，搜索名称、简介、详情、标签（≤200 字符）",
             "in": "query",
             "name": "q",
             "required": false,
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 200,
                   "type": "string"
                 },
                 {
                   "type": "null"
                 }
               ],
-              "description": "关键词，搜索名称、简介、详情、标签",
+              "description": "关键词，搜索名称、简介、详情、标签（≤200 字符）",
               "title": "Q"
             }
           },

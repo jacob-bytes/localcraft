@@ -78,7 +78,14 @@ async def list_tools(
     access: Annotated[PortalAccess, Depends(portal_access)],
     visibility: Annotated[VisibilityContext, Depends(get_visibility_context)],
     params: Annotated[PageParams, Depends()],
-    q: Annotated[str | None, Query(description="关键词，搜索名称、简介、详情、标签")] = None,
+    #: 关键词。**上限 200 字符** —— 它会一路进 FTS5 `MATCH` / PostgreSQL `tsquery`：
+    #: 这两种查询对超长输入的开销不是线性的（SQLite 的 FTS 路径本身对元字符是安全的，
+    #: 见 `app/search/sqlite_fts.py` 里「每个 token 包成带引号短语」的做法）。
+    #: 内网也不该假设客户端守规矩，所以在边界上封顶；超限由 FastAPI 返回 422。
+    q: Annotated[
+        str | None,
+        Query(max_length=200, description="关键词，搜索名称、简介、详情、标签（≤200 字符）"),
+    ] = None,
     category: Annotated[list[str] | None, Query(description="分类 slug，可重复传")] = None,
     tag: Annotated[list[str] | None, Query(description="标签名，可重复传")] = None,
     tool_type: Annotated[

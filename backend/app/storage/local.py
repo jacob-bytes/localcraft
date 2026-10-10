@@ -196,22 +196,6 @@ class LocalStorage:
         self._prune_empty_parents(target.parent)
         return True
 
-    def delete_sync(self, storage_path: str) -> bool:
-        """同步删除，供「事务提交后触发的淘汰」使用（不阻塞事件循环之外）。"""
-        try:
-            target = self._resolve_within_files(storage_path)
-        except PathNotAllowedError:
-            return False
-        if not target.is_file():
-            return False
-        try:
-            target.unlink()
-        except OSError as exc:
-            logger.warning("删除文件失败 %s: %s", storage_path, exc)
-            return False
-        self._prune_empty_parents(target.parent)
-        return True
-
     def _prune_empty_parents(self, directory: Path) -> None:
         """删掉因为淘汰版本而变空的目录，避免 files/tools/ 下堆积空目录。"""
         root = self.files_root.resolve()

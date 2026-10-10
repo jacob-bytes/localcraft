@@ -519,6 +519,9 @@ export default function PortalPage() {
             onChange={(event) => setSearchInput(event.target.value)}
             placeholder="搜索工具名称、简介、标签…"
             aria-label="搜索工具"
+            // 与后端 `GET /api/v1/tools` 的 `q` 上限一致（那边是 max_length=200）：
+            // 在这里拦住，用户就不会因为粘贴超长串而撞上 422 错误页。
+            maxLength={200}
             className="h-12 pl-10 pr-10 text-base"
           />
           {searchInput ? (
