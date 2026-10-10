@@ -7313,7 +7313,7 @@
   "info": {
     "description": "localcraft — 内网工具 / Skill 共享平台后端",
     "title": "localcraft API",
-    "version": "1.2.1"
+    "version": "1.2.2"
   },
   "openapi": "3.1.0",
   "paths": {
