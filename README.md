@@ -153,10 +153,29 @@ npm run dev                                    # http://127.0.0.1:5173
 目标环境：**openEuler 24.03 LTS SP1 ~ SP4**，x86_64 或 aarch64，systemd 原生部署。
 openEuler 官方源自带 `python3.11` rpm，**目标机不需要编译 Python**，整个安装过程可以完全离线。
 
-> 以下每一步都在全新克隆上实测过（命令、参数、产物名都对得上）。
 > 逐步细讲、验证清单与常见坑见 **[docs/13-新手部署指南](docs/13-新手部署指南.md)**。
 
-### 在构建机上产出发布包
+### 拿到发布包（两条路，先用方式 1）
+
+**方式 1（推荐）：下载 GitHub 上构建好的包 —— 不需要构建机，也不需要 Node / Python**
+
+打 tag 时 GitHub Actions 会自动构建发布包并挂到 **Releases**：
+里面**已经含编好的前端产物**（`web/dist/`，91 个文件）与 x86_64 / aarch64 两套 wheelhouse。
+在一台联网机上：
+
+```bash
+# 文件名以 Releases 页上**显示的实际名字**为准（资产名含构建日期，从版本号推不出来）
+BASE=https://github.com/jacob-bytes/localcraft/releases/download/v1.2.0
+F=localcraft-1.2.0-offline-20260929.tar.gz
+curl -fSLO "$BASE/$F" && curl -fSLO "$BASE/$F.sha256"
+sha256sum -c "$F.sha256"          # 必须输出 OK
+```
+
+**方式 2：自己造包** —— 只有「纯内网、连下载都做不到」时才需要，就是下面这一节。
+
+### 方式 2：在构建机上产出发布包
+
+> 本节命令在全新克隆上实测过（命令、参数、产物名都对得上）。
 
 构建机只需要能联网、有 `python3.11` 与 Node（不必是 openEuler，macOS / 普通 Linux 都行）：
 
@@ -175,9 +194,10 @@ bash scripts/make-release.sh 1.0.0            # 3) 产出 backend/dist/localcraf
 ### 在目标机上安装
 
 ```bash
-# 把 tar 包传到目标机，然后（root）
-tar xzf localcraft-1.0.0-offline-<日期>.tar.gz
-cd localcraft-1.0.0
+# 把 tar 包传到目标机（文件名用你实际拿到的那个：方式 1 下载的 / 方式 2 产出的，同名同结构）
+scp localcraft-1.2.0-offline-20260929.tar.gz root@目标机:/tmp/
+# 目标机上（root）
+cd /tmp && tar xzf localcraft-1.2.0-offline-20260929.tar.gz && cd localcraft-1.2.0
 sudo ./install.sh
 ```
 
