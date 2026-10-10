@@ -54,6 +54,31 @@ def test_head_revision_comes_from_the_code_not_the_cwd(tmp_path: Path, monkeypat
     )
 
 
+async def test_guard_passes_on_the_ambient_test_database() -> None:
+    """在**套件自己配置的那个库**上跑一次守卫 —— 这是唯一能让它在 PostgreSQL 下被验证的测试。
+
+    本文件其它用例都**自己建临时 sqlite 库**（本仓库迁移类测试的既有约定），
+    于是它们即使在 PostgreSQL 套件里跑，验证的仍是 SQLite 路径。而
+    `scripts/pg-dialect-suite.sh` 会把 `LOCALCRAFT_TEST_DATABASE_URL` 指向 PG，
+    `conftest.py` 再把它映射成 `DATABASE_URL`、并用 alembic 升到 head ——
+    所以读环境里的 `DATABASE_URL` 就等于"跑在套件当前真正使用的那个数据库上"。
+
+    ★ **只做只读检查**（读版本 + 断言在 head）：那个库是整套测试共享的，
+    这里跑 `downgrade` 或改 schema 会连累其它用例。
+    """
+
+    url = os.environ["DATABASE_URL"]
+    assert await _revision_of(url) == head_revision(), (
+        "套件的库应当在 head 上（conftest 用 alembic 升级到 head）"
+    )
+
+    engine = create_async_engine(url)
+    try:
+        await assert_db_at_head(engine)  # 不抛即通过
+    finally:
+        await engine.dispose()
+
+
 async def test_db_at_head_passes(tmp_path: Path) -> None:
     env = _env(tmp_path)
     result = _run_alembic(env, "upgrade", "head")
