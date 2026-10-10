@@ -299,7 +299,7 @@ fi
 cat <<EOF
 
 ============================================================
-安装完成。接下来还有三件事：
+安装完成。接下来还有四件事（**第 1 与第 3 项不做，服务能跑但会吃亏**）：
 
 1) 创建超级管理员（密码走交互输入或 --password-stdin，不要用明文参数）
    sudo -u localcraft bash -c '
@@ -337,7 +337,21 @@ cat <<EOF
       （localcraft-http.conf 自带一份 zone/log_format 定义，与 localcraft-limits.conf 同名，
         两者不能同时安装，否则 nginx 会因重复定义而启动失败）
 
-3) 验证
+3) 启用两个定时器 —— **不启用就没有每日备份，在线工具探活也不会自动跑**
+   本脚本**只 enable 主服务**（这是刻意的：备份时机与保留策略应由你决定），
+   所以这两个 timer 装完是 disabled。后果必须说清：
+
+     systemctl enable --now localcraft-backup.timer       # 每日 03:00 备份
+     systemctl enable --now localcraft-maintenance.timer  # 每小时维护（探活在其中）
+
+   确认已启用：
+     systemctl is-enabled localcraft-backup.timer localcraft-maintenance.timer
+     systemctl list-timers 'localcraft*'
+
+   （在线工具探活还另有第二个开关：管理台「设置」里的「在线工具探活」，
+     默认关闭。timer + 该开关**两者都满足**才会自动探测。）
+
+4) 验证
    curl -sS http://127.0.0.1:${LOCALCRAFT_PORT:-8000}/healthz
    curl -sS http://127.0.0.1:${LOCALCRAFT_PORT:-8000}/readyz
    curl -sS http://127.0.0.1:${LOCALCRAFT_PORT:-8000}/api/v1/meta
