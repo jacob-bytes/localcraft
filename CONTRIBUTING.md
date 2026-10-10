@@ -92,6 +92,67 @@ SQLite 在 WAL 下仍是单写者。**禁止在数据库事务内做文件 IO、
 
 CI 会在 ubuntu 上跑 ruff + pytest + 前端静态检查。CI 绿了不代表完事 —— 涉及部署脚本、systemd、双架构 wheel 的改动，CI 覆盖不到，请在 PR 里说明你的验证方式。
 
+## 发版流程
+
+发版**只由打 tag 触发**（`.github/workflows/release.yml`）：推 `v*` 标签后，Actions 会创建/更新
+GitHub Release，并在 runner 上构建离线发布包（前端 + 双架构 wheelhouse）挂成资产。
+**不需要构建机，也不需要本地打包。**
+
+```bash
+# 1) 版本号 5 处对齐 —— 漏一处就会让 /meta 的 app_version 或 openapi 的 info.version 说谎
+#    config.py / pyproject.toml / package.json(+lock) / openapi.json（重导出）
+cd web && npm version <ver> --no-git-tag-version && cd ../backend
+.venv/bin/python -m app.cli export-openapi
+
+# 2) 重写 RELEASE-NOTES.md —— 它同时是 upgrade.sh / rollback.sh 的机器可读输入，
+#    判断迁移的那一行必须从**行首**开始：`本次是否包含数据库迁移：是|否`
+#    （写成引用块或加粗前缀会让脚本定位不到）
+
+# 3) 提交推送，**等 CI 全绿**
+git add -A && git commit -m "release: <ver> —— …" && git push origin main
+
+# 4) 打 annotated tag，正文从文件读
+git tag -a v<ver> -F /tmp/release-body.md --cleanup=verbatim
+git push origin v<ver>
+```
+
+### ⚠ `--cleanup=verbatim` 不是可选项
+
+`git tag -a -F <file>` 的默认清理模式是 **`strip`**（`git tag --help` 自己写着 "The strip mode is
+default"），它会**删掉所有以 `#` 开头的行** —— 也就是 Markdown 的**全部标题**。
+
+这个坑很阴：tag 注释与 Release 正文仍然**逐字一致**（diff 为空），
+所以从 Release 页面看不出"少了东西"，只有拿你写的源文件去对比才会发现。
+**v1.2.0 与 v1.2.1 都踩过**（v1.2.0 的正文至今没有任何标题）。
+
+因此一律加 `--cleanup=verbatim`，并在推 tag **之前**自查：
+
+```bash
+git tag -l --format='%(contents)' v<ver> | grep -c '^## '   # 应等于你写的标题数，不是 0
+```
+
+### 推 tag 之后要验证的（别只看 CI 绿灯）
+
+```bash
+# ① Release 标题与正文是否完整
+curl -sS "https://api.github.com/repos/jacob-bytes/localcraft/releases/tags/v<ver>" | python3 -c "
+import json,sys; d=json.load(sys.stdin); b=d['body']
+print('标题:', d['name'])
+print('正文', len(b.splitlines()), '行；以 # 开头的行', sum(l.startswith('#') for l in b.splitlines()))
+print('资产:', [(a['name'], a['size']) for a in d['assets']])"
+
+# ② 资产能下、校验过、内容对（下载后 `shasum -a 256 -c`，再抽查包内 VERSION / 迁移 head / 前端产物）
+BASE=https://github.com/jacob-bytes/localcraft/releases/download/v<ver>
+F=localcraft-<ver>-offline-<date>.tar.gz
+curl -fSLO "$BASE/$F" && curl -fSLO "$BASE/$F.sha256" && sha256sum -c "$F.sha256"
+```
+
+> **重推同一个 tag 会再触发一次工作流**（实测过）：`release` job 走 `MODE=update`，
+> 用新注释 **PATCH** 现有 Release 的正文；`package` job 会**删掉旧资产并重新上传** ——
+> 也就是说**发布包的字节会变**（实测 v1.2.1 修标签那次，包大小变了 +69 字节）。
+> 所以「修 tag 注释」**必须在有人下载之前做**；一旦有人取过，就只能接受现状，
+> 或者更新 `RELEASE-NOTES.md` 并在下一个版本里修正。
+
 ## 报告安全问题
 
 请不要通过公开 issue 报告安全漏洞。改用 GitHub 的 [Security Advisory](https://github.com/jacob-bytes/localcraft/security/advisories/new) 私下提交，注明复现步骤与影响范围。
