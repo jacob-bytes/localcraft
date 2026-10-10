@@ -1,6 +1,6 @@
 # localcraft 发布说明
 
-**版本：1.2.0** ｜ **发布日：2026-09-29** ｜ **目标平台：openEuler 24.03 LTS（x86_64 / aarch64）+ systemd + nginx**
+**版本：1.2.1** ｜ **发布日：2026-09-29** ｜ **目标平台：openEuler 24.03 LTS（x86_64 / aarch64）+ systemd + nginx**
 
 本文件是 `docs/05-部署与运维方案` §11「升级与回滚流程」的**机器可读前置输入**：
 `scripts/upgrade.sh` 与 `scripts/rollback.sh` 会读下面「本次是否包含数据库迁移」
@@ -18,80 +18,104 @@ localcraft 是内网「工具 / Skill」共享平台：上传 → 审批 → 发
 带三级可见性、版本管理与回收站，全部数据落在单机 SQLite（可选切 PostgreSQL），
 以 systemd 原生方式部署，**目标机不需要联网、不需要 Node**。
 
-1.2.0 是 v1.1.0 之后的**功能版本**（上个版本为 1.1.0，head 为迁移 `0007`），
-主要包含四块：
+1.2.1 是 v1.2.0 之后的**维护版本**（上一版 head 为迁移 `0009`）——**没有新功能**，
+内容分四类：
 
-1. **运维能力补全** —— 应用侧限流、在线工具探活（此前完全没有），配套管理端设置项；
-2. **PostgreSQL 全文检索** —— PG 从「能跑」变为「检索能力与 SQLite 对齐」；
-3. **门户分页签** —— 全部工具 / 最近使用 / 我的收藏；
-4. **预览图与占位整改** —— 去掉按分类上色的彩色渐变；详情页无图时图区完全收起；
-   种子演示封面改为浅中性底 + 淡几何标记。
+1. **缺陷修复**：接口形状权威（`openapi.json`）漏声明两个关键查询参数；
+   管理端一条过时文案；`docs/07` 里两处会误导管理员的断言。
+2. **内部性能**：合并系统设置的点查，**每请求少发 10 条 SQL**（门户列表首页 19 → 9）。
+3. **前端一致性**：页面容器宽度去重；两处警告横幅补齐 `variant`；状态点改用语义令牌。
+4. **文档与运维体验**：`install.sh` 的收尾提示补上「启用两个定时器」；
+   README / `docs/13` / `docs/05` 统一写清「装完还要做什么」；
+   README 与 `docs/13` 讲清「下载 Release 的包**不需要构建机、不需要 Node**」；
+   README 的 8 张界面截图按当前 UI 重抓。
 
-**默认行为的变化是刻意最小化的**：限流默认**开启**但配额宽松（1200 次/分钟/IP，
-一次门户加载约 21 个请求）；探活默认**关闭**；新增设置项的默认值与升级前一致。
+> ### ★ 两处**肉眼可见**的变化（其余都是行为等价或纯文档）
+>
+> 1. **警告横幅的底色档位变了**：`我的工具`（「工具已下架」）与 `历史版本`（「接近保留上限」）
+>    两处原先**漏写 `variant`**、靠手写 `bg-amber-50/60 dark:bg-amber-950/20` 凑观感；
+>    现在改用 `variant="warning"`，**底色比原来略重**，并**新增**了深色态边框与琥珀色文字
+>    （也就是"和其它警告框一致了"）。
+> 2. **版本状态点的颜色微移**：`bg-amber-500` / `bg-emerald-500` 改为语义令牌
+>    `bg-warning` / `bg-success`（8px 圆点上应不易察觉），
+>    **并从此随主题变化** —— 改前它在明暗两态是同**一个**颜色。
+>
+> 这两处已做过 computed-style 与类名核对，但**未做人工审美评审**（见第八节）。
 
 ---
 
-## 二、里程碑概要
+## 二、本版具体改了什么
 
-### M14 — 应用侧限流 + 在线工具探活（迁移 `0008`）
+### 2.1 缺陷修复
 
-- **应用侧限流**：进程内滑动窗口（键 `(scope, client_ip)`，窗口 60 秒，桶上限 10000），
-  三档配额 `api` 1200 / `login` 10 / `upload` 30（次/分钟/IP），总开关
-  `security.rate_limit_enabled`。被拒返回 **429 + `RATE_LIMITED` + `Retry-After`**。
-  这是与 nginx `limit_req` **叠加**的第二层，不是替代品。
-- **★ loopback 豁免**：来自 `127.0.0.1` / `::1` / `localhost` 的请求不计入限流
-  （与 `/metrics` 同源的理由：本机健康检查与监控不能被限流打死）。
-  本仓库自带的 systemd 单元与 nginx 配置**都已正确透传真实客户端 IP**，
-  故按本方案部署时限流正常生效；**自写/裁剪配置时若漏掉透传，限流会静默整体失效**
-  （所有请求都被当成来自本机）—— 见 `docs/05` §5.14.4。
-- **在线工具探活**：对 `tool_type='webapp'` 且填了 `webapp_health_url` 的工具做
-  `HEAD` 探测（**405/501 回退 `GET`**），超时 5 秒、并发 8、单次上限 200；
-  **不跟随重定向**（3xx 记为 ok 且不请求 Location）、**显式禁用环境代理**。
-  结果写 `webapp_health_status` / `webapp_checked_at`，**`NULL`（从未探测）不等于 `fail`**。
-  **不会自动下线工具**。受 `webapp.health_check_enabled` 控制，**默认关闭**。
-  调度入口是 `localcraft-maintenance.timer`（每小时 :20 → `--task all`），
-  但 `install.sh` 只 enable 主服务，**timer 需手工 enable**。
-- **迁移 `0008`**：补播种 `images.signature_ttl_hours`（默认 168 小时）
-  与 4 个限流设置项。M5 引入的签名有效期设置项此前**从未被任何迁移播种**，一并补上。
-- 修掉三个「存在但未接通」的半成品（死代码 `RateLimitedError`、未播种的设置项、
-  没接调度入口的探活），详见 `docs/09` §18。
+- **`openapi.json` 漏声明两个关键查询参数**（契约 §15.6 宣布它是接口形状的唯一权威，
+  而**裸读**的查询参数不会进 spec）：
+  - `GET /api/v1/images/{image_id}` 的 **`sig`** —— `<img>` 标签**唯一**的鉴权途径；
+  - `GET /api/v1/tools/{slug}/download` 的 **`ticket`** —— 一次性下载票据。
 
-### M15 — PostgreSQL 全文检索（迁移 `0009`）
+  修法不是"再抄一份声明"，而是把参数声明成**读它的那个依赖**的查询参数
+  （FastAPI 会把依赖的参数合并进使用它的 operation），并用参数替换裸读 ——
+  让「读到的」与「声明的」成为同一个来源。
+  另新增守卫测试，把「裸读的查询参数必须在 spec 里声明」变成会失败的检查
+  （含定点断言：两个参数必须声明在**各自那个路由**上）。
+- **管理端过时文案**（迁移 `0010`）：`webapp.health_check_enabled` 的描述长期写着
+  「在线工具探活开关（二期）」，而探活 M14 早已实现接通 —— 那两个字会让管理员以为开关没用。
+  管理端 label 取自**数据库列**，所以只能新开迁移修正。
+- **`docs/07` 的两处误导性断言**：手册说 `quota.warn_threshold_pct` 与
+  `approval.version_reapproval`「无消费方、设置了没有任何效果」，实际两者都已被 M5 接线
+  （前者是 `/admin/overview` 的 `storage_warning` 与 `disk-alert.sh` 的**唯一口径**，
+  后者控制"已发布工具的新版本是否免审"）。**而 `docs/09` 早就记着它们"已接线"** ——
+  即两份文档长期互相矛盾，管理员手册是错的那一份。已连同 FAQ 与勘误表一并改正。
 
-- `tools` 增加 `search_vector`（`tsvector`，**`simple` 配置**）+ GIN 索引，
-  由 `0009` 一次性回填。检索词与 SQLite FTS5 走**同一套切分**：
-  中文按单字切分，英文/数字保持整词。
-- **PG 中文检索不需要任何扩展**（不需要 `zhparser`）—— 单字切分对
-  `to_tsvector('simple', …)` 同样成立。
-- 迁移 `0009` **只对 PostgreSQL 生效**；SQLite 继续走既有的 FTS5 虚表（迁移 `0003`）。
-- **已知差异（不修）**：PG 与 SQLite 在字符层面有 7 条检索差异
-  （例如 PG 搜 `node` 匹配不到 `node.js`），已用 23 条探针量化并记录在 `docs/09` §19。
+### 2.2 内部性能：合并设置点查（每请求 −10 条 SQL）
 
-### M16 — 门户分页签
+- `deps.get_visibility_context` 原先调 `get_security_policy()`，**只为拿
+  `allow_admin_view_private` 一个布尔** —— 11 条语句换 1 个字段；改为只读那一个键。
+- `get_security_policy` 自身从 11 次点查改为 **1 条 `IN` 查询**
+  （三层兜底「行值 → 代码默认 → 调用方默认」逐字保持不变）。
+- **实测（同一套 harness，改前 / 改后各跑一次）**：
 
-- 门户新增「全部工具 / 最近使用 / 我的收藏」三个分页签，`?tab=all|recent|favorites`。
-  **这是纯前端的 URL 状态**，后端 `GET /api/v1/tools` 不认识 `tab` 参数。
-- **只有一个分页签有内容时，连 Tabs 外壳都不渲染**；工具栏与分页控件只在
-  「全部工具」下出现。
+  | 端点 | 改前 | 改后 |
+  | --- | --- | --- |
+  | 门户列表首页（含 facets，稳态） | 19 | **9** |
+  | 门户列表第 2 页（不算 facets） | 14 | **4** |
+  | 工具详情 | 20 | **10** |
 
-### M17 — 预览图与占位统一为中性色
+- **响应形状与语义零变化**：省的是语句数，不是"少读请求" —— 仍然每请求读最新值
+  （`FR-CFG-01` 的"设置改完立即生效"不受影响）。
+- 每端点 SQL 上限守卫随实测收紧（25→12、19→7、25→13）。
+- ⚠ **只实测了语句数，没有实测 CPU/吞吐收益**。依据是 `docs/11` §2.5 的 O4 结论
+  （CPU 随并发放大的放大器是 `aiosqlite` 的专用工作线程那一跳，每条语句跨一次），
+  但本版不把它折算成任何百分比性能承诺。
 
-- 去掉按分类 / 按类型两套彩色渐变，统一走唯一零参常量
-  `TOOL_PLACEHOLDER_CLASS = "bg-muted"`（语义令牌，深色主题下是深中性而非白色）。
-- **类型徽标（文件包 / 在线工具 / Skill）保持彩色** —— 它是功能性小标签，不属于预览图。
-- 用户**真实上传**的封面一律不动。
+### 2.3 前端一致性
 
-### M18 — 详情页图区收起 + 种子封面加淡标记
+- **页面容器**：`max-w-[1400px]` + 响应式横向留白此前在 **8 个文件**里各写一遍
+  （顶栏 / 页脚 / 两套布局 / 门户 / 详情 / 收藏 / 404 / 403），改为唯一常量
+  `PAGE_CONTAINER`。**这一项零视觉变化**（已逐处比对类名集合，并用 computed style 复核
+  `max-width: 1400px` / `padding-left: 32px`）。
+- **两处警告横幅补齐 `variant="warning"`**（见上文"肉眼可见的变化"第 1 条）。
+- **版本状态点改用语义令牌**（见上文"肉眼可见的变化"第 2 条）。
 
-- **无图时详情页图廊完全不渲染**（元素不存在，不是 `hidden` / `0` 高度）：
-  两种情形都收起 —— 后端没下发任何图，**或每一张图都加载失败**。
-  加载中不收起（按 `onError` 累积判定），避免「先收起再冒出来」。
-  ★ 范围限定：**只作用于详情页图廊**；门户卡片 / 我的工具 / 回收站的缩略图占位照旧。
-- **种子演示封面**：浅中性底上画淡几何标记（圆角矩形轮廓 + 内切圆），
-  颜色 = 底色各通道**同减 14**（零色相，不引入彩色）；
-  全尺寸 **320×180 → 1280×720**（详情页拉伸近 4 倍，画了标记后小图会糊），
-  缩略图仍 160×90。
+### 2.4 文档与运维体验
+
+- **`install.sh` 收尾提示**：原来只列"三件事"，**没提两个定时器** ——
+  而脚本只 `enable` 主服务，`localcraft-backup.timer` 与 `localcraft-maintenance.timer`
+  装完是 disabled（这个取舍是刻意的，`docs/05` §5.13 与 `docs/08` §2.6 都有记录）。
+  后果是「装完看着一切正常、几个月后才发现从不备份」。现改为"四件事"，
+  并点明探活**还有第二个开关**（管理台「设置」里默认关闭，**timer 与该开关两者都满足**才会自动探测）。
+- **README / `docs/13` / `docs/05` 统一"装完还要做什么"** 为同一份四步序列：
+  建超级管理员 → 让外部能访问 → 启用两个定时器 → 验证。
+  （改前 README 里 `create-superadmin` 与 timer **各 0 处**，照它做完会卡在登录页；
+  `docs/13` 完全没有定时器那一步；`docs/05` §5.10 只 enable 了备份 timer。）
+- **README 与 `docs/13` 讲清部署的两条路**：改前 README 的「部署到 openEuler」
+  **只有构建者流程**（读它的人会以为必须先 `npm ci && npm run build`）——
+  现在先说「方式 1：下载 Release 上构建好的包，**不需要构建机、不需要 Node / Python**」
+  并给出可直接执行的下载+校验命令；构建者流程改名为「方式 2」并标注适用场景。
+- **README 的 8 张界面截图重抓**（用仓库内的 `web/scripts/capture-screenshots.mjs`，
+  跑在干净播种的实例上，任何人可复现）。8 张里 7 张有变化（登录页渲染确定性相同）。
+- `docs/11` 记录了上述性能改动（新增 O13）并关闭了 D1~D4 四项遗留待办；
+  `docs/05` §4.1 的发布包目录树按**真实发布包**逐项核对后重写。
 
 ---
 
@@ -99,27 +123,21 @@ localcraft 是内网「工具 / Skill」共享平台：上传 → 审批 → 发
 
 本次是否包含数据库迁移：**是**
 
-相对 **v1.1.0（head `0007`）**，本版本新增 `0008`、`0009` 两支迁移。
-从更早的 **v1.0.0（head `0004`）** 直接升级时，还会依次执行 `0005` / `0006` / `0007`
-（v1.1.0 引入）。Alembic 按 revision 链幂等推进，已执行过的不重复执行。
+相对 **v1.2.0（head `0009`）**，本版本新增 **1 支**迁移：
 
 | revision | 文件 | 内容 | 对旧代码向后兼容 |
 | --- | --- | --- | --- |
-| `0008` | `backend/migrations/versions/0008_rate_limit_and_image_ttl_settings.py` | 播种 5 个设置项：`images.signature_ttl_hours`、`security.rate_limit_enabled` / `rate_limit_per_minute` / `rate_limit_login_per_minute` / `rate_limit_upload_per_minute`（幂等，只插缺失行） | 是（纯种子数据） |
-| `0009` | `backend/migrations/versions/0009_postgres_fts.py` | PostgreSQL：`tools.search_vector`（`tsvector`，`simple`）+ GIN 索引 + 回填。**非 PostgreSQL 方言整体跳过** | 是（加可空列 + 索引） |
+| `0010` | `backend/migrations/versions/0010_fix_health_check_setting_description.py` | **纯 UPDATE**：把 `webapp.health_check_enabled` 的管理端描述从「在线工具探活开关（二期）」改成「在线工具探活开关（随维护任务定时探测）」。**不改** `value` / `value_type` / `is_public`，**不增删行** | 是（只改一列文本） |
 
-- **`head` 指向：`0009`**
+- **`head` 指向：`0010`**
 - 迁移必须在**服务启动之前**执行（`docs/05` §5.5 / §11.2 第 6 步）。
 - 执行前务必先备份：`scripts/upgrade.sh` 会在迁移前自动做一份
   `backups/db/pre-upgrade-<旧版本>-<时间戳>.db`。
 - **回滚纪律**：
-  - `0009` 的 `downgrade()` **可重建**（删掉的是由 `tools` 派生的索引列，
-    重新升级会再次回填），且**只对 PostgreSQL 有动作**。
-  - `0008` 的 `downgrade()` **有损**：它删除那 5 行设置，管理员改过的值会丢失，
-    重新升级只会还原成默认值。
-  - 因此回滚的第一选择仍是**还原升级前备份**，而不是 `alembic downgrade`
-    （`docs/05` §11.4 的完整论证）。`scripts/rollback.sh` 会在检测到数据库里有
-    目标版本不认识的 revision 时给出明确提示。
+  - `0010` 的 `downgrade()` **无损**（新旧两段文案都冻结在该迁移文件里，可精确还原）；
+  - 但**整条链**的回滚仍以**还原升级前备份**为第一选择 —— `0008` 的 `downgrade()`
+    是**有损**的（删除那 5 行设置，管理员改过的值会丢失），见 v1.2.0 的说明与 `docs/05` §11.4。
+- 从 **v1.1.0（head `0007`）或更早**升级时，还会依次跑 `0008` / `0009`（v1.2.0 引入）。
 
 ---
 
@@ -127,7 +145,7 @@ localcraft 是内网「工具 / Skill」共享平台：上传 → 审批 → 发
 
 ```bash
 # 升级（先在测试机演练；发布包由 GitHub Actions 在 Release 页产出）
-/opt/localcraft/scripts/upgrade.sh /root/localcraft-1.2.0-offline-<date>.tar.gz
+/opt/localcraft/scripts/upgrade.sh /root/localcraft-1.2.1-offline-<date>.tar.gz
 
 # 只看会做什么，不动系统
 /opt/localcraft/scripts/upgrade.sh --dry-run <tarball>
@@ -135,7 +153,7 @@ localcraft 是内网「工具 / Skill」共享平台：上传 → 审批 → 发
 # 回滚到上一个 release
 /opt/localcraft/scripts/rollback.sh            # 默认切回 current 之外的最近一个 release
 /opt/localcraft/scripts/rollback.sh --list     # 先看有哪些 release 可回
-/opt/localcraft/scripts/rollback.sh --to localcraft-1.1.0
+/opt/localcraft/scripts/rollback.sh --to localcraft-1.2.0
 ```
 
 升级前的准备清单见 `docs/05` §11.1；升级失败时脚本**只提示回滚命令，不自动回滚**
@@ -147,18 +165,43 @@ localcraft 是内网「工具 / Skill」共享平台：上传 → 审批 → 发
 
 ```bash
 # 安装（解压后的发布包根目录，root 执行；幂等）
-tar -C /opt/localcraft/releases -xzf localcraft-1.2.0-offline-<date>.tar.gz
-cd /opt/localcraft/releases/localcraft-1.2.0 && ./install.sh
+tar -C /opt/localcraft/releases -xzf localcraft-1.2.1-offline-<date>.tar.gz
+cd /opt/localcraft/releases/localcraft-1.2.1 && ./install.sh
+```
 
+发布包内自带**编好的前端产物**与 **x86_64 / aarch64 两套 wheelhouse**，
+目标机**不需要 Node、不需要联网**。包内的 `SHA256SUMS` 可校验全部文件；
+Release 页另附 tar.gz 自身的 `.sha256`。
+
+> ### ★ `install.sh` 跑完只是「服务起来了」，**还登录不了**
+>
+> 它只在半程 `enable` 主服务（两个定时器刻意留给你决定）。装完还有 4 件事：
+>
+> ```bash
+> # 1) 建超级管理员（不做就没有账号；密码走交互输入，不要用明文参数）
+> sudo -u localcraft bash -c '
+>   set -a; . /etc/localcraft/localcraft.env; set +a
+>   cd /opt/localcraft/app/current
+>   /opt/localcraft/venv/bin/python -m app.cli create-superadmin --username admin
+> '
+> # 2) 让外部能访问（默认只听 127.0.0.1）
+> sudo sed -i 's/^LOCALCRAFT_HOST=.*/LOCALCRAFT_HOST=0.0.0.0/' /etc/localcraft/localcraft.env
+> sudo systemctl restart localcraft.service
+> sudo firewall-cmd --add-port=8000/tcp --permanent && sudo firewall-cmd --reload
+> # 3) 启用两个定时器（不做就永远没有每日备份、探活也不会自动跑）
+> sudo systemctl enable --now localcraft-backup.timer localcraft-maintenance.timer
+> # 4) 验证
+> curl -sS http://127.0.0.1:8000/healthz && curl -sS http://127.0.0.1:8000/readyz
+> ```
+>
+> 逐项解释见 `docs/13-新手部署指南` 的第 3~6 步。
+
+```bash
 # 卸载（默认保留数据与配置，必须显式 --purge 才删除）
 /opt/localcraft/scripts/uninstall.sh            # 交互确认
 /opt/localcraft/scripts/uninstall.sh --yes      # 自动化
 /opt/localcraft/scripts/uninstall.sh --purge --yes   # 连数据目录与配置目录一起删（不可恢复）
 ```
-
-发布包内自带前端产物与 **x86_64 / aarch64 两套 wheelhouse**，
-目标机**不需要 Node、不需要联网**。包内的 `SHA256SUMS` 可校验全部文件；
-Release 页另附 tar.gz 自身的 `.sha256`。
 
 ---
 
@@ -182,15 +225,15 @@ Release 页另附 tar.gz 自身的 `.sha256`。
   若切 PostgreSQL 并调大 worker，请同时重算限流配额与并发基线。
 - **SQLite 实践上限**：接近 `docs/05` §9.5 的触发条件时应迁移 PostgreSQL。
 - **★ 种子封面的变化不会自动作用于已播种的实例**：`seed-demo` 对已存在的工具是幂等的，
-  它既不重写 `tool_images` 行也不重新生成封面文件。所以升级到 1.2.0 之后，
-  **演示数据的封面仍是旧尺寸（320×180、无标记）**，除非重建库或原地重生封面文件。
+  它既不重写 `tool_images` 行也不重新生成封面文件。因此**在 1.2.0 之前播种的实例**，
+  升级后演示数据的封面**仍是旧尺寸（320×180、无标记）**，除非重建库或原地重生封面文件。
   详见 `docs/09` §20（含原地重生的做法与「签名不绑定内容因而可安全覆盖」的依据）。
-- **限流的 loopback 豁免**：见上文 M14。自建 nginx 配置时务必确认
+- **限流的 loopback 豁免**：见 v1.2.0 的说明。自建 nginx 配置时务必确认
   `--proxy-headers --forwarded-allow-ips=127.0.0.1` 与 `X-Forwarded-For` 都已就位。
 - **探活不等于可用性**：探活**不跟随重定向**（3xx 即记为 ok），因此「探活成功」
   ≠「端到端可用」；且探活**不会**自动把工具下线或改状态。
-  `webapp.health_check_enabled` 在管理端的描述文案仍写着「（二期）」，M14 已实现，
-  文案待改（`docs/09` §18.3）。
+  （探活开关的过时文案「（二期）」**已由迁移 `0010` 修正** ——
+  跑过 `0010` 的实例在管理台看到的是新文案。）
 - **`/metrics` 里没有限流指标**：`localcraft_request_errors_total` 只统计 5xx，429 不计入。
   观测限流只能靠应用 JSON 日志（grep `"status": 429`），见 `docs/08` §6.12。
 - **PostgreSQL 检索的字符层面差异**：7 条已知差异不修（`docs/09` §19）。
@@ -206,12 +249,14 @@ Release 页另附 tar.gz 自身的 `.sha256`。
 
 ## 八、本版本的验证边界（诚实说明）
 
-- 开发与自动化验证在 **macOS aarch64** 上完成：SQLite 全量测试、PostgreSQL 16
-  在两个时区（UTC / Asia/Shanghai）下的全量测试、前端 `verify`、mock 与真实后端两套 E2E
-  均为绿色；CI 上这五类 job 全部通过。
+- 开发与自动化验证在 **macOS aarch64** 上完成：SQLite 全量测试；
+  **PostgreSQL 16 在 UTC 与 Asia/Shanghai 两个时区下各 637 passed / 1 skipped**；
+  前端 `npm run verify`、mock E2E 121 passed、真实后端 E2E 19 passed；
+  CI 上五类 job（仓库卫生 / 前端 / 后端 ruff+pytest / 两个 PG 时区）全部通过。
 - **未在 openEuler 目标机上实机安装运行**；**aarch64 的 wheel 未在真实 arm 机器上加载验证**；
   systemd 单元、离线 wheelhouse 的实际加载、探活对真实内网 URL 的探测、
   nginx 反代链路均属**未验证**。
 - 本发布包是**构建物**，不等于「已在目标环境验证过的发布物」。
-- 前端视觉仅做过对比度与几何量化验证（含像素级解码核对），
-  **未做人工审美评审**。
+- **前端视觉未做人工审美评审**：本版两处可见变化（警告横幅底色档位、状态点颜色）
+  只做过 computed-style、类名与像素解码核对；8 张 README 截图也只验证了
+  「渲染出非空内容 + 文本指纹」，**观感需人眼确认**。
