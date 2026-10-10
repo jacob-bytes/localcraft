@@ -328,7 +328,21 @@ export default function TokensPage() {
                 })}
               </div>
               <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
-                <TriangleAlert aria-hidden="true" className="mt-0.5 size-3.5 text-amber-500" />
+                {/*
+                  对比度（契约 §34.5①）：图标原先是 `text-amber-500`，浅色下只有 **2.1:1**，
+                  低于非文本图形要求的 3:1；而且它是全站**最后一个不带 `dark:` 的调色板前景色**
+                  （浅深两态同一个颜色）。改为 `amber-700 / dark:amber-400`：
+                  实测浅色 4.95:1、深色 11.13:1（`e2e/a11y-contrast.spec.ts` 守着这条）。
+
+                  ★ 不要改成语义令牌 `text-warning` —— `--warning` 的取值
+                  （浅色 `oklch(0.75 0.15 75)`）是给**背景**用的，当图标色只有 **2.24:1**，
+                  同样不合规。这是实测结论。
+                */}
+                <TriangleAlert
+                  aria-hidden="true"
+                  data-testid="token-admin-all-hint-icon"
+                  className="mt-0.5 size-3.5 text-amber-700 dark:text-amber-400"
+                />
                 勾选 admin:all 将包含全部其他权限。
               </p>
               {scopes.includes("admin:all") ? (
