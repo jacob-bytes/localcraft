@@ -75,6 +75,11 @@ jobs:
       - name: 守卫 openapi.json 与实现同步
         # 重新导出快照后若与仓库中的文件有差异，说明接口改了但没更新
         # backend/openapi.json —— 它是接口形状的权威，前端类型从它生成。
+        #
+        # `SECRET_KEY`：`app.core.config` 现在会**拒绝**仓库里公开的默认值/占位符
+        # （见 `_reject_public_secret`），所以这一步必须给一个测试密钥。
+        env:
+          SECRET_KEY: ci-openapi-guard-secret-not-for-production
         run: |
           python -m app.cli export-openapi
           if ! git diff --quiet -- openapi.json; then

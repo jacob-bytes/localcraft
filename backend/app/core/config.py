@@ -11,10 +11,28 @@ import logging
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
+
+#: **公开在仓库里**的 `SECRET_KEY` 取值 —— 命中任何一个都说明「忘了设 SECRET_KEY」。
+#: 两个来源不同、后果一样严重：
+#:   1. `Settings.secret_key` 的**代码默认值**（本地开发用）；
+#:   2. `deploy/localcraft.env.example` 里的**占位符**（照抄示例文件的人会拿到它）。
+#:
+#: 为什么必须硬拦：JWT 与图片签名都用它派生子密钥，而它**在公开仓库里**——
+#: 漏设时任何人都能伪造超管令牌。这条以前只在 `scripts/security-check.sh` 里查占位符，
+#: 而那个脚本查的是 ②、**漏了 ①**，且只在安装后手工跑。现在由 `_reject_public_secret` 在
+#: **配置加载时**一律拒绝。
+#:
+#: ★ 这里是权威清单；改它时**同步改 `scripts/security-check.sh`**（shell 侧无法 import 本文件）。
+INSECURE_SECRET_VALUES: frozenset[str] = frozenset(
+    {
+        "dev-only-insecure-secret-change-me",
+        "REPLACE_WITH_openssl_rand_hex_32",
+    }
+)
 
 # backend/ 目录（本文件位于 backend/app/core/config.py）
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -58,7 +76,13 @@ class Settings(BaseSettings):
     data_dir: Path = BASE_DIR / "var"
 
     # ---------- 安全 / 会话 ----------
+    #: 代码默认值 —— **它公开在仓库里**，所以只在开发/测试有意义。
+    #: 命中 `INSECURE_SECRET_VALUES` 且没开逃生阀时，**配置加载就会失败**
+    #: （见 `_reject_public_secret`）。生产由 `install.sh` 用 `openssl rand -hex 32` 生成。
     secret_key: str = "dev-only-insecure-secret-change-me"
+    #: 逃生阀：本地开发 / CI 确实要用占位密钥时显式打开（`LOCALCRAFT_ALLOW_INSECURE_SECRET=1`）。
+    #: **生产不要设** —— 它的唯一用途是不让本地与 CI 被这条硬拦卡住。
+    localcraft_allow_insecure_secret: bool = False
     jwt_algorithm: str = "HS256"
     # 契约 §3.2：refresh Cookie Max-Age=604800（7 天）
     access_token_minutes: int = Field(
@@ -202,6 +226,43 @@ class Settings(BaseSettings):
                 len(v.encode("utf-8")),
             )
         return v
+
+    @field_validator("jwt_algorithm")
+    @classmethod
+    def _hmac_algorithm_only(cls, v: str) -> str:
+        """只允许 HMAC 家族。
+
+        `jwt.decode()` 已经把 `algorithms` 固定成这个字段的取值，所以这不是在补洞，
+        而是**防呆**：把 `JWT_ALGORITHM` 误设成 `none` / `RS256` 之类，会在运行期以
+        很难懂的方式失败（`none` 会让 PyJWT 拒绝带密钥的签发；`RS256` 需要另一套
+        非对称密钥体系，本项目没有）。收窄到三种取值，错配在配置加载期就报出来。
+        """
+        allowed = {"HS256", "HS384", "HS512"}
+        if v not in allowed:
+            raise ValueError(
+                f"JWT_ALGORITHM 只支持 {sorted(allowed)}，当前是 {v!r}"
+                "（本项目只有对称密钥，RSA/EC 与 none 均不受支持）"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _reject_public_secret(self) -> Settings:
+        """拒绝**公开在仓库里**的 `SECRET_KEY`（除非显式开逃生阀）。
+
+        为什么用 `mode="after"` 而不是给 `secret_key` 挂 `field_validator`：
+        这条判断要**同时**看到 `secret_key` 与 `localcraft_allow_insecure_secret`，
+        而 `mode="after"` 不依赖字段的声明顺序（`info.data` 才有那个约束）。
+        """
+        if self.secret_key in INSECURE_SECRET_VALUES and not self.localcraft_allow_insecure_secret:
+            raise ValueError(
+                f"SECRET_KEY 仍是仓库里公开的默认值/占位符（{self.secret_key!r}）。\n"
+                "  JWT 与图片签名都由它派生子密钥 —— 任何人拿这个公开值都能伪造超管令牌。\n"
+                "  生产修法：SECRET_KEY=$(openssl rand -hex 32)"
+                "（或重跑 install.sh，它会自动生成）\n"
+                "  本地开发 / CI 确实要用占位密钥时，设 "
+                "LOCALCRAFT_ALLOW_INSECURE_SECRET=1 显式放行。"
+            )
+        return self
 
     # ---------- 派生属性 ----------
     @property

@@ -138,8 +138,10 @@ if [ -r "$ENV_FILE" ]; then
     KEY_LEN="${#KEY}"
     if [ -z "$KEY" ]; then
         bad "env 文件里没有 SECRET_KEY"
-    elif [ "$KEY" = "REPLACE_WITH_openssl_rand_hex_32" ]; then
-        bad "SECRET_KEY 仍是占位符，必须用 openssl rand -hex 32 重新生成"
+    elif [ "$KEY" = "dev-only-insecure-secret-change-me" ] || [ "$KEY" = "REPLACE_WITH_openssl_rand_hex_32" ]; then
+        # ★ 与 backend/app/core/config.py 的 INSECURE_SECRET_VALUES 保持一致（那边是权威清单）。
+        #   应用现在会在配置加载期直接拒绝这两个值；这里提前给出可读的结论。
+        bad "SECRET_KEY 仍是仓库里公开的默认值/占位符，必须用 openssl rand -hex 32 重新生成"
     elif [ "$KEY_LEN" -lt 32 ]; then
         bad "SECRET_KEY 长度 ${KEY_LEN} < 32 字节（HS256 建议至少 32 字节）"
     else

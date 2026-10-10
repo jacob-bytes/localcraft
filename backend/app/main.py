@@ -40,6 +40,7 @@ from app.core.logging import configure_logging
 from app.core.metrics import monitoring_enabled, record_request
 from app.core.rate_limit import rate_limit_api
 from app.core.request_id import resolve_request_id
+from app.core.schema_guard import assert_db_at_head
 from app.core.security_headers import SecurityHeadersMiddleware
 from app.core.sql_counter import (
     SqlCounter,
@@ -75,6 +76,18 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     配套要求，也是任务清单里的易错点第 18 条。
     """
     counters = get_counter_service()
+
+    # ★ 起服务之前先确认「库结构 == 代码」，不一致就**拒绝启动**。
+    #
+    # 放在 lifespan 而不是某个路由里：它必须在**任何请求之前**发生，且失败要让进程起不来
+    # —— 否则表现是「服务正常、`/readyz` 也通过（它只 SELECT 1），然后在某个具体查询上
+    # 抛 no such column 之类的 500」，排查方向会被完全带偏。
+    # 两个方向（库落后 / 库超前）都拒绝，理由与修法见 `app/core/schema_guard.py`。
+    #
+    # 注意：`httpx.ASGITransport`（单测用的传输层）**不触发 lifespan**，所以这条不会
+    # 影响单元测试；它的测试在 `tests/test_schema_guard.py` 里直接调这个函数。
+    await assert_db_at_head(engine)
+
     await counters.start()
     try:
         yield

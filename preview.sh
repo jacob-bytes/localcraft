@@ -91,10 +91,20 @@ export COOKIE_SECURE=false
 export LOG_LEVEL="${LOG_LEVEL:-info}"
 export API_DOCS_ENABLED=true
 
-if [[ ! -f "$PREVIEW/preview.db" ]]; then
-  echo "==> 初始化数据库（alembic upgrade head）"
-  (cd "$BE" && "$PY" -m alembic upgrade head)
-  echo "==> 播种演示数据（26 个工具 / 6 个账号）"
+# 是否**首次建库** —— 必须在跑迁移之前判断：迁移会创建 preview.db，
+# 之后再判断就永远是"已存在"，新库会被跳过播种。
+FRESH_DB=0
+[[ -f "$PREVIEW/preview.db" ]] || FRESH_DB=1
+
+# 迁移**每次都跑**（alembic 是幂等的）。
+# 原先只在建库时跑，于是「改代码 + 加迁移 + 重启预览」会让服务带着旧 schema 起来。
+# 现在应用启动时会校验库结构并**拒绝启动**（app/core/schema_guard.py），
+# 所以这里必须每次都推进到 head，否则预览会直接起不来。
+echo "==> 应用数据库迁移（alembic upgrade head，幂等）"
+(cd "$BE" && "$PY" -m alembic upgrade head)
+
+if [[ "$FRESH_DB" == "1" ]]; then
+  echo "==> 首次建库：播种演示数据（26 个工具 / 6 个账号）"
   (cd "$BE" && "$PY" -m app.cli seed-demo)
 fi
 
