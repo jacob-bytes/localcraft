@@ -7,12 +7,15 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
+import re
 from functools import lru_cache
 from pathlib import Path
+from typing import Annotated
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +59,7 @@ class Settings(BaseSettings):
     localcraft_host: str = "127.0.0.1"
     localcraft_port: int = 8000
     localcraft_debug: bool = False
-    localcraft_version: str = "1.2.1"
+    localcraft_version: str = "1.2.2"
     # 曾经有一个 localcraft_public_base_url，用来"生成下载链接与 OpenAPI 里的 server"。
     # 实测**没有任何读取点**：图片签名 URL 与下载票据 URL 都是相对路径
     # （`/api/v1/images/…`、`/api/v1/tools/{slug}/download?…`），OpenAPI 也没有 servers 段。
@@ -180,7 +183,11 @@ class Settings(BaseSettings):
     #: 平台从不执行上传的文件，只以 Content-Disposition: attachment 提供下载，
     #: 因此放宽类型白名单的风险很低，而「传 Excel 被拒」会直接产生支持工单。
     #: 权威清单是 docs/01 §8；下面的顺序按类别分组，便于人工核对。
-    allowed_extensions: list[str] = [
+    #:
+    #: `NoDecode` 是必须的：pydantic-settings 默认在**数据源层**就对该字段做 JSON 解码，
+    #: 逗号串会在我们的校验器之前抛 `SettingsError`（见 `_coerce_extension_list`）。
+    #: 加上它之后原始字符串才会交到校验器手里。
+    allowed_extensions: Annotated[list[str], NoDecode] = [
         # 压缩包
         "zip", "tar.gz", "tgz", "whl", "tar", "gz", "7z", "rar",
         # 制品与可执行
@@ -192,6 +199,46 @@ class Settings(BaseSettings):
         # 图片
         "png", "jpg", "jpeg", "webp", "gif", "svg",
     ]
+
+    @field_validator("allowed_extensions", mode="before")
+    @classmethod
+    def _coerce_extension_list(cls, v: object) -> object:
+        """接受「逗号/空白分隔的字符串」与 JSON 数组两种写法。
+
+        ## 为什么需要它
+
+        `list[str]` 在 pydantic-settings 里是按 **JSON** 解析的，而「列表类环境变量写逗号串」
+        是更符合直觉的写法 —— `docs/05` 的两处示例本来就是逗号串。两者相遇的后果**不是**
+        "静默忽略"，而是**启动期硬失败**，且报错完全没提"应该写 JSON"：
+
+            $ ALLOWED_EXTENSIONS=zip,png python -m uvicorn app.main:app
+            pydantic_settings.exceptions.SettingsError: error parsing value for
+            field "allowed_extensions" from source "EnvSettingsSource"
+
+        照着文档做的人会直接卡在启动这一步，而且看不出该怎么改。所以两种写法都收下：
+        以 `[` 开头的按 JSON 解析（源层解码已被字段注解上的 `NoDecode` 关掉，
+        所以 JSON 也在这里解析），否则按逗号/空白切分。
+
+        扩展名不可能含逗号，所以按逗号切分无歧义；把空白也当分隔符是为了容错
+        `zip, tar.gz` 这种带空格的写法。
+        """
+        if isinstance(v, str):
+            text = v.strip()
+            if not text:
+                return []
+            if text.startswith("["):
+                try:
+                    parsed = json.loads(text)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        "ALLOWED_EXTENSIONS 既不是合法的 JSON 数组、也不是逗号分隔清单："
+                        f"{exc}。例如 `zip,tar.gz,png` 或 `[\"zip\",\"png\"]`"
+                    ) from exc
+                if not isinstance(parsed, list):
+                    raise ValueError("ALLOWED_EXTENSIONS 的 JSON 写法必须是一个数组")
+                return parsed
+            return [part for part in re.split(r"[,\s]+", text) if part]
+        return v
 
     @property
     def unzip_limits(self) -> dict[str, int]:
