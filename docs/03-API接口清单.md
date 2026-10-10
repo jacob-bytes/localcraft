@@ -457,7 +457,7 @@ Set-Cookie: refresh_token=<opaque>; HttpOnly; Secure; SameSite=Lax; Path=/api/v1
 | `owner` | string | 按作者 username 筛选 |
 | `sort` | string | `hot`（默认）/ `new` / `name` / `-updated_at` |
 | `page` | int | 默认 1 |
-| `page_size` | int | 默认 24，最大 200 |
+| `page_size` | int | 默认 20，最大 200（门户首页前端传 24） |
 
 **响应**：
 

@@ -46,9 +46,11 @@ const SUBJECT_LABELS: Record<AclSubjectType, string> = {
 /**
  * 授权名单编辑器（docs/04 §6.7「指定可见 → 展开授权区」，FR-ACL-02/03/04）。
  *
- * Backend caps the list at 100 entries (`AclReplaceRequest`). Subjects are
- * entered by numeric id because no lookup endpoint exists for a normal user —
- * see the report's contract-gap list.
+ * Backend caps the list at 100 entries (`AclReplaceRequest`). Subjects support
+ * type-ahead search (debounced 300ms, candidate dropdown) against
+ * `GET /api/v1/directory` — a normal user has no other lookup endpoint; a
+ * numeric id can still be used directly as `subject_id` (the ACL payload is
+ * keyed by numeric id).
  */
 export function AclEditor({ entries, onChange, disabled = false }: AclEditorProps) {
   const [subjectType, setSubjectType] = React.useState<AclSubjectType>("user");

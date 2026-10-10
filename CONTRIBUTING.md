@@ -25,7 +25,7 @@ bash preview.sh          # 一条命令搞定 venv、依赖、建库、播种、
 
 ```bash
 .venv/bin/python -m ruff check .      # 必须 clean
-.venv/bin/python -m pytest            # 449 个测试必须全绿
+.venv/bin/python -m pytest            # 676 个测试（截至 v1.2.2）必须全绿
 ```
 
 **前端**（在 `web/` 下）：

@@ -2302,7 +2302,7 @@ webapp_checked_at    : datetime | null
 | key | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
 | `security.rate_limit_enabled` | bool | `true` | 限流总开关 |
-| `security.rate_limit_per_minute` | int | `300` | 每 IP 每分钟的 **API 总配额** |
+| `security.rate_limit_per_minute` | int | `300`（§30.1 已上调为 1200） | 每 IP 每分钟的 **API 总配额** |
 | `security.rate_limit_login_per_minute` | int | `10` | 每 IP 每分钟的**登录**配额 |
 | `security.rate_limit_upload_per_minute` | int | `30` | 每 IP 每分钟的**上传**配额 |
 

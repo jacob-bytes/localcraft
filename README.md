@@ -88,7 +88,7 @@ localcraft 把这件事收敛成一个内网站点：
               ▼                         ▼                         ▼
     ┌──────────────────┐   ┌──────────────────────┐   ┌──────────────────┐
     │ SQLite (WAL)     │   │ /var/lib/localcraft  │   │ 内存计数聚合       │
-    │ 20 张表 + FTS5   │   │ 上传文件 / 封面图     │   │ 定时批量落库       │
+    │ 21 张表 + FTS5   │   │ 上传文件 / 封面图     │   │ 定时批量落库       │
     │ 可换 PostgreSQL  │   │ 版本归档 / 备份       │   │ tool_stats_daily │
     └──────────────────┘   └──────────────────────┘   └──────────────────┘
 ```
@@ -270,7 +270,7 @@ bash preview.sh          # 建 venv、装依赖、建库、播种、构建前端
 | `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` | `5` / `5` | 连接池；仅 PostgreSQL 生效 |
 | `LOCALCRAFT_LOG_LEVEL` / `LOG_LEVEL` | `info` / `INFO` | 前者给 uvicorn 的 `--log-level`，后者是应用自身的 JSON 日志级别 —— **两个都要设** |
 
-> 环境变量名不做统一前缀：只有 4 个字段带 `LOCALCRAFT_`（host / port / debug / version），其余沿用直觉命名（`DATABASE_URL`、`SECRET_KEY`…）。
+> 环境变量名不做统一前缀：只有 5 个字段带 `LOCALCRAFT_`（host / port / debug / version / allow_insecure_secret），其余沿用直觉命名（`DATABASE_URL`、`SECRET_KEY`…）。其中 `localcraft_allow_insecure_secret` 是 v1.2.2 的逃生阀：本地开发 / CI 需要占位 `SECRET_KEY` 时显式放行，**生产不要设**。
 > 写错名字会被**静默忽略**，表现为「改了配置没反应」。
 >
 > 配额、版本保留数、上传白名单这类**运行期可调**的设置不在环境变量里，而在数据库 `system_settings` 表（管理员界面或管理 API 修改）。完整名单见 [`docs/05` §14.2](docs/05-部署与运维方案.md) 末两张表。
@@ -281,20 +281,20 @@ bash preview.sh          # 建 venv、装依赖、建库、播种、构建前端
 localcraft/
 ├── backend/                 FastAPI 应用
 │   ├── app/
-│   │   ├── api/v1/          路由层（75 路径 / 93 操作）
+│   │   ├── api/v1/          路由层（79 路径 / 99 操作）
 │   │   ├── core/            配置、安全、依赖注入、日志
-│   │   ├── models/          19 张表的 ORM 模型（+ FTS5 虚拟表）
+│   │   ├── models/          21 张表的 ORM 模型（+ FTS5 虚拟表）
 │   │   ├── repositories/    数据访问
 │   │   ├── services/        业务逻辑
-│   │   └── cli.py           命令行（init-db / seed / create-user / …）
-│   ├── migrations/          Alembic 迁移（0001~0004）
-│   ├── tests/               449 个测试
+│   │   └── cli.py           命令行（create-superadmin / seed-demo / maintenance / …）
+│   ├── migrations/          Alembic 迁移（0001~0010）
+│   ├── tests/               676 个测试
 │   └── openapi.json         OpenAPI 快照 —— 接口形状的**权威**，测试守卫其时效性
 ├── web/                     React SPA
 │   └── src/{pages,components,api,lib}
 ├── deploy/                  systemd unit / slice / tmpfiles / nginx / logrotate
-├── scripts/                 安装、备份、升级、演练、发布等 24 个运维脚本
-├── docs/                    需求、数据模型、API、前端、部署、手册共 12 份
+├── scripts/                 安装、备份、升级、演练、发布等 26 个运维脚本
+├── docs/                    需求、数据模型、API、前端、部署、手册共 14 份
 ├── contracts/               接口契约与验收脚本
 ├── prompts/                 每个开发里程碑的任务书
 └── preview.sh               本机一键预览
@@ -302,13 +302,13 @@ localcraft/
 
 ## 文档
 
-`docs/` 里的 13 份文档是这个项目从需求澄清到交付的完整轨迹，全部保留：
+`docs/` 里的 14 份文档是这个项目从需求澄清到交付的完整轨迹，全部保留：
 
 | 文档 | 内容 |
 | --- | --- |
 | [00-关键决策](docs/00-关键决策.md) | 立项阶段逐条确认的 34 项决策（D1–D34），以及**明确不做的事**——设计与实现的最高上游依据 |
 | [01-需求规格说明书](docs/01-需求规格说明书.md) | 角色权限、编号功能需求、业务规则与状态机、非功能需求、验收标准 |
-| [02-数据模型设计](docs/02-数据模型设计.md) | ER 关系、20 张表的字段级设计、索引、约束、迁移策略 |
+| [02-数据模型设计](docs/02-数据模型设计.md) | ER 关系、21 张表的字段级设计、索引、约束、迁移策略 |
 | [03-API接口清单](docs/03-API接口清单.md) | REST 接口全集、请求/响应示例、错误码、鉴权与 Scope 矩阵 |
 | [04-前端页面与交互清单](docs/04-前端页面与交互清单.md) | 路由表、每页组件拆解、shadcn/ui 选型、空态与异常态 |
 | [05-部署与运维方案](docs/05-部署与运维方案.md) | 离线双架构打包、systemd、nginx、备份恢复、升级回滚、故障排查 |
@@ -324,7 +324,7 @@ localcraft/
 ## 测试与质量
 
 ```bash
-# 后端：lint + 449 个测试（约 90% 覆盖率）
+# 后端：lint + 676 个测试 / 约 90% 覆盖率（截至 v1.2.2）
 cd backend && .venv/bin/python -m ruff check . && .venv/bin/python -m pytest
 
 # 前端：typecheck + lint + 组件约束 + 构建产物检查
@@ -351,13 +351,13 @@ bash contracts/acceptance/pre-delivery-checks.sh
 
 | 项 | 状态 |
 | --- | --- |
-| 后端 449 测试 / 90% 覆盖率 | ✅ 通过 |
+| 后端 676 测试 / 约 90% 覆盖率（截至 v1.2.2） | ✅ 通过 |
 | 前端 `npm run verify`、mock E2E、真实后端 E2E | ✅ 通过 |
-| 双架构 wheelhouse 文件级校验（各 59 wheel、0 sdist、平台标签匹配） | ✅ 通过 |
+| 双架构 wheelhouse 文件级校验（各 58 wheel + `MANIFEST.sha256`、0 sdist、平台标签匹配） | ✅ 通过 |
 | **aarch64 真机运行** | ❌ 未验证 —— 本机无 aarch64 设备，文件级检查不等于架构验证 |
 | **真实 systemd 上的 unit / slice / tmpfiles** | ❌ 未验证 —— 本机无 systemd，安装演练走的是 `LOCALCRAFT_SKIP_SYSTEMD=1` 路径 |
 | **用发布包的 linux wheelhouse 真正启动服务** | ❌ 未验证 —— macOS 无法加载 ELF |
-| **PostgreSQL 迁移复跑** | ⚠️ 部分 —— M4 阶段跑过并修了两处迁移问题，后续里程碑未再重跑 |
+| **PostgreSQL 迁移复跑** | ✅ 已在 CI 的 `backend-postgres`（UTC + Asia/Shanghai）复跑 |
 | **生产级性能数据** | ⚠️ 仅本机数据，非目标硬件 |
 
 已知的文档—实现不一致集中在 [`docs/09-勘误与已知限制.md`](docs/09-勘误与已知限制.md)（`locate` 类环境变量名、`SHA256SUMS` vs `MANIFEST.sha256` 等）。
