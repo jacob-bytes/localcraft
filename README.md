@@ -209,6 +209,30 @@ sudo ./install.sh
 建代码软链 → 建 venv → **离线**装依赖 → 写环境变量文件 → 跑 Alembic 迁移 → 装 systemd unit /
 slice / tmpfiles / logrotate → 启动并做健康检查。
 
+**★ 但 `install.sh` 跑完只是「服务起来了」，此刻你还登不进去。** 它末尾会打印剩余步骤，这里先给全
+（**第 1 步不做就没有账号；第 2 步不做就永远不会备份、探活也不会跑**）：
+
+```bash
+# 1) 建超级管理员（密码走交互输入，不要用明文参数 —— 会进 shell 历史）
+sudo -u localcraft bash -c '
+  set -a; . /etc/localcraft/localcraft.env; set +a
+  cd /opt/localcraft/app/current
+  /opt/localcraft/venv/bin/python -m app.cli create-superadmin --username admin
+'
+
+# 2) 启用两个定时器（install.sh 只 enable 主服务，这两个刻意留给你决定）
+systemctl enable --now localcraft-backup.timer       # 每日 03:00 备份
+systemctl enable --now localcraft-maintenance.timer  # 每小时维护（在线工具探活在其中）
+
+# 3) 要让**别的机器**访问：默认只听 127.0.0.1
+sed -i 's/^LOCALCRAFT_HOST=.*/LOCALCRAFT_HOST=0.0.0.0/' /etc/localcraft/localcraft.env
+systemctl restart localcraft.service
+firewall-cmd --add-port=8000/tcp --permanent && firewall-cmd --reload
+```
+
+逐项解释、验证命令与「为什么」见 **[docs/13-新手部署指南](docs/13-新手部署指南.md) 的第 3~6 步**；
+备份/探活的运维细节见 **[docs/08-运维手册](docs/08-运维手册.md)**。
+
 **不需要 nginx**：后端自己托管前端产物并下发安全响应头，`IP:PORT` 直连是一等部署方式。
 要用 nginx 反代（TLS / 限流）也能，见 [docs/13](docs/13-新手部署指南.md) 与 `deploy/nginx-*.conf`。
 
